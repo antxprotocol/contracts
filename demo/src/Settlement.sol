@@ -23,7 +23,7 @@ contract Settlement is Ownable,ISettlement {
                 break;
             }
         }
-        require(isBatchSubmitter, "Only batchSubmitter can call this function");
+        require(isBatchSubmitter, "Not batch submitter");
         _;
     }
 
@@ -37,10 +37,18 @@ contract Settlement is Ownable,ISettlement {
         merkle = new CompleteMerkle();
     }
 
+    function getBatchSubmitter() external view returns (address[] memory) {
+        return batchSubmitter;
+    }
+
     function setBatchSubmitter(address[] memory _batchSubmitter) onlyOwner public {
         require(_batchSubmitter.length > 0, "Invalid batch submitter");
         batchSubmitter = _batchSubmitter;
         emit BatchSubmitterUpdated(_batchSubmitter);
+    }
+
+    function getAssetContract() external view returns (address) {
+        return assetContract;
     }
 
     function setAssetContract(address _assetContract) onlyOwner public {
@@ -52,7 +60,7 @@ contract Settlement is Ownable,ISettlement {
     function submitBatch(uint256 _startBlock,uint256 _totalItems,bytes32 _rootHash) onlyBatchSubmitter public {
         bytes32 previousRootHash = bytes32(0);
         if (batchId > 0) {
-            Batch memory previousBatch = batches[batchId - 1];
+            Batch memory previousBatch = batches[batchId];
             previousRootHash = previousBatch.rootHash;
             require(
                 _startBlock ==
@@ -89,8 +97,7 @@ contract Settlement is Ownable,ISettlement {
         }
 
         bytes32 batchRootHash = merkle.getRoot(leaves);
-        require(batchRootHash == existBatch.rootHash &&
-         generateFinalRootHash(batchRootHash, existBatch.previousRootHash) == existBatch.rootHash, "Invalid batchRootHash");
+        require(generateFinalRootHash(batchRootHash, existBatch.previousRootHash) == existBatch.rootHash, "Mismatch root hash");
 
         for (uint256 i = 0; i < _items.length; i++) {
             tryInsertOrder(_items[i]);
@@ -105,7 +112,13 @@ contract Settlement is Ownable,ISettlement {
     }
 
     function generateLeaf(uint256 _batchId, ISettlement.SettlementItem memory item) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked(_batchId, item.orderId, item.user, item.amount,item.isAdd,item.isSettleFee));
+        return keccak256(abi.encodePacked(_batchId,
+            item.orderId, 
+            item.businessOrderId,
+            item.user,
+            item.amount,
+            item.isAdd,
+            item.isSettleFee));
     }
 
     function generateFinalRootHash(bytes32 batchRootHash, bytes32 previousRootHash) public view returns (bytes32) {
@@ -124,12 +137,12 @@ contract Settlement is Ownable,ISettlement {
             IAsset(assetContract).subUserBalance(item.user, item.amount);
         }
 
-        emit Settlement(item.orderId, item.user, item.amount, item.isAdd, item.isSettleFee);
+        emit Settlement(item.orderId, item.businessOrderId, item.user, item.amount, item.isAdd, item.isSettleFee);
     }
  
     function tryInsertOrder(ISettlement.SettlementItem memory item) internal {
        ISettlement.SettlementItem memory existItem = orders[item.orderId];
-       require(existItem.orderId == 0, "Order already exists");
+       require(existItem.orderId == 0 && existItem.businessOrderId == 0, "Order already exists");
        orders[item.orderId] = item;
     }
 }

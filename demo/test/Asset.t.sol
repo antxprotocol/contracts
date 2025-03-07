@@ -9,6 +9,8 @@ import {SettlementForTest} from "../src/SettlementForTest.sol";
 import {MockToken} from "../src/MockToken.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+
 
 contract AssetTest is Test {
     Asset public asset;
@@ -49,6 +51,15 @@ contract AssetTest is Test {
         // not equal
         assertNotEq(asset.getSettlementContract(), address(settlement));
 
+          // invalid owner
+        vm.startPrank(signer1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Ownable.OwnableUnauthorizedAccount.selector,
+                signer1
+            )
+        );
+        asset.setSettlementContract(address(settlement));
         // equal
         vm.startPrank(owner);
         asset.setSettlementContract(address(settlement));
@@ -68,7 +79,7 @@ contract AssetTest is Test {
         assertEq(asset.getTotalBalance(), 1000);
     }
 
-    function test_UserBalance() public {
+    function test_userBalance() public {
         assertEq(asset.getUserBalance(signer1), 0);
 
         vm.startPrank(owner);
@@ -95,7 +106,31 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
-    function test_FeeBalance() public {
+    function test_feeBalance() public {
+        // TODO: use multi sig  test
+ 
+        assertEq(asset.getFeeBalance(), 0);
+
+        vm.startPrank(owner);
+
+        // expect revert
+        vm.expectRevert("Not settlement contract");
+        settlement.addFeeBalanceForTest(1000);
+
+        // set settlement contract
+        asset.setSettlementContract(address(settlement));
+
+        // add balance again
+        settlement.addFeeBalanceForTest(1000);
+        assertEq(asset.getFeeBalance(), 1000);
+
+        // add balance again
+        settlement.addFeeBalanceForTest(1000);
+        assertEq(asset.getFeeBalance(), 2000);
+        vm.stopPrank();
+    }
+
+    function test_feeWithdraw() public {
         // TODO: use multi sig  test
  
         assertEq(asset.getFeeBalance(), 0);
@@ -147,7 +182,7 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
-    function test_UserWithdraw() public {
+    function test_withdraw() public {
         assertEq(asset.getUserBalance(signer1), 0);
 
         vm.startPrank(owner);
