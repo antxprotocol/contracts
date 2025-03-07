@@ -6,7 +6,7 @@ import {CompleteMerkle} from "@murky/CompleteMerkle.sol";
 import "./interfaces/ISettlement.sol";
 import "./interfaces/IAsset.sol";
 
-contract SettlementForTest is Ownable,ISettlement {
+contract SettlementForTest is Ownable, ISettlement {
     address public assetContract;
     address[] public batchSubmitter;
     uint256 public batchId;
@@ -41,7 +41,7 @@ contract SettlementForTest is Ownable,ISettlement {
         return batchSubmitter;
     }
 
-    function setBatchSubmitter(address[] memory _batchSubmitter) onlyOwner public {
+    function setBatchSubmitter(address[] memory _batchSubmitter) public onlyOwner {
         require(_batchSubmitter.length > 0, "Invalid batch submitter");
         batchSubmitter = _batchSubmitter;
         emit BatchSubmitterUpdated(_batchSubmitter);
@@ -51,28 +51,24 @@ contract SettlementForTest is Ownable,ISettlement {
         return assetContract;
     }
 
-    function setAssetContract(address _assetContract) onlyOwner public {
+    function setAssetContract(address _assetContract) public onlyOwner {
         require(_assetContract != address(0), "Invalid asset contract address");
         assetContract = _assetContract;
         emit AssetContractUpdated(_assetContract);
     }
 
-    function submitBatch(uint256 _startBlock,uint256 _totalItems,bytes32 _rootHash) onlyBatchSubmitter public {
+    function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) public onlyBatchSubmitter {
         bytes32 previousRootHash = bytes32(0);
         if (batchId > 0) {
             Batch memory previousBatch = batches[batchId - 1];
             previousRootHash = previousBatch.rootHash;
-            require(
-                _startBlock ==
-                    previousBatch.startBlock + previousBatch.totalItems,
-                "Invalid startBlock"
-            );
+            require(_startBlock == previousBatch.startBlock + previousBatch.totalItems, "Invalid startBlock");
         }
         require(_startBlock > 0, "Invalid start block");
         require(_totalItems > 0 && _totalItems < 1000, "Invalid total items");
         require(_rootHash != bytes32(0), "Invalid root hash");
 
-        batchId++;  // start from 1
+        batchId++; // start from 1
 
         batches[batchId] = Batch({
             startBlock: _startBlock,
@@ -93,18 +89,21 @@ contract SettlementForTest is Ownable,ISettlement {
 
         bytes32[] memory leaves = new bytes32[](_items.length);
         for (uint256 i = 0; i < _items.length; i++) {
-            leaves[i] = generateLeaf(_batchId,_items[i]);
+            leaves[i] = generateLeaf(_batchId, _items[i]);
         }
 
         bytes32 batchRootHash = merkle.getRoot(leaves);
-        require(batchRootHash == existBatch.rootHash &&
-         generateFinalRootHash(batchRootHash, existBatch.previousRootHash) == existBatch.rootHash, "Invalid batchRootHash");
+        require(
+            batchRootHash == existBatch.rootHash
+                && generateFinalRootHash(batchRootHash, existBatch.previousRootHash) == existBatch.rootHash,
+            "Invalid batchRootHash"
+        );
 
         for (uint256 i = 0; i < _items.length; i++) {
             tryInsertOrder(_items[i]);
 
             bytes32[] memory proof = merkle.getProof(leaves, i);
-            if (!merkle.verifyProof(batchRootHash,proof, leaves[i])) {
+            if (!merkle.verifyProof(batchRootHash, proof, leaves[i])) {
                 revert ErrInvalidProof();
             }
 
@@ -113,7 +112,7 @@ contract SettlementForTest is Ownable,ISettlement {
     }
 
     function generateLeaf(uint256 _batchId, ISettlement.SettlementItem memory item) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked(_batchId, item.orderId, item.user, item.amount,item.isAdd,item.isSettleFee));
+        return keccak256(abi.encodePacked(_batchId, item.orderId, item.user, item.amount, item.isAdd, item.isSettleFee));
     }
 
     function generateFinalRootHash(bytes32 batchRootHash, bytes32 previousRootHash) public view returns (bytes32) {
@@ -134,24 +133,23 @@ contract SettlementForTest is Ownable,ISettlement {
 
         emit Settlement(item.orderId, item.businessOrderId, item.user, item.amount, item.isAdd, item.isSettleFee);
     }
- 
+
     function tryInsertOrder(ISettlement.SettlementItem memory item) internal {
-       ISettlement.SettlementItem memory existItem = orders[item.orderId];
-       require(existItem.orderId == 0, "Order already exists");
-       orders[item.orderId] = item;
+        ISettlement.SettlementItem memory existItem = orders[item.orderId];
+        require(existItem.orderId == 0, "Order already exists");
+        orders[item.orderId] = item;
     }
 
-
     // for test
-    function addUserBalanceForTest(address user, uint256 amount) onlyOwner public {
+    function addUserBalanceForTest(address user, uint256 amount) public onlyOwner {
         IAsset(assetContract).addUserBalance(user, amount);
     }
 
-    function addFeeBalanceForTest(uint256 amount) onlyOwner public {
+    function addFeeBalanceForTest(uint256 amount) public onlyOwner {
         IAsset(assetContract).addFeeBalance(amount);
     }
 
-    function subUserBalanceForTest(address user, uint256 amount) onlyOwner public {
+    function subUserBalanceForTest(address user, uint256 amount) public onlyOwner {
         IAsset(assetContract).subUserBalance(user, amount);
     }
 }

@@ -15,7 +15,6 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {CompleteMerkle} from "@murky/CompleteMerkle.sol";
 
-
 contract SettlementTest is Test {
     Asset public asset;
     Settlement public settlement;
@@ -48,12 +47,7 @@ contract SettlementTest is Test {
     function test_setBatchSubmitter() public {
         // invalid owner
         vm.startPrank(signer1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Ownable.OwnableUnauthorizedAccount.selector,
-                signer1
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer1));
         settlement.setBatchSubmitter(batchSubmitter);
 
         // set owner
@@ -74,12 +68,7 @@ contract SettlementTest is Test {
     function test_setAssetContract() public {
         // invalid owner
         vm.startPrank(signer1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Ownable.OwnableUnauthorizedAccount.selector,
-                signer1
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer1));
         settlement.setAssetContract(address(asset));
 
         // set owner
@@ -94,22 +83,25 @@ contract SettlementTest is Test {
     }
 
     function test_generateLeaf() public view {
-        bytes32 leaf = settlement.generateLeaf(1, ISettlement.SettlementItem({
-            orderId: 1,
-            businessOrderId: 1,
-            user: signer1,
-            amount: 1000,
-            isAdd: true,
-            isSettleFee: false
-        }));
+        bytes32 leaf = settlement.generateLeaf(
+            1,
+            ISettlement.SettlementItem({
+                orderId: 1,
+                businessOrderId: 1,
+                user: signer1,
+                amount: 1000,
+                isAdd: true,
+                isSettleFee: false
+            })
+        );
 
-       console.logBytes32(leaf);
+        console.logBytes32(leaf);
 
-       bytes32 hexStr = hex"46b4568c9394403fefe0eb2c678659efa6e5324acdccfbddfd30294830034863";
-       assertEq(leaf, hexStr);
+        bytes32 hexStr = hex"46b4568c9394403fefe0eb2c678659efa6e5324acdccfbddfd30294830034863";
+        assertEq(leaf, hexStr);
     }
 
-    function test_generateFinalRootHash() public  {
+    function test_generateFinalRootHash() public {
         bytes32 batchRootHash = hex"6b9eff06fa285d0f853d4a9ffcc53f3bb34ac0c19588f12c6a0e6b6a0adb2216";
         bytes32 previousRootHash = hex"ad2ef2fb5337f7bb0e17fb479d4676e5a0a0a6d646780da968d7215e2ed1f29a";
         bytes32 finalRootHash = settlement.generateFinalRootHash(batchRootHash, previousRootHash);
@@ -149,11 +141,13 @@ contract SettlementTest is Test {
 
         // expect event
         vm.expectEmit(address(settlement));
-        emit ISettlement.BatchSubmitted(startBlock, 1, 1, hex"7a59672632b9d47cc075c2b523053e14c02313b6f0d5fc558a7b67b3555f564f", bytes32(0));
+        emit ISettlement.BatchSubmitted(
+            startBlock, 1, 1, hex"7a59672632b9d47cc075c2b523053e14c02313b6f0d5fc558a7b67b3555f564f", bytes32(0)
+        );
         // valid batch submitter
         settlement.submitBatch(startBlock, 1, hex"7a59672632b9d47cc075c2b523053e14c02313b6f0d5fc558a7b67b3555f564f");
 
-        // check batch info 
+        // check batch info
         uint256 batchId = 1;
         ISettlement.Batch memory batch = settlement.getBatch(batchId);
         assertEq(batch.startBlock, 1);
@@ -198,7 +192,7 @@ contract SettlementTest is Test {
             isSettleFee: false
         });
 
-        // generate leaf  
+        // generate leaf
         uint256 batchId = 1;
         uint256 startBlock = 1;
 
@@ -206,7 +200,7 @@ contract SettlementTest is Test {
         leaves[0] = settlement.generateLeaf(batchId, items[0]);
         leaves[1] = settlement.generateLeaf(batchId, items[1]);
         leaves[2] = settlement.generateLeaf(batchId, items[2]);
-        bytes32 batchRootHash = merkle.getRoot(leaves); 
+        bytes32 batchRootHash = merkle.getRoot(leaves);
 
         console.log("leaves");
         console.logBytes32(leaves[0]);
@@ -250,9 +244,30 @@ contract SettlementTest is Test {
 
         // exec finalizeSettlement
         vm.expectEmit(address(settlement));
-        emit ISettlement.Settlement(items[0].orderId, items[0].businessOrderId, items[0].user, items[0].amount, items[0].isAdd, items[0].isSettleFee);
-        emit ISettlement.Settlement(items[1].orderId, items[1].businessOrderId, items[1].user, items[1].amount, items[1].isAdd, items[1].isSettleFee);
-        emit ISettlement.Settlement(items[2].orderId, items[2].businessOrderId, items[2].user, items[2].amount, items[2].isAdd, items[2].isSettleFee);
+        emit ISettlement.Settlement(
+            items[0].orderId,
+            items[0].businessOrderId,
+            items[0].user,
+            items[0].amount,
+            items[0].isAdd,
+            items[0].isSettleFee
+        );
+        emit ISettlement.Settlement(
+            items[1].orderId,
+            items[1].businessOrderId,
+            items[1].user,
+            items[1].amount,
+            items[1].isAdd,
+            items[1].isSettleFee
+        );
+        emit ISettlement.Settlement(
+            items[2].orderId,
+            items[2].businessOrderId,
+            items[2].user,
+            items[2].amount,
+            items[2].isAdd,
+            items[2].isSettleFee
+        );
         settlement.finalizeSettlement(batchId, items);
 
         // submit batch 2
@@ -269,7 +284,7 @@ contract SettlementTest is Test {
         console.log("batchRootHash2");
         console.logBytes32(batchRootHash2);
 
-        ISettlement.Batch memory batch = settlement.getBatch(batchId-1);
+        ISettlement.Batch memory batch = settlement.getBatch(batchId - 1);
         console.log("previousRootHash");
         console.logBytes32(batch.rootHash);
 

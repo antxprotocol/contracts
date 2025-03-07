@@ -11,7 +11,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-
 contract AssetTest is Test {
     Asset public asset;
     SettlementForTest public settlement;
@@ -51,14 +50,9 @@ contract AssetTest is Test {
         // not equal
         assertNotEq(asset.getSettlementContract(), address(settlement));
 
-          // invalid owner
+        // invalid owner
         vm.startPrank(signer1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Ownable.OwnableUnauthorizedAccount.selector,
-                signer1
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer1));
         asset.setSettlementContract(address(settlement));
         // equal
         vm.startPrank(owner);
@@ -108,7 +102,7 @@ contract AssetTest is Test {
 
     function test_feeBalance() public {
         // TODO: use multi sig  test
- 
+
         assertEq(asset.getFeeBalance(), 0);
 
         vm.startPrank(owner);
@@ -132,7 +126,7 @@ contract AssetTest is Test {
 
     function test_feeWithdraw() public {
         // TODO: use multi sig  test
- 
+
         assertEq(asset.getFeeBalance(), 0);
 
         vm.startPrank(owner);
@@ -155,10 +149,7 @@ contract AssetTest is Test {
         // try withdraw
         vm.expectRevert(
             abi.encodeWithSelector(
-                IERC20Errors.ERC20InsufficientBalance.selector,
-                address(asset),
-                USDT.balanceOf(address(asset)),
-                500
+                IERC20Errors.ERC20InsufficientBalance.selector, address(asset), USDT.balanceOf(address(asset)), 500
             )
         );
         asset.withdrawFee(signer2, 500);
@@ -197,7 +188,6 @@ contract AssetTest is Test {
         // add user balance
         settlement.addUserBalanceForTest(user1, 1000);
         assertEq(asset.getUserBalance(user1), 1000);
-
 
         // change to user1
         vm.startPrank(user1);
