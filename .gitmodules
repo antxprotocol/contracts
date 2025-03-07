@@ -1,0 +1,15 @@
+[submodule "demo/lib/forge-std"]
+	path = demo/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "demo/lib/openzeppelin-contracts"]
+	path = demo/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "demo/lib/openzeppelin-contracts-upgradeable"]
+	path = demo/lib/openzeppelin-contracts-upgradeable
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable
+[submodule "demo/lib/prb-math"]
+	path = demo/lib/prb-math
+	url = https://github.com/PaulRBerg/prb-math
+[submodule "demo/lib/murky"]
+	path = demo/lib/murky
+	url = https://github.com/dmfxyz/murky
