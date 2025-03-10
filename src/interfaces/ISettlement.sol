@@ -12,8 +12,8 @@ interface ISettlement {
     struct SettlementItem {
         uint256 orderId;
         uint256 businessOrderId;
-        address user;
         uint256 amount;
+        address user;
         bool isAdd; // true: add, false: sub
         bool isSettleFee; // true: settle fee
     }

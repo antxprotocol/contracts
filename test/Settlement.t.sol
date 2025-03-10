@@ -302,4 +302,44 @@ contract SettlementTest is Test {
 
         vm.stopPrank();
     }
+
+
+     function test_finalizeSettlement_gaslimit() public {
+        CompleteMerkle merkle = new CompleteMerkle();
+        uint256 itemCount = 100;
+
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](itemCount);
+        for (uint256 i = 0; i < itemCount; i++) {
+            items[i] = ISettlement.SettlementItem({
+                orderId: i,
+                businessOrderId: i,
+                amount: 1000,
+                user: signer1,
+                isAdd: true,
+                isSettleFee: false
+            });
+        }
+
+        // generate leaf
+        uint256 batchId = 1;
+        uint256 startBlock = 1;
+
+        bytes32[] memory leaves = new bytes32[](itemCount);
+        for (uint256 i = 0; i < itemCount; i++) {
+            leaves[i] = settlement.generateLeaf(batchId, items[i]);
+        }
+        bytes32 batchRootHash = merkle.getRoot(leaves);
+
+        // generate final root hash
+        bytes32 previousRootHash = bytes32(0);
+        bytes32 finalRootHash = settlement.generateFinalRootHash(batchRootHash, previousRootHash);
+
+        // first submit batch
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(startBlock, items.length, finalRootHash);
+
+        // finalize settlement use normal user
+        settlement.finalizeSettlement(batchId, items);
+        vm.stopPrank();
+    }
 }

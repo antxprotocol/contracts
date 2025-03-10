@@ -7,9 +7,9 @@ import "./interfaces/ISettlement.sol";
 import "./interfaces/IAsset.sol";
 
 contract Settlement is Ownable, ISettlement {
+    uint256 public batchId;
     address public assetContract;
     address[] public batchSubmitter;
-    uint256 public batchId;
     bytes32 public rootHash;
     mapping(uint256 => ISettlement.SettlementItem) public orders;
     mapping(uint256 => Batch) public batches;
@@ -17,8 +17,9 @@ contract Settlement is Ownable, ISettlement {
 
     modifier onlyBatchSubmitter() {
         bool isBatchSubmitter = false;
-        for (uint256 i = 0; i < batchSubmitter.length; i++) {
-            if (batchSubmitter[i] == msg.sender) {
+        address[] memory cacheBatchSubmitter = batchSubmitter;  // gas optimization
+        for (uint256 i = 0; i < cacheBatchSubmitter.length; i++) {
+            if (cacheBatchSubmitter[i] == msg.sender) {
                 isBatchSubmitter = true;
                 break;
             }
@@ -41,7 +42,7 @@ contract Settlement is Ownable, ISettlement {
         return batchSubmitter;
     }
 
-    function setBatchSubmitter(address[] memory _batchSubmitter) public onlyOwner {
+    function setBatchSubmitter(address[] calldata _batchSubmitter) external onlyOwner {
         require(_batchSubmitter.length > 0, "Invalid batch submitter");
         batchSubmitter = _batchSubmitter;
         emit BatchSubmitterUpdated(_batchSubmitter);
@@ -65,7 +66,7 @@ contract Settlement is Ownable, ISettlement {
             require(_startBlock == previousBatch.startBlock + previousBatch.totalItems, "Invalid startBlock");
         }
         require(_startBlock > 0, "Invalid start block");
-        require(_totalItems > 0 && _totalItems < 1000, "Invalid total items");
+        require(_totalItems > 0 && _totalItems < 10000, "Invalid total items");
         require(_rootHash != bytes32(0), "Invalid root hash");
 
         batchId++; // start from 1
@@ -83,7 +84,7 @@ contract Settlement is Ownable, ISettlement {
         return batches[_batchId];
     }
 
-    function finalizeSettlement(uint256 _batchId, ISettlement.SettlementItem[] memory _items) public {
+    function finalizeSettlement(uint256 _batchId, ISettlement.SettlementItem[] calldata _items) external {
         Batch memory existBatch = batches[_batchId];
         require(existBatch.rootHash != bytes32(0), "Invalid batchId");
 
