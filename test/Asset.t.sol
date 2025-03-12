@@ -79,7 +79,7 @@ contract AssetTest is Test {
         vm.startPrank(owner);
 
         // expect revert
-        vm.expectRevert("Not settlement contract");
+        vm.expectRevert(abi.encodeWithSelector(Asset.NotSettlementContract.selector));
         settlement.addUserBalanceForTest(signer1, 1000);
 
         // set settlement contract
@@ -101,14 +101,12 @@ contract AssetTest is Test {
     }
 
     function test_feeBalance() public {
-        // TODO: use multi sig  test
-
         assertEq(asset.getFeeBalance(), 0);
 
         vm.startPrank(owner);
 
         // expect revert
-        vm.expectRevert("Not settlement contract");
+        vm.expectRevert(abi.encodeWithSelector(Asset.NotSettlementContract.selector));
         settlement.addFeeBalanceForTest(1000);
 
         // set settlement contract
@@ -125,14 +123,12 @@ contract AssetTest is Test {
     }
 
     function test_feeWithdraw() public {
-        // TODO: use multi sig  test
-
         assertEq(asset.getFeeBalance(), 0);
 
         vm.startPrank(owner);
 
         // expect revert
-        vm.expectRevert("Not settlement contract");
+        vm.expectRevert(abi.encodeWithSelector(Asset.NotSettlementContract.selector));
         settlement.addFeeBalanceForTest(1000);
 
         // set settlement contract
@@ -159,7 +155,7 @@ contract AssetTest is Test {
         USDT.mint(address(asset), 2000);
         assertEq(asset.getTotalBalance(), 2000);
 
-        // withdraw fee
+        // withdraw fee - transfer first then emit event
         vm.expectEmit(address(USDT));
         emit IERC20.Transfer(address(asset), signer2, 500);
 
@@ -192,11 +188,11 @@ contract AssetTest is Test {
         // change to user1
         vm.startPrank(user1);
 
-        // expect revert
-        vm.expectRevert("Insufficient user balance");
+        // expect revert with custom error
+        vm.expectRevert(abi.encodeWithSelector(Asset.InsufficientUserBalance.selector, user1, 1000, 1001));
         asset.withdraw(1001);
 
-        // expect event
+        // expect event - transfer first then emit event
         vm.expectEmit(address(USDT));
         emit IERC20.Transfer(address(asset), user1, 1000);
 

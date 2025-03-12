@@ -9,109 +9,154 @@ import "./interfaces/IAsset.sol";
 contract Settlement is Ownable, ISettlement {
     uint256 public batchId;
     address public assetContract;
-    address[] public batchSubmitter;
-    bytes32 public rootHash;
+    mapping(address => bool) public isBatchSubmitter;
+    address[] private batchSubmitterList;
     mapping(uint256 => ISettlement.SettlementItem) public orders;
-    mapping(uint256 => Batch) public batches;
-    CompleteMerkle internal merkle;
+    mapping(uint256 => ISettlement.Batch) public batches;
+    CompleteMerkle private immutable merkle;
+
+    error NotBatchSubmitter();
+    error InvalidBatchSubmitter();
+    error InvalidAssetContract();
+    error InvalidStartBlock();
+    error InvalidTotalItems();
+    error InvalidRootHash();
+    error InvalidBatchId();
+    error OrderAlreadyExists();
+    error MismatchRootHash();
+    error ErrInvalidProof();
 
     modifier onlyBatchSubmitter() {
-        bool isBatchSubmitter = false;
-        address[] memory cacheBatchSubmitter = batchSubmitter;  // gas optimization
-        for (uint256 i = 0; i < cacheBatchSubmitter.length; i++) {
-            if (cacheBatchSubmitter[i] == msg.sender) {
-                isBatchSubmitter = true;
-                break;
-            }
-        }
-        require(isBatchSubmitter, "Not batch submitter");
+        if (!isBatchSubmitter[msg.sender]) revert NotBatchSubmitter();
         _;
     }
 
     constructor(address _assetContract, address[] memory _batchSubmitter) Ownable(msg.sender) {
+        if (_assetContract == address(0)) revert InvalidAssetContract();
         assetContract = _assetContract;
         emit AssetContractUpdated(_assetContract);
 
-        batchSubmitter = _batchSubmitter;
-        emit BatchSubmitterUpdated(_batchSubmitter);
-
+        _updateBatchSubmitters(_batchSubmitter);
+        
         merkle = new CompleteMerkle();
     }
 
     function getBatchSubmitter() external view returns (address[] memory) {
-        return batchSubmitter;
+        return batchSubmitterList;
+    }
+
+    function _updateBatchSubmitters(address[] memory _batchSubmitter) private {
+        if (_batchSubmitter.length == 0) revert InvalidBatchSubmitter();
+        
+        uint256 currentLength = batchSubmitterList.length;
+        for (uint256 i = 0; i < currentLength; i++) {
+            isBatchSubmitter[batchSubmitterList[i]] = false;
+        }
+        
+        uint256 newLength = _batchSubmitter.length;
+        for (uint256 i = 0; i < newLength; i++) {
+            isBatchSubmitter[_batchSubmitter[i]] = true;
+        }
+        
+        batchSubmitterList = _batchSubmitter;
+        emit BatchSubmitterUpdated(_batchSubmitter);
     }
 
     function setBatchSubmitter(address[] calldata _batchSubmitter) external onlyOwner {
-        require(_batchSubmitter.length > 0, "Invalid batch submitter");
-        batchSubmitter = _batchSubmitter;
-        emit BatchSubmitterUpdated(_batchSubmitter);
+        _updateBatchSubmitters(_batchSubmitter);
     }
 
     function getAssetContract() external view returns (address) {
         return assetContract;
     }
 
-    function setAssetContract(address _assetContract) public onlyOwner {
-        require(_assetContract != address(0), "Invalid asset contract address");
+    function setAssetContract(address _assetContract) external onlyOwner {
+        if (_assetContract == address(0)) revert InvalidAssetContract();
         assetContract = _assetContract;
         emit AssetContractUpdated(_assetContract);
     }
 
-    function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) public onlyBatchSubmitter {
+    function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) external onlyBatchSubmitter {
+        if (_startBlock == 0) revert InvalidStartBlock();
+        if (_totalItems == 0 || _totalItems >= 10000) revert InvalidTotalItems();
+        if (_rootHash == bytes32(0)) revert InvalidRootHash();
+        
         bytes32 previousRootHash = bytes32(0);
-        if (batchId > 0) {
-            Batch memory previousBatch = batches[batchId];
+        uint256 currentBatchId = batchId;
+        
+        if (currentBatchId > 0) {
+            ISettlement.Batch storage previousBatch = batches[currentBatchId];
             previousRootHash = previousBatch.rootHash;
-            require(_startBlock == previousBatch.startBlock + previousBatch.totalItems, "Invalid startBlock");
+            if (_startBlock != previousBatch.startBlock + previousBatch.totalItems) revert InvalidStartBlock();
         }
-        require(_startBlock > 0, "Invalid start block");
-        require(_totalItems > 0 && _totalItems < 10000, "Invalid total items");
-        require(_rootHash != bytes32(0), "Invalid root hash");
 
-        batchId++; // start from 1
+        uint256 newBatchId = currentBatchId + 1;
+        batchId = newBatchId;
 
-        batches[batchId] = Batch({
-            startBlock: _startBlock,
-            totalItems: _totalItems,
-            rootHash: _rootHash,
-            previousRootHash: previousRootHash
-        });
-        emit BatchSubmitted(batchId, _startBlock, _totalItems, _rootHash, previousRootHash);
+        ISettlement.Batch storage newBatch = batches[newBatchId];
+        newBatch.startBlock = _startBlock;
+        newBatch.totalItems = _totalItems;
+        newBatch.rootHash = _rootHash;
+        newBatch.previousRootHash = previousRootHash;
+        
+        emit BatchSubmitted(newBatchId, _startBlock, _totalItems, _rootHash, previousRootHash);
     }
 
-    function getBatch(uint256 _batchId) public view returns (Batch memory) {
+    function getBatch(uint256 _batchId) public view returns (ISettlement.Batch memory) {
         return batches[_batchId];
     }
 
     function finalizeSettlement(uint256 _batchId, ISettlement.SettlementItem[] calldata _items) external {
-        Batch memory existBatch = batches[_batchId];
-        require(existBatch.rootHash != bytes32(0), "Invalid batchId");
+        ISettlement.Batch storage existBatch = batches[_batchId];
+        if (existBatch.rootHash == bytes32(0)) revert InvalidBatchId();
 
-        bytes32[] memory leaves = new bytes32[](_items.length);
-        for (uint256 i = 0; i < _items.length; i++) {
-            leaves[i] = generateLeaf(_batchId, _items[i]);
+        uint256 itemsLength = _items.length;
+        
+        bytes32[] memory leaves = new bytes32[](itemsLength);
+        
+        for (uint256 i = 0; i < itemsLength; i++) {
+            ISettlement.SettlementItem calldata item = _items[i];
+            
+            if (orders[item.orderId].orderId != 0 || orders[item.orderId].businessOrderId != 0) {
+                revert OrderAlreadyExists();
+            }
+            
+            leaves[i] = generateLeaf(_batchId, item);
         }
 
         bytes32 batchRootHash = merkle.getRoot(leaves);
-        require(
-            generateFinalRootHash(batchRootHash, existBatch.previousRootHash) == existBatch.rootHash,
-            "Mismatch root hash"
-        );
+        
+        bytes32 finalRootHash = generateFinalRootHash(batchRootHash, existBatch.previousRootHash);
+        
+        if (finalRootHash != existBatch.rootHash) {
+            revert MismatchRootHash();
+        }
 
-        for (uint256 i = 0; i < _items.length; i++) {
-            tryInsertOrder(_items[i]);
+        address assetContractCache = assetContract;
+        
+        for (uint256 i = 0; i < itemsLength; i++) {
+            ISettlement.SettlementItem calldata item = _items[i];
+            
+            orders[item.orderId] = item;
 
             bytes32[] memory proof = merkle.getProof(leaves, i);
             if (!merkle.verifyProof(batchRootHash, proof, leaves[i])) {
                 revert ErrInvalidProof();
             }
 
-            settle(_items[i]);
+            if (item.isAdd) {
+                IAsset(assetContractCache).addUserBalance(item.user, item.amount);
+            } else if (item.isSettleFee) {
+                IAsset(assetContractCache).addFeeBalance(item.amount);
+            } else {
+                IAsset(assetContractCache).subUserBalance(item.user, item.amount);
+            }
+
+            emit Settlement(item.orderId, item.businessOrderId, item.user, item.amount, item.isAdd, item.isSettleFee);
         }
     }
 
-    function generateLeaf(uint256 _batchId, ISettlement.SettlementItem memory item) public pure returns (bytes32) {
+    function generateLeaf(uint256 _batchId, ISettlement.SettlementItem calldata item) public pure returns (bytes32) {
         return keccak256(
             abi.encodePacked(
                 _batchId, item.orderId, item.businessOrderId, item.user, item.amount, item.isAdd, item.isSettleFee
@@ -124,23 +169,5 @@ contract Settlement is Ownable, ISettlement {
         leaves[0] = batchRootHash;
         leaves[1] = previousRootHash;
         return merkle.getRoot(leaves);
-    }
-
-    function settle(ISettlement.SettlementItem memory item) internal {
-        if (item.isAdd) {
-            IAsset(assetContract).addUserBalance(item.user, item.amount);
-        } else if (item.isSettleFee) {
-            IAsset(assetContract).addFeeBalance(item.amount);
-        } else {
-            IAsset(assetContract).subUserBalance(item.user, item.amount);
-        }
-
-        emit Settlement(item.orderId, item.businessOrderId, item.user, item.amount, item.isAdd, item.isSettleFee);
-    }
-
-    function tryInsertOrder(ISettlement.SettlementItem memory item) internal {
-        ISettlement.SettlementItem memory existItem = orders[item.orderId];
-        require(existItem.orderId == 0 && existItem.businessOrderId == 0, "Order already exists");
-        orders[item.orderId] = item;
     }
 }

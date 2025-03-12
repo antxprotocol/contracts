@@ -2,13 +2,6 @@
 pragma solidity ^0.8.28;
 
 interface ISettlement {
-    struct Batch {
-        uint256 startBlock;
-        uint256 totalItems;
-        bytes32 rootHash;
-        bytes32 previousRootHash;
-    }
-
     struct SettlementItem {
         uint256 orderId;
         uint256 businessOrderId;
@@ -17,9 +10,14 @@ interface ISettlement {
         bool isAdd; // true: add, false: sub
         bool isSettleFee; // true: settle fee
     }
-
-    error ErrInvalidProof();
-
+    
+    struct Batch {
+        uint256 startBlock;
+        uint256 totalItems;
+        bytes32 rootHash;
+        bytes32 previousRootHash;
+    }
+    
     event BatchSubmitterUpdated(address[] batchSubmitter);
     event AssetContractUpdated(address assetContract);
     event BatchSubmitted(
@@ -32,5 +30,5 @@ interface ISettlement {
     function getBatchSubmitter() external view returns (address[] memory);
     function getAssetContract() external view returns (address);
     function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) external;
-    function finalizeSettlement(uint256 _batchId, SettlementItem[] memory _items) external;
+    function finalizeSettlement(uint256 _batchId, SettlementItem[] calldata _items) external;
 }
