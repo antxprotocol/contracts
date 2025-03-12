@@ -27,10 +27,17 @@ contract AssetTest is Test {
     address[] internal signers = [signer1, signer2, signer3];
     address[] internal batchSubmitter = signers;
 
+    // MockToken that can fail transfers for testing
+    MockToken internal failingUSDT;
+
     function setUp() public {
         vm.startPrank(owner);
         asset = new Asset(address(USDT), signers);
         settlement = new SettlementForTest(address(asset), batchSubmitter);
+        
+        // Create a failing USDT mock for testing transfer failures
+        failingUSDT = new MockToken("fUSDT", "fUSDT");
+        failingUSDT.setFailTransfers(true);
         vm.stopPrank();
     }
 
@@ -206,6 +213,180 @@ contract AssetTest is Test {
         // check total balance
         assertEq(asset.getTotalBalance(), 1000);
 
+        vm.stopPrank();
+    }
+
+    // Test error conditions in the constructor - invalid USDT address
+    function test_constructor_invalidUSDT() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        new Asset(address(0), signers);
+        vm.stopPrank();
+    }
+
+    // Test error conditions in the constructor - empty signers array
+    function test_constructor_emptySigners() public {
+        vm.startPrank(owner);
+        address[] memory emptySigners = new address[](0);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        new Asset(address(USDT), emptySigners);
+        vm.stopPrank();
+    }
+
+    // Test error conditions in the constructor - signers containing zero address
+    function test_constructor_zeroAddressSigners() public {
+        vm.startPrank(owner);
+        address[] memory invalidSigners = new address[](3);
+        invalidSigners[0] = signer1;
+        invalidSigners[1] = address(0);  // Zero address
+        invalidSigners[2] = signer3;
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        new Asset(address(USDT), invalidSigners);
+        vm.stopPrank();
+    }
+
+    // Test zero address error in setSettlementContract function
+    function test_setSettlementContract_zeroAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        asset.setSettlementContract(address(0));
+        vm.stopPrank();
+    }
+
+    // Test the validAmount modifier - using zero amount
+    function test_validAmount_zeroAmount() public {
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        
+        // Try to add user balance with zero amount
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
+        settlement.addUserBalanceForTest(user1, 0);
+        
+        // Try to subtract user balance with zero amount
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
+        settlement.subUserBalanceForTest(user1, 0);
+        
+        // Try to add fee balance with zero amount
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
+        settlement.addFeeBalanceForTest(0);
+        vm.stopPrank();
+        
+        // Try to withdraw user balance with zero amount
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
+        asset.withdraw(0);
+        vm.stopPrank();
+        
+        // Try to withdraw fee balance with zero amount
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
+        asset.withdrawFee(signer2, 0);
+        vm.stopPrank();
+    }
+
+    // Test the validAddress modifier in withdrawFee
+    function test_withdrawFee_zeroAddress() public {
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        settlement.addFeeBalanceForTest(1000);
+        USDT.mint(address(asset), 1000);
+        
+        // Try to withdraw fee to zero address
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        asset.withdrawFee(address(0), 500);
+        vm.stopPrank();
+    }
+
+    // Test the validAddress modifier when adding user balance
+    function test_addUserBalance_zeroAddress() public {
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        
+        // Try to add balance to zero address
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        settlement.addUserBalanceForTest(address(0), 1000);
+        vm.stopPrank();
+    }
+
+    // Test the validAddress modifier when subtracting from user balance
+    function test_subUserBalance_zeroAddress() public {
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        
+        // Try to subtract balance from zero address
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        settlement.subUserBalanceForTest(address(0), 1000);
+        vm.stopPrank();
+    }
+
+    // Test transfer failure scenario
+    function test_withdraw_transferFailed() public {
+        // Create a new asset contract using the failing transfer token
+        vm.startPrank(owner);
+        Asset failingAsset = new Asset(address(failingUSDT), signers);
+        
+        // Set settlement contract
+        SettlementForTest newSettlement = new SettlementForTest(address(failingAsset), batchSubmitter);
+        failingAsset.setSettlementContract(address(newSettlement));
+        
+        // Add user balance and mock tokens
+        newSettlement.addUserBalanceForTest(user1, 1000);
+        failingUSDT.mint(address(failingAsset), 2000);
+        vm.stopPrank();
+        
+        // User tries to withdraw balance, but transfer will fail
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.TransferFailed.selector));
+        failingAsset.withdraw(1000);
+        vm.stopPrank();
+    }
+
+    // Test fee withdrawal transfer failure scenario
+    function test_withdrawFee_transferFailed() public {
+        // Create a new asset contract using the failing transfer token
+        vm.startPrank(owner);
+        Asset failingAsset = new Asset(address(failingUSDT), signers);
+        
+        // Set settlement contract
+        SettlementForTest newSettlement = new SettlementForTest(address(failingAsset), batchSubmitter);
+        failingAsset.setSettlementContract(address(newSettlement));
+        
+        // Add fee balance and mock tokens
+        newSettlement.addFeeBalanceForTest(1000);
+        failingUSDT.mint(address(failingAsset), 2000);
+        
+        // Try to withdraw fee, but transfer will fail
+        vm.expectRevert(abi.encodeWithSelector(IAsset.TransferFailed.selector));
+        failingAsset.withdrawFee(signer2, 500);
+        vm.stopPrank();
+    }
+
+    // Test insufficient balance error when subtracting from user balance
+    function test_subUserBalance_insufficientBalance() public {
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        
+        // Add balance
+        settlement.addUserBalanceForTest(user1, 500);
+        
+        // Try to subtract an amount greater than the balance
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, user1, 500, 1000));
+        settlement.subUserBalanceForTest(user1, 1000);
+        vm.stopPrank();
+    }
+
+    // Test insufficient balance error when withdrawing fee
+    function test_withdrawFee_insufficientBalance() public {
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        
+        // Add fee balance
+        settlement.addFeeBalanceForTest(500);
+        USDT.mint(address(asset), 1000);
+        
+        // Try to withdraw fee greater than the balance
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientFeeBalance.selector, 500, 1000));
+        asset.withdrawFee(signer2, 1000);
         vm.stopPrank();
     }
 }

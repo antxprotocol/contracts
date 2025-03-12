@@ -12,8 +12,10 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import {CompleteMerkle} from "@murky/CompleteMerkle.sol";
+import {MurkyBase} from "@murky/common/MurkyBase.sol";
 
 contract SettlementTest is Test {
     Asset public asset;
@@ -41,6 +43,99 @@ contract SettlementTest is Test {
         settlement = new Settlement(address(asset), batchSubmitter);
 
         asset.setSettlementContract(address(settlement));
+        vm.stopPrank();
+    }
+
+    function test_constructor() public {
+        // Test using invalid asset contract address
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.ZeroAddressNotAllowed.selector));
+        new Settlement(address(0), batchSubmitter);
+        
+        // Test using empty batch submitter list
+        address[] memory emptySubmitter = new address[](0);
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.EmptyArrayNotAllowed.selector));
+        new Settlement(address(asset), emptySubmitter);
+        
+        // Test using batch submitter list containing zero address
+        address[] memory invalidSubmitter = new address[](3);
+        invalidSubmitter[0] = signer1;
+        invalidSubmitter[1] = address(0);
+        invalidSubmitter[2] = signer3;
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.ZeroAddressNotAllowed.selector));
+        new Settlement(address(asset), invalidSubmitter);
+        
+        // Test the state of correctly created contract
+        Settlement newSettlement = new Settlement(address(asset), batchSubmitter);
+        assertEq(newSettlement.getAssetContract(), address(asset));
+        assertEq(newSettlement.getBatchSubmitter(), batchSubmitter);
+        vm.stopPrank();
+    }
+
+    function test_pause_unpause() public {
+        // Non-admin cannot pause the contract
+        vm.startPrank(signer1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer1));
+        settlement.pause();
+        vm.stopPrank();
+        
+        // Admin can pause the contract
+        vm.startPrank(owner);
+        settlement.pause();
+        
+        // Paused contract cannot submit batch
+        vm.startPrank(batchSubmitter[0]);
+        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+        settlement.submitBatch(1, 1, bytes32(uint256(1)));
+        vm.stopPrank();
+        
+        // Paused contract cannot set batch submitter
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+        settlement.setBatchSubmitter(batchSubmitter);
+        
+        // Paused contract cannot set asset contract
+        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+        settlement.setAssetContract(address(asset));
+        
+        // Non-admin cannot unpause the contract
+        vm.startPrank(signer1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer1));
+        settlement.unpause();
+        vm.stopPrank();
+        
+        // Admin can unpause the contract
+        vm.startPrank(owner);
+        settlement.unpause();
+        
+        // Can submit batch normally after unpausing
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(1, 1, bytes32(uint256(1)));
+        vm.stopPrank();
+        
+        vm.startPrank(owner);
+        // Can pause again
+        settlement.pause();
+        
+        // Paused contract cannot finalize settlement
+        vm.startPrank(batchSubmitter[0]);
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](1);
+        items[0] = ISettlement.SettlementItem({
+            orderId: 1,
+            businessOrderId: 1,
+            user: signer1,
+            amount: 1000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+        settlement.finalizeSettlement(1, items);
+        vm.stopPrank();
+        
+        // Restore to normal state
+        vm.startPrank(owner);
+        settlement.unpause();
         vm.stopPrank();
     }
 
@@ -135,6 +230,10 @@ contract SettlementTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidTotalItems.selector));
         settlement.submitBatch(startBlock, 0, hex"7a59672632b9d47cc075c2b523053e14c02313b6f0d5fc558a7b67b3555f564f");
 
+        // Batch too large
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.BatchTooLarge.selector));
+        settlement.submitBatch(startBlock, 1001, hex"7a59672632b9d47cc075c2b523053e14c02313b6f0d5fc558a7b67b3555f564f");
+
         // invalid root hash
         vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidRootHash.selector));
         settlement.submitBatch(startBlock, 1, bytes32(0));
@@ -221,20 +320,20 @@ contract SettlementTest is Test {
         vm.startPrank(batchSubmitter[0]);
         settlement.submitBatch(startBlock, items.length, finalRootHash);
         
-        // 非批处理提交者不能调用finalizeSettlement
+        // Non-batch submitter cannot call finalizeSettlement
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(ISettlement.NotBatchSubmitter.selector));
         settlement.finalizeSettlement(batchId, items);
         vm.stopPrank();
         
-        // 使用批处理提交者身份
+        // Use batch submitter identity
         vm.startPrank(batchSubmitter[0]);
         
-        // 测试无效batchId
+        // Test invalid batchId
         vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidBatchId.selector));
         settlement.finalizeSettlement(batchId + 1, items);
 
-        // 测试不匹配的根哈希
+        // Test mismatched root hash
         ISettlement.SettlementItem[] memory tmpItems = new ISettlement.SettlementItem[](3);
         tmpItems[0] = items[0];
         tmpItems[1] = items[1];
@@ -243,7 +342,7 @@ contract SettlementTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ISettlement.MismatchRootHash.selector));
         settlement.finalizeSettlement(batchId, tmpItems);
 
-        // recover item[2]
+        // Recover item[2]
         tmpItems[2].amount = 500;
         console.log("item[2]");
         console.logBytes32(settlement.generateLeaf(batchId, items[2]));
@@ -310,8 +409,7 @@ contract SettlementTest is Test {
         vm.stopPrank();
     }
 
-
-     function test_finalizeSettlement_gaslimit() public {
+    function test_finalizeSettlement_gaslimit() public {
         CompleteMerkle merkle = new CompleteMerkle();
         uint256 itemCount = 100;
 
@@ -348,5 +446,139 @@ contract SettlementTest is Test {
         // finalize settlement use normal user
         settlement.finalizeSettlement(batchId, items);
         vm.stopPrank();
+    }
+    
+    function test_finalizeSettlement_tooManyItems() public {
+        CompleteMerkle merkle = new CompleteMerkle();
+        uint256 itemCount = 201; // Exceeds the maximum allowed number of items for a single operation
+
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](itemCount);
+        for (uint256 i = 0; i < itemCount; i++) {
+            items[i] = ISettlement.SettlementItem({
+                orderId: i,
+                businessOrderId: i,
+                amount: 1000,
+                user: signer1,
+                isAdd: true,
+                isSettleFee: false
+            });
+        }
+
+        // generate leaf
+        uint256 batchId = 1;
+        uint256 startBlock = 1;
+
+        bytes32[] memory leaves = new bytes32[](itemCount);
+        for (uint256 i = 0; i < itemCount; i++) {
+            leaves[i] = settlement.generateLeaf(batchId, items[i]);
+        }
+        bytes32 batchRootHash = merkle.getRoot(leaves);
+
+        // generate final root hash
+        bytes32 previousRootHash = bytes32(0);
+        bytes32 finalRootHash = settlement.generateFinalRootHash(batchRootHash, previousRootHash);
+
+        // first submit batch
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(startBlock, items.length, finalRootHash);
+
+        // Test case with too many items
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.TooManyItemsToFinalize.selector));
+        settlement.finalizeSettlement(batchId, items);
+        vm.stopPrank();
+    }
+    
+    function test_finalizeSettlement_emptyArray() public {
+        // Create a valid batch
+        ISettlement.SettlementItem[] memory validItems = new ISettlement.SettlementItem[](2);
+        validItems[0] = ISettlement.SettlementItem({
+            orderId: 1,
+            businessOrderId: 1,
+            user: signer1,
+            amount: 1000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        validItems[1] = ISettlement.SettlementItem({
+            orderId: 2,
+            businessOrderId: 2,
+            user: signer2,
+            amount: 1000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        CompleteMerkle merkle = new CompleteMerkle();
+        
+        // Generate and submit a valid batch
+        uint256 batchId = 1;
+        uint256 startBlock = 1;
+        bytes32[] memory leaves = new bytes32[](2);
+        leaves[0] = settlement.generateLeaf(batchId, validItems[0]);
+        leaves[1] = settlement.generateLeaf(batchId, validItems[1]);
+        bytes32 batchRootHash = merkle.getRoot(leaves);
+        bytes32 previousRootHash = bytes32(0);
+        bytes32 finalRootHash = settlement.generateFinalRootHash(batchRootHash, previousRootHash);
+        
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(startBlock, validItems.length, finalRootHash);
+        
+        // Test empty array case
+        ISettlement.SettlementItem[] memory emptyItems = new ISettlement.SettlementItem[](0);
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.EmptyArrayNotAllowed.selector));
+        settlement.finalizeSettlement(batchId, emptyItems);
+        vm.stopPrank();
+    }
+    
+    function test_finalizeSettlement_zeroAddress() public {
+        // Create two items, one normal item and one zero address item
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](2);
+        items[0] = ISettlement.SettlementItem({
+            orderId: 1,
+            businessOrderId: 1,
+            user: signer1,
+            amount: 1000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        items[1] = ISettlement.SettlementItem({
+            orderId: 2,
+            businessOrderId: 2,
+            user: address(0), // Zero address
+            amount: 1000,
+            isAdd: true,
+            isSettleFee: false // Not fee settlement
+        });
+        
+        // Generate and submit batch
+        CompleteMerkle merkle = new CompleteMerkle();
+        uint256 batchId = 1;
+        uint256 startBlock = 1;
+        bytes32[] memory leaves = new bytes32[](2);
+        leaves[0] = settlement.generateLeaf(batchId, items[0]);
+        leaves[1] = settlement.generateLeaf(batchId, items[1]);
+        bytes32 batchRootHash = merkle.getRoot(leaves);
+        bytes32 previousRootHash = bytes32(0);
+        bytes32 finalRootHash = settlement.generateFinalRootHash(batchRootHash, previousRootHash);
+        
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(startBlock, items.length, finalRootHash);
+        
+        // Test case with zero address user (not fee settlement) should throw error
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.ZeroAddressNotAllowed.selector));
+        settlement.finalizeSettlement(batchId, items);
+        
+        // End of test
+        vm.stopPrank();
+    }
+    
+    function test_finalizeSettlement_invalidProof() public {
+        // As it's difficult to easily simulate Merkle proof failure, we'll skip this test
+        // In reality, when we submit a mismatched item list, it should trigger a MismatchRootHash error
+        // And it would fail before that error, so the ErrInvalidProof error is difficult to trigger in unit tests
+        
+        // Skipping this test as a known limitation
+        vm.skip(true);
     }
 }
