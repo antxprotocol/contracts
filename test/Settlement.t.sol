@@ -53,7 +53,7 @@ contract SettlementTest is Test {
         // set owner
         vm.startPrank(owner);
         address[] memory emptySubmitter = new address[](0);
-        vm.expectRevert(abi.encodeWithSelector(Settlement.InvalidBatchSubmitter.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.EmptyArrayNotAllowed.selector));
         settlement.setBatchSubmitter(emptySubmitter);
 
         address[] memory newBatchSubmitter = new address[](2);
@@ -73,7 +73,7 @@ contract SettlementTest is Test {
 
         // set owner
         vm.startPrank(owner);
-        vm.expectRevert(abi.encodeWithSelector(Settlement.InvalidAssetContract.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.ZeroAddressNotAllowed.selector));
         settlement.setAssetContract(address(0));
 
         settlement.setAssetContract(address(asset));
@@ -121,22 +121,22 @@ contract SettlementTest is Test {
         uint256 startBlock = 1;
         // invalid batch submitter
         vm.startPrank(user1);
-        vm.expectRevert(abi.encodeWithSelector(Settlement.NotBatchSubmitter.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.NotBatchSubmitter.selector));
         settlement.submitBatch(startBlock, 1, hex"7a59672632b9d47cc075c2b523053e14c02313b6f0d5fc558a7b67b3555f564f");
 
         // valid batch submitter
         vm.startPrank(batchSubmitter[0]);
 
         // invalid start block
-        vm.expectRevert(abi.encodeWithSelector(Settlement.InvalidStartBlock.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidStartBlock.selector));
         settlement.submitBatch(0, 1, hex"7a59672632b9d47cc075c2b523053e14c02313b6f0d5fc558a7b67b3555f564f");
 
         // invalid total items
-        vm.expectRevert(abi.encodeWithSelector(Settlement.InvalidTotalItems.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidTotalItems.selector));
         settlement.submitBatch(startBlock, 0, hex"7a59672632b9d47cc075c2b523053e14c02313b6f0d5fc558a7b67b3555f564f");
 
         // invalid root hash
-        vm.expectRevert(abi.encodeWithSelector(Settlement.InvalidRootHash.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidRootHash.selector));
         settlement.submitBatch(startBlock, 1, bytes32(0));
 
         // expect event
@@ -220,21 +220,27 @@ contract SettlementTest is Test {
         // first submit batch
         vm.startPrank(batchSubmitter[0]);
         settlement.submitBatch(startBlock, items.length, finalRootHash);
-
-        // finalize settlement use normal user
+        
+        // 非批处理提交者不能调用finalizeSettlement
         vm.startPrank(user1);
-
-        // invalid batchId
-        vm.expectRevert(abi.encodeWithSelector(Settlement.InvalidBatchId.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.NotBatchSubmitter.selector));
+        settlement.finalizeSettlement(batchId, items);
+        vm.stopPrank();
+        
+        // 使用批处理提交者身份
+        vm.startPrank(batchSubmitter[0]);
+        
+        // 测试无效batchId
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidBatchId.selector));
         settlement.finalizeSettlement(batchId + 1, items);
 
-        // mismatch root hash
+        // 测试不匹配的根哈希
         ISettlement.SettlementItem[] memory tmpItems = new ISettlement.SettlementItem[](3);
         tmpItems[0] = items[0];
         tmpItems[1] = items[1];
         tmpItems[2] = items[2];
         tmpItems[2].amount = 1001;
-        vm.expectRevert(abi.encodeWithSelector(Settlement.MismatchRootHash.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.MismatchRootHash.selector));
         settlement.finalizeSettlement(batchId, tmpItems);
 
         // recover item[2]
@@ -271,6 +277,7 @@ contract SettlementTest is Test {
         settlement.finalizeSettlement(batchId, items);
 
         // submit batch 2
+        vm.stopPrank();
         vm.startPrank(batchSubmitter[1]);
         batchId = 2;
         items[2].amount = 1002;
@@ -292,12 +299,12 @@ contract SettlementTest is Test {
         console.log("finalRootHash2");
         console.logBytes32(finalRootHash2);
 
-        vm.expectRevert(abi.encodeWithSelector(Settlement.InvalidStartBlock.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidStartBlock.selector));
         settlement.submitBatch(startBlock, items.length, finalRootHash2);
 
         settlement.submitBatch(startBlock + items.length, items.length, finalRootHash2);
 
-        vm.expectRevert(abi.encodeWithSelector(Settlement.OrderAlreadyExists.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.OrderAlreadyExists.selector));
         settlement.finalizeSettlement(batchId, items);
 
         vm.stopPrank();

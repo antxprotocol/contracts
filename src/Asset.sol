@@ -3,58 +3,86 @@ pragma solidity ^0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IAsset.sol";
 
-contract Asset is Ownable, IAsset {
+contract Asset is Ownable, ReentrancyGuard, IAsset {
     IERC20 public immutable USDT;
     address public settlementContract;
     address[] public signers;
     mapping(address => uint256) public userBalance;
     uint256 public feeBalance;
-
-    error NotSettlementContract();
-    error InvalidSettlementContractAddress();
-    error InsufficientUserBalance(address user, uint256 available, uint256 required);
-    error InsufficientFeeBalance(uint256 available, uint256 required);
     
     modifier onlySettlement() {
         if (msg.sender != settlementContract) revert NotSettlementContract();
         _;
     }
 
+    modifier validAddress(address addr) {
+        if (addr == address(0)) revert ZeroAddressNotAllowed();
+        _;
+    }
+
+    modifier validAmount(uint256 amount) {
+        if (amount == 0) revert ZeroAmountNotAllowed();
+        _;
+    }
+
     constructor(address _USDT, address[] memory _signers) Ownable(msg.sender) {
-        if (_USDT == address(0)) revert InvalidSettlementContractAddress();
+        if (_USDT == address(0)) revert ZeroAddressNotAllowed();
         USDT = IERC20(_USDT);
 
+        // Check signers
+        if (_signers.length == 0) revert ZeroAddressNotAllowed();
+        for (uint256 i = 0; i < _signers.length; i++) {
+            if (_signers[i] == address(0)) revert ZeroAddressNotAllowed();
+        }
         signers = _signers;
         emit SignersUpdated(_signers);
     }
 
-    function setSettlementContract(address _settlementContract) external onlyOwner {
-        if (_settlementContract == address(0)) revert InvalidSettlementContractAddress();
+    function setSettlementContract(address _settlementContract) external onlyOwner validAddress(_settlementContract) {
         settlementContract = _settlementContract;
         emit SettlementContractUpdated(_settlementContract);
     }
 
-    function withdraw(uint256 amount) external {
+    function withdraw(uint256 amount) external nonReentrant validAmount(amount) {
         uint256 currentBalance = userBalance[msg.sender];
         if (amount > currentBalance) revert InsufficientUserBalance(msg.sender, currentBalance, amount);
         
+        // Update state before external call to prevent reentrancy
         userBalance[msg.sender] = currentBalance - amount;
         
+        // Store balance before transfer
+        uint256 preBalance = USDT.balanceOf(address(this));
+        
+        // Execute transfer
         bool success = USDT.transfer(msg.sender, amount);
-        require(success, "Transfer failed");
+        if (!success) revert TransferFailed();
+        
+        // Verify transfer happened correctly (optional, for extra safety)
+        uint256 postBalance = USDT.balanceOf(address(this));
+        assert(preBalance - postBalance == amount);
         
         emit Withdraw(msg.sender, amount);
     }
 
-    function withdrawFee(address to, uint256 amount) external onlyOwner {
+    function withdrawFee(address to, uint256 amount) external onlyOwner nonReentrant validAddress(to) validAmount(amount) {
         if (amount > feeBalance) revert InsufficientFeeBalance(feeBalance, amount);
         
+        // Update state before external call to prevent reentrancy
         feeBalance -= amount;
         
+        // Store balance before transfer
+        uint256 preBalance = USDT.balanceOf(address(this));
+        
+        // Execute transfer
         bool success = USDT.transfer(to, amount);
-        require(success, "Transfer failed");
+        if (!success) revert TransferFailed();
+
+        // Verify transfer happened correctly
+        uint256 postBalance = USDT.balanceOf(address(this));
+        assert(preBalance - postBalance == amount);
         
         emit WithdrawFee(to, amount);
     }
@@ -83,13 +111,12 @@ contract Asset is Ownable, IAsset {
         return address(USDT);
     }
 
-    function addUserBalance(address user, uint256 amount) external onlySettlement {
-        if (user == address(0)) revert InvalidSettlementContractAddress();
+    function addUserBalance(address user, uint256 amount) external onlySettlement validAddress(user) validAmount(amount) {
         userBalance[user] += amount;
         emit AddUserBalance(user, amount);
     }
 
-    function subUserBalance(address user, uint256 amount) external onlySettlement {
+    function subUserBalance(address user, uint256 amount) external onlySettlement validAddress(user) validAmount(amount) {
         uint256 currentBalance = userBalance[user];
         if (amount > currentBalance) revert InsufficientUserBalance(user, currentBalance, amount);
         
@@ -97,7 +124,7 @@ contract Asset is Ownable, IAsset {
         emit SubUserBalance(user, amount);
     }
 
-    function addFeeBalance(uint256 amount) external onlySettlement {
+    function addFeeBalance(uint256 amount) external onlySettlement validAmount(amount) {
         feeBalance += amount;
         emit AddFeeBalance(amount);
     }

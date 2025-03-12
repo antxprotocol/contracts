@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 interface IAsset {
+    // Events
     event SignersUpdated(address[] signers);
     event SettlementContractUpdated(address indexed settlementContract);
     event Withdraw(address indexed user, uint256 amount);
@@ -10,6 +11,17 @@ interface IAsset {
     event SubUserBalance(address indexed user, uint256 amount);
     event AddFeeBalance(uint256 amount);
 
+    // Errors
+    error NotSettlementContract();
+    error InvalidSettlementContractAddress();
+    error InsufficientUserBalance(address user, uint256 available, uint256 required);
+    error InsufficientFeeBalance(uint256 available, uint256 required);
+    error ZeroAddressNotAllowed();
+    error ZeroAmountNotAllowed();
+    error FeeExceedsLimit(uint256 current, uint256 toAdd, uint256 limit);
+    error TransferFailed();
+
+    // View/Pure functions
     function getTotalBalance() external view returns (uint256);
     function getUserBalance(address user) external view returns (uint256);
     function getFeeBalance() external view returns (uint256);
@@ -17,6 +29,7 @@ interface IAsset {
     function getSettlementContract() external view returns (address);
     function getUSDT() external view returns (address);
 
+    // State-changing functions
     function addUserBalance(address user, uint256 amount) external;
     function subUserBalance(address user, uint256 amount) external;
     function addFeeBalance(uint256 amount) external;

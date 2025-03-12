@@ -27,8 +27,26 @@ interface ISettlement {
         uint256 orderId, uint256 businessOrderId, address user, uint256 amount, bool isAdd, bool isSettleFee
     );
 
+    error NotBatchSubmitter();
+    error InvalidBatchSubmitter();
+    error InvalidAssetContract();
+    error InvalidStartBlock();
+    error InvalidTotalItems();
+    error InvalidRootHash();
+    error InvalidBatchId();
+    error OrderAlreadyExists();
+    error MismatchRootHash();
+    error ErrInvalidProof();
+    error BatchTooLarge();
+    error TooManyItemsToFinalize();
+    error ZeroAddressNotAllowed();
+    error EmptyArrayNotAllowed();
+
     function getBatchSubmitter() external view returns (address[] memory);
     function getAssetContract() external view returns (address);
+    function getBatch(uint256 _batchId) external view returns (Batch memory);
     function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) external;
     function finalizeSettlement(uint256 _batchId, SettlementItem[] calldata _items) external;
+    function pause() external;
+    function unpause() external;
 }

@@ -79,7 +79,7 @@ contract AssetTest is Test {
         vm.startPrank(owner);
 
         // expect revert
-        vm.expectRevert(abi.encodeWithSelector(Asset.NotSettlementContract.selector));
+        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
         settlement.addUserBalanceForTest(signer1, 1000);
 
         // set settlement contract
@@ -106,7 +106,7 @@ contract AssetTest is Test {
         vm.startPrank(owner);
 
         // expect revert
-        vm.expectRevert(abi.encodeWithSelector(Asset.NotSettlementContract.selector));
+        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
         settlement.addFeeBalanceForTest(1000);
 
         // set settlement contract
@@ -128,7 +128,7 @@ contract AssetTest is Test {
         vm.startPrank(owner);
 
         // expect revert
-        vm.expectRevert(abi.encodeWithSelector(Asset.NotSettlementContract.selector));
+        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
         settlement.addFeeBalanceForTest(1000);
 
         // set settlement contract
@@ -189,7 +189,7 @@ contract AssetTest is Test {
         vm.startPrank(user1);
 
         // expect revert with custom error
-        vm.expectRevert(abi.encodeWithSelector(Asset.InsufficientUserBalance.selector, user1, 1000, 1001));
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, user1, 1000, 1001));
         asset.withdraw(1001);
 
         // expect event - transfer first then emit event

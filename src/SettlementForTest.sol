@@ -2,11 +2,13 @@
 pragma solidity ^0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {CompleteMerkle} from "@murky/CompleteMerkle.sol";
 import "./interfaces/ISettlement.sol";
 import "./interfaces/IAsset.sol";
 
-contract SettlementForTest is Ownable, ISettlement {
+contract SettlementForTest is Ownable, ReentrancyGuard, Pausable, ISettlement {
     uint256 public batchId;
     address public assetContract;
     mapping(address => bool) public isBatchSubmitter;
@@ -14,25 +16,23 @@ contract SettlementForTest is Ownable, ISettlement {
     mapping(uint256 => ISettlement.SettlementItem) public orders;
     mapping(uint256 => ISettlement.Batch) public batches;
     CompleteMerkle private immutable merkle;
-
-    error NotBatchSubmitter();
-    error InvalidBatchSubmitter();
-    error InvalidAssetContract();
-    error InvalidStartBlock();
-    error InvalidTotalItems();
-    error InvalidRootHash();
-    error InvalidBatchId();
-    error OrderAlreadyExists();
-    error MismatchRootHash();
-    error ErrInvalidProof();
+    
+    // Constants for security limits
+    uint256 public constant MAX_BATCH_SIZE = 1000; // Maximum items in a batch
+    uint256 public constant MAX_ITEMS_PER_FINALIZE = 200; // Maximum items per finalize call
 
     modifier onlyBatchSubmitter() {
         if (!isBatchSubmitter[msg.sender]) revert NotBatchSubmitter();
         _;
     }
 
+    modifier validAddress(address addr) {
+        if (addr == address(0)) revert ZeroAddressNotAllowed();
+        _;
+    }
+
     constructor(address _assetContract, address[] memory _batchSubmitter) Ownable(msg.sender) {
-        if (_assetContract == address(0)) revert InvalidAssetContract();
+        if (_assetContract == address(0)) revert ZeroAddressNotAllowed();
         assetContract = _assetContract;
         emit AssetContractUpdated(_assetContract);
 
@@ -46,7 +46,7 @@ contract SettlementForTest is Ownable, ISettlement {
     }
 
     function _updateBatchSubmitters(address[] memory _batchSubmitter) private {
-        if (_batchSubmitter.length == 0) revert InvalidBatchSubmitter();
+        if (_batchSubmitter.length == 0) revert EmptyArrayNotAllowed();
         
         uint256 currentLength = batchSubmitterList.length;
         for (uint256 i = 0; i < currentLength; i++) {
@@ -55,6 +55,7 @@ contract SettlementForTest is Ownable, ISettlement {
         
         uint256 newLength = _batchSubmitter.length;
         for (uint256 i = 0; i < newLength; i++) {
+            if (_batchSubmitter[i] == address(0)) revert ZeroAddressNotAllowed();
             isBatchSubmitter[_batchSubmitter[i]] = true;
         }
         
@@ -62,7 +63,7 @@ contract SettlementForTest is Ownable, ISettlement {
         emit BatchSubmitterUpdated(_batchSubmitter);
     }
 
-    function setBatchSubmitter(address[] calldata _batchSubmitter) external onlyOwner {
+    function setBatchSubmitter(address[] calldata _batchSubmitter) external onlyOwner whenNotPaused {
         _updateBatchSubmitters(_batchSubmitter);
     }
 
@@ -70,31 +71,42 @@ contract SettlementForTest is Ownable, ISettlement {
         return assetContract;
     }
 
-    function setAssetContract(address _assetContract) external onlyOwner {
-        if (_assetContract == address(0)) revert InvalidAssetContract();
+    function setAssetContract(address _assetContract) external onlyOwner validAddress(_assetContract) whenNotPaused {
         assetContract = _assetContract;
         emit AssetContractUpdated(_assetContract);
     }
 
-    function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) external onlyBatchSubmitter {
+    // Pause and unpause functions for emergency stops
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) 
+        external 
+        onlyBatchSubmitter 
+        whenNotPaused 
+    {
         if (_startBlock == 0) revert InvalidStartBlock();
-        if (_totalItems == 0 || _totalItems >= 10000) revert InvalidTotalItems();
+        if (_totalItems == 0) revert InvalidTotalItems();
+        if (_totalItems > MAX_BATCH_SIZE) revert BatchTooLarge();
         if (_rootHash == bytes32(0)) revert InvalidRootHash();
         
         bytes32 previousRootHash = bytes32(0);
-        uint256 currentBatchId = batchId; // Cache state variable
+        uint256 currentBatchId = batchId;
         
         if (currentBatchId > 0) {
-            ISettlement.Batch storage previousBatch = batches[currentBatchId]; 
+            ISettlement.Batch storage previousBatch = batches[currentBatchId];
             previousRootHash = previousBatch.rootHash;
             if (_startBlock != previousBatch.startBlock + previousBatch.totalItems) revert InvalidStartBlock();
         }
 
-        // Increment batchId and cache new value
         uint256 newBatchId = currentBatchId + 1;
         batchId = newBatchId;
 
-        // Store directly to state variable, skip temporary memory struct
         ISettlement.Batch storage newBatch = batches[newBatchId];
         newBatch.startBlock = _startBlock;
         newBatch.totalItems = _totalItems;
@@ -108,22 +120,32 @@ contract SettlementForTest is Ownable, ISettlement {
         return batches[_batchId];
     }
 
-    function finalizeSettlement(uint256 _batchId, ISettlement.SettlementItem[] calldata _items) external {
+    function finalizeSettlement(uint256 _batchId, ISettlement.SettlementItem[] calldata _items) 
+        external 
+        onlyBatchSubmitter 
+        nonReentrant 
+        whenNotPaused 
+    {
+        // Check batch size limit for gas efficiency
+        uint256 itemsLength = _items.length;
+        if (itemsLength == 0) revert EmptyArrayNotAllowed();
+        if (itemsLength > MAX_ITEMS_PER_FINALIZE) revert TooManyItemsToFinalize();
+        
         // Verify batchId is valid
-        ISettlement.Batch storage existBatch = batches[_batchId]; // Use storage pointer instead of memory copy
+        ISettlement.Batch storage existBatch = batches[_batchId];
         if (existBatch.rootHash == bytes32(0)) revert InvalidBatchId();
 
-        // Optimization: calculate items length once
-        uint256 itemsLength = _items.length;
-        
-        // Pre-allocate memory to reduce dynamic allocation
+        // Pre-allocate memory for leaves array
         bytes32[] memory leaves = new bytes32[](itemsLength);
         
-        // First fill the leaves array and optimize validation logic
+        // First, validate all items and build leaves array
         for (uint256 i = 0; i < itemsLength; i++) {
             ISettlement.SettlementItem calldata item = _items[i];
             
-            // Verify order doesn't exist and store new order
+            // Verify item has valid user address
+            if (item.user == address(0) && !item.isSettleFee) revert ZeroAddressNotAllowed();
+            
+            // Verify order doesn't already exist
             if (orders[item.orderId].orderId != 0 || orders[item.orderId].businessOrderId != 0) {
                 revert OrderAlreadyExists();
             }
@@ -132,31 +154,29 @@ contract SettlementForTest is Ownable, ISettlement {
             leaves[i] = generateLeaf(_batchId, item);
         }
 
-        // Calculate batch root hash
+        // Calculate and verify Merkle root
         bytes32 batchRootHash = merkle.getRoot(leaves);
-        
-        // Calculate final root hash and verify
         bytes32 finalRootHash = generateFinalRootHash(batchRootHash, existBatch.previousRootHash);
         
         if (finalRootHash != existBatch.rootHash) {
             revert MismatchRootHash();
         }
 
-        // Cache assetContract to reduce storage reads
+        // Cache assetContract to save gas
         address assetContractCache = assetContract;
         
-        // Process each settlement item
+        // Process each settlement item after verification
         for (uint256 i = 0; i < itemsLength; i++) {
             ISettlement.SettlementItem calldata item = _items[i];
             
-            // Store order information
-            orders[item.orderId] = item;
-
-            // Verify Merkle proof
+            // Verify Merkle proof first before storing or processing
             bytes32[] memory proof = merkle.getProof(leaves, i);
             if (!merkle.verifyProof(batchRootHash, proof, leaves[i])) {
                 revert ErrInvalidProof();
             }
+            
+            // Store order information AFTER verification
+            orders[item.orderId] = item;
 
             // Update asset contract
             if (item.isAdd) {
@@ -171,7 +191,6 @@ contract SettlementForTest is Ownable, ISettlement {
         }
     }
 
-    // Inline generateLeaf function to finalizeSettlement to reduce function call overhead
     function generateLeaf(uint256 _batchId, ISettlement.SettlementItem calldata item) public pure returns (bytes32) {
         return keccak256(
             abi.encodePacked(
@@ -180,7 +199,6 @@ contract SettlementForTest is Ownable, ISettlement {
         );
     }
 
-    // Inline generateFinalRootHash to finalizeSettlement to reduce function call overhead
     function generateFinalRootHash(bytes32 batchRootHash, bytes32 previousRootHash) public view returns (bytes32) {
         bytes32[] memory leaves = new bytes32[](2);
         leaves[0] = batchRootHash;
