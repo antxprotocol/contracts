@@ -12,7 +12,10 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     address[] public signers;
     mapping(address => uint256) public userBalance;
     uint256 public feeBalance;
+    uint256 public lastBatchTime;
     
+    uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days; 
+
     modifier onlySettlement() {
         if (msg.sender != settlementContract) revert NotSettlementContract();
         _;
@@ -25,6 +28,11 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
 
     modifier validAmount(uint256 amount) {
         if (amount == 0) revert ZeroAmountNotAllowed();
+        _;
+    }
+
+    modifier validTime(uint256 time) {
+        if (time == 0) revert InvalidTime(time);
         _;
     }
 
@@ -47,6 +55,18 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
     function withdraw(uint256 amount) external nonReentrant validAmount(amount) {
+        _userWithdraw(amount);
+    }
+
+    function forceWithdraw(uint256 amount) external nonReentrant validAmount(amount) {
+        // check time lock
+        if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
+
+        _userWithdraw(amount);
+        emit ForceWithdraw(msg.sender, amount);
+    }
+
+    function _userWithdraw(uint256 amount) internal validAmount(amount) {
         uint256 currentBalance = userBalance[msg.sender];
         if (amount > currentBalance) revert InsufficientUserBalance(msg.sender, currentBalance, amount);
         
@@ -109,6 +129,15 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
 
     function getUSDT() external view returns (address) {
         return address(USDT);
+    }
+
+    function getLastBatchTime() external view returns (uint256) {
+        return lastBatchTime;
+    }
+
+    function setLastBatchTime(uint256 _lastBatchTime) external onlySettlement validTime(_lastBatchTime) {
+        lastBatchTime = _lastBatchTime;
+        emit LastBatchTimeUpdated(_lastBatchTime);
     }
 
     function addUserBalance(address user, uint256 amount) external onlySettlement validAddress(user) validAmount(amount) {

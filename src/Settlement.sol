@@ -114,6 +114,9 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         newBatch.previousRootHash = previousRootHash;
         
         emit BatchSubmitted(newBatchId, _startBlock, _totalItems, _rootHash, previousRootHash);
+
+        // set last batch time
+        IAsset(assetContract).setLastBatchTime(block.timestamp);
     }
 
     function getBatch(uint256 _batchId) public view returns (ISettlement.Batch memory) {
@@ -175,7 +178,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
                 revert ErrInvalidProof();
             }
             
-            // Store order information AFTER verification
+            // Store order information after verification
             orders[item.orderId] = item;
 
             // Update asset contract

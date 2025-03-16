@@ -191,6 +191,7 @@ contract AssetTest is Test {
         // add user balance
         settlement.addUserBalanceForTest(user1, 1000);
         assertEq(asset.getUserBalance(user1), 1000);
+        vm.stopPrank();
 
         // change to user1
         vm.startPrank(user1);

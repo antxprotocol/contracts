@@ -10,6 +10,8 @@ interface IAsset {
     event AddUserBalance(address indexed user, uint256 amount);
     event SubUserBalance(address indexed user, uint256 amount);
     event AddFeeBalance(uint256 amount);
+    event ForceWithdraw(address indexed user, uint256 amount);
+    event LastBatchTimeUpdated(uint256 time);
 
     // Errors
     error NotSettlementContract();
@@ -20,6 +22,8 @@ interface IAsset {
     error ZeroAmountNotAllowed();
     error FeeExceedsLimit(uint256 current, uint256 toAdd, uint256 limit);
     error TransferFailed();
+    error TimeLockNotPassed();
+    error InvalidTime(uint256 time);
 
     // View/Pure functions
     function getTotalBalance() external view returns (uint256);
@@ -33,4 +37,5 @@ interface IAsset {
     function addUserBalance(address user, uint256 amount) external;
     function subUserBalance(address user, uint256 amount) external;
     function addFeeBalance(uint256 amount) external;
+    function setLastBatchTime(uint256 time) external;
 }
