@@ -16,6 +16,7 @@ interface ISettlement {
         uint256 totalItems;
         bytes32 rootHash;
         bytes32 previousRootHash;
+        uint256 batchTime;
     }
     
     event BatchSubmitterUpdated(address[] batchSubmitter);
@@ -41,7 +42,8 @@ interface ISettlement {
     error TooManyItemsToFinalize();
     error ZeroAddressNotAllowed();
     error EmptyArrayNotAllowed();
-
+    error TimeLockNotPassed();
+    
     function getBatchSubmitter() external view returns (address[] memory);
     function getAssetContract() external view returns (address);
     function getBatch(uint256 _batchId) external view returns (Batch memory);

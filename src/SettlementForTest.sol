@@ -20,6 +20,7 @@ contract SettlementForTest is Ownable, ReentrancyGuard, Pausable, ISettlement {
     // Constants for security limits
     uint256 public constant MAX_BATCH_SIZE = 1000; // Maximum items in a batch
     uint256 public constant MAX_ITEMS_PER_FINALIZE = 200; // Maximum items per finalize call
+    uint256 public constant SETTLEMENT_TIME_LOCK = 10 seconds; 
 
     modifier onlyBatchSubmitter() {
         if (!isBatchSubmitter[msg.sender]) revert NotBatchSubmitter();
@@ -217,6 +218,10 @@ contract SettlementForTest is Ownable, ReentrancyGuard, Pausable, ISettlement {
 
     function subUserBalanceForTest(address user, uint256 amount) public onlyOwner {
         IAsset(assetContract).subUserBalance(user, amount);
+    }
+    
+    function setLastBatchTimeForTest(uint256 time) public onlyOwner {
+        IAsset(assetContract).setLastBatchTime(time);
     }
 }
 

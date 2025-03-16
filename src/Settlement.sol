@@ -20,6 +20,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
     // Constants for security limits
     uint256 public constant MAX_BATCH_SIZE = 1000; // Maximum items in a batch
     uint256 public constant MAX_ITEMS_PER_FINALIZE = 200; // Maximum items per finalize call
+    uint256 public constant SETTLEMENT_TIME_LOCK = 10 seconds; 
 
     modifier onlyBatchSubmitter() {
         if (!isBatchSubmitter[msg.sender]) revert NotBatchSubmitter();
@@ -112,6 +113,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         newBatch.totalItems = _totalItems;
         newBatch.rootHash = _rootHash;
         newBatch.previousRootHash = previousRootHash;
+        newBatch.batchTime = block.timestamp;
         
         emit BatchSubmitted(newBatchId, _startBlock, _totalItems, _rootHash, previousRootHash);
 
@@ -137,7 +139,8 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         // Verify batchId is valid
         ISettlement.Batch storage existBatch = batches[_batchId];
         if (existBatch.rootHash == bytes32(0)) revert InvalidBatchId();
-
+        if (block.timestamp < existBatch.batchTime + SETTLEMENT_TIME_LOCK) revert TimeLockNotPassed();
+        
         // Pre-allocate memory for leaves array
         bytes32[] memory leaves = new bytes32[](itemsLength);
         

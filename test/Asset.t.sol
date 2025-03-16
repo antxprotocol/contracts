@@ -390,4 +390,122 @@ contract AssetTest is Test {
         asset.withdrawFee(signer2, 1000);
         vm.stopPrank();
     }
+
+    // Test the validTime modifier and setLastBatchTime function
+    function test_validTime_zeroTime() public {
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        
+        // Try to set last batch time with zero value
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidTime.selector, 0));
+        settlement.setLastBatchTimeForTest(0);
+        vm.stopPrank();
+    }
+
+    // Test getLastBatchTime and setLastBatchTime functions
+    function test_lastBatchTime() public {
+        // Initial value should be 0
+        assertEq(asset.getLastBatchTime(), 0);
+        
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        
+        // Set a valid time
+        uint256 newTime = block.timestamp;
+        settlement.setLastBatchTimeForTest(newTime);
+        
+        // Check if time was updated
+        assertEq(asset.getLastBatchTime(), newTime);
+        
+        // Set another time and verify update
+        uint256 newerTime = block.timestamp + 100;
+        
+        // Check for LastBatchTimeUpdated event
+        vm.expectEmit(address(asset));
+        emit IAsset.LastBatchTimeUpdated(newerTime);
+        
+        settlement.setLastBatchTimeForTest(newerTime);
+        assertEq(asset.getLastBatchTime(), newerTime);
+        vm.stopPrank();
+        
+        // Try to call setLastBatchTime from non-settlement address
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
+        asset.setLastBatchTime(block.timestamp);
+        vm.stopPrank();
+    }
+
+    // Test forceWithdraw function
+    function test_forceWithdraw() public {
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        
+        // Set up last batch time
+        uint256 currentTime = block.timestamp;
+        settlement.setLastBatchTimeForTest(currentTime);
+        
+        // Add balance and tokens
+        settlement.addUserBalanceForTest(user1, 1000);
+        USDT.mint(address(asset), 2000);
+        vm.stopPrank();
+        
+        // User tries to force withdraw before time lock period
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.TimeLockNotPassed.selector));
+        asset.forceWithdraw(500);
+        
+        // Fast forward time beyond the time lock
+        vm.warp(currentTime + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
+        
+        // Now force withdraw should succeed
+        // Expect USDT transfer event first
+        vm.expectEmit(address(USDT));
+        emit IERC20.Transfer(address(asset), user1, 500);
+        
+        // Then expect Withdraw event followed by ForceWithdraw event
+        vm.expectEmit(address(asset));
+        emit IAsset.Withdraw(user1, 500);
+        
+        vm.expectEmit(address(asset));
+        emit IAsset.ForceWithdraw(user1, 500);
+        
+        asset.forceWithdraw(500);
+        
+        // Verify balance is updated
+        assertEq(asset.getUserBalance(user1), 500);
+        assertEq(USDT.balanceOf(user1), 500);
+        vm.stopPrank();
+        
+        // Test force withdraw with too much amount
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, user1, 500, 600));
+        asset.forceWithdraw(600);
+        vm.stopPrank();
+    }
+
+    // Test zero amount validation in forceWithdraw
+    function test_forceWithdraw_zeroAmount() public {
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        uint256 currentTime = block.timestamp;
+        settlement.setLastBatchTimeForTest(currentTime);
+        
+        // Fast forward time beyond the time lock
+        vm.warp(currentTime + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
+        vm.stopPrank();
+        
+        // Try to force withdraw zero amount
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
+        asset.forceWithdraw(0);
+        vm.stopPrank();
+    }
+
+    // Test that non-settlement contract cannot call setLastBatchTime
+    function test_setLastBatchTime_nonSettlement() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
+        asset.setLastBatchTime(block.timestamp);
+        vm.stopPrank();
+    }
 }

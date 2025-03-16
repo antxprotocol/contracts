@@ -36,6 +36,9 @@ contract SettlementTest is Test {
 
     address[] internal signers = [signer1, signer2, signer3];
     address[] internal batchSubmitter = signers;
+    
+    // Time lock constants from contracts
+    uint256 public constant SETTLEMENT_TIME_LOCK = 1 days;
 
     function setUp() public {
         vm.startPrank(owner);
@@ -73,6 +76,8 @@ contract SettlementTest is Test {
     }
 
     function test_pause_unpause() public {
+        uint256 batchTime = block.timestamp;
+
         // Non-admin cannot pause the contract
         vm.startPrank(signer1);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer1));
@@ -326,6 +331,9 @@ contract SettlementTest is Test {
         settlement.finalizeSettlement(batchId, items);
         vm.stopPrank();
         
+        // Advance time past SETTLEMENT_TIME_LOCK
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
+        
         // Use batch submitter identity
         vm.startPrank(batchSubmitter[0]);
         
@@ -402,6 +410,9 @@ contract SettlementTest is Test {
         settlement.submitBatch(startBlock, items.length, finalRootHash2);
 
         settlement.submitBatch(startBlock + items.length, items.length, finalRootHash2);
+        
+        // Advance time past SETTLEMENT_TIME_LOCK for the new batch
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
 
         vm.expectRevert(abi.encodeWithSelector(ISettlement.OrderAlreadyExists.selector));
         settlement.finalizeSettlement(batchId, items);
@@ -442,6 +453,9 @@ contract SettlementTest is Test {
         // first submit batch
         vm.startPrank(batchSubmitter[0]);
         settlement.submitBatch(startBlock, items.length, finalRootHash);
+
+        // Advance time past SETTLEMENT_TIME_LOCK
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
 
         // finalize settlement use normal user
         settlement.finalizeSettlement(batchId, items);
@@ -565,6 +579,9 @@ contract SettlementTest is Test {
         vm.startPrank(batchSubmitter[0]);
         settlement.submitBatch(startBlock, items.length, finalRootHash);
         
+        // Advance time past time lock
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
+        
         // Test case with zero address user (not fee settlement) should throw error
         vm.expectRevert(abi.encodeWithSelector(ISettlement.ZeroAddressNotAllowed.selector));
         settlement.finalizeSettlement(batchId, items);
@@ -574,11 +591,546 @@ contract SettlementTest is Test {
     }
     
     function test_finalizeSettlement_invalidProof() public {
-        // As it's difficult to easily simulate Merkle proof failure, we'll skip this test
-        // In reality, when we submit a mismatched item list, it should trigger a MismatchRootHash error
-        // And it would fail before that error, so the ErrInvalidProof error is difficult to trigger in unit tests
+        // Create two settlement items
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](2);
+        items[0] = ISettlement.SettlementItem({
+            orderId: 100,
+            businessOrderId: 100,
+            user: user1,
+            amount: 500,
+            isAdd: true,
+            isSettleFee: false
+        });
         
-        // Skipping this test as a known limitation
+        items[1] = ISettlement.SettlementItem({
+            orderId: 101,
+            businessOrderId: 101,
+            user: user2,
+            amount: 700,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        uint256 batchId = 1;
+        uint256 startBlock = block.number;
+        
+        // Generate correct leaves for the Merkle tree
+        CompleteMerkle merkle = new CompleteMerkle();
+        bytes32[] memory leaves = new bytes32[](2);
+        leaves[0] = settlement.generateLeaf(batchId, items[0]);
+        leaves[1] = settlement.generateLeaf(batchId, items[1]);
+        
+        // Get the correct root hash
+        bytes32 rootHash = merkle.getRoot(leaves);
+        
+        // Submit batch with the correct root hash
+        vm.prank(signer1);
+        settlement.submitBatch(startBlock, 2, rootHash);
+        
+        // Fast forward past the time lock
+        vm.warp(block.timestamp + settlement.SETTLEMENT_TIME_LOCK() + 1);
+        
+        // This test is difficult to implement because the contract first checks if the root hash matches
+        // before verifying individual proofs. If we modify the items, it will fail with MismatchRootHash.
+        // 
+        // In a real-world scenario, ErrInvalidProof would occur if:
+        // 1. The Merkle tree implementation has a bug
+        // 2. The proof generation logic is incorrect
+        // 3. The contract's verification logic is incorrect
+        //
+        // Since we can't easily simulate these conditions in a unit test, we'll skip this test
+        // but acknowledge that the branch exists and would be triggered in those scenarios.
         vm.skip(true);
+    }
+
+    function test_settlement_timeLock() public {
+        // Create two simple settlement items
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](2);
+        items[0] = ISettlement.SettlementItem({
+            orderId: 100,
+            businessOrderId: 100,
+            user: signer1,
+            amount: 500,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        items[1] = ISettlement.SettlementItem({
+            orderId: 101,
+            businessOrderId: 101,
+            user: signer2,
+            amount: 700,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        // Create a simple batch
+        CompleteMerkle merkle = new CompleteMerkle();
+        uint256 batchId = 1;
+        
+        bytes32[] memory leaves = new bytes32[](2);
+        leaves[0] = settlement.generateLeaf(batchId, items[0]);
+        leaves[1] = settlement.generateLeaf(batchId, items[1]);
+        
+        bytes32 rootHash = merkle.getRoot(leaves);
+        bytes32 finalRootHash = settlement.generateFinalRootHash(rootHash, bytes32(0));
+        
+        // Submit the batch
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(1, 2, finalRootHash);
+        
+        // First verification - trying to finalize before time lock expires should fail
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.TimeLockNotPassed.selector));
+        settlement.finalizeSettlement(batchId, items);
+        
+        // Now advance time past the time lock
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
+        
+        // Should now succeed
+        settlement.finalizeSettlement(batchId, items);
+        
+        vm.stopPrank();
+    }
+
+    function test_batch_structure_integrity() public {
+        // Test the complete Batch structure including the batchTime field
+        uint256 startBlock = 1;
+        bytes32 testRootHash = hex"7a59672632b9d47cc075c2b523053e14c02313b6f0d5fc558a7b67b3555f564f";
+        
+        // Get current timestamp
+        uint256 currentTime = block.timestamp;
+        
+        // Submit batch as a valid submitter
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(startBlock, 1, testRootHash);
+        vm.stopPrank();
+        
+        // Check batch info including batchTime
+        ISettlement.Batch memory batch = settlement.getBatch(1);
+        assertEq(batch.startBlock, startBlock);
+        assertEq(batch.totalItems, 1);
+        assertEq(batch.rootHash, testRootHash);
+        assertEq(batch.previousRootHash, bytes32(0));
+        assertEq(batch.batchTime, currentTime);
+        
+        // Verify that lastBatchTime was also set in Asset contract
+        assertEq(asset.getLastBatchTime(), currentTime);
+    }
+
+    function test_generateFinalRootHash_edge_cases() public {
+        // Test zero values
+        bytes32 zeroHash = bytes32(0);
+        bytes32 finalRootHashZero = settlement.generateFinalRootHash(zeroHash, zeroHash);
+        
+        // Even with zero inputs, should produce a valid Merkle root
+        CompleteMerkle merkle = new CompleteMerkle();
+        bytes32[] memory leaves = new bytes32[](2);
+        leaves[0] = zeroHash;
+        leaves[1] = zeroHash;
+        bytes32 expectedRootHash = merkle.getRoot(leaves);
+        
+        assertEq(finalRootHashZero, expectedRootHash);
+        assertNotEq(finalRootHashZero, zeroHash, "Root hash should not be zero even with zero inputs");
+        
+        // Test with one zero and one non-zero
+        bytes32 nonZeroHash = hex"1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+        bytes32 finalRootHashMixed = settlement.generateFinalRootHash(nonZeroHash, zeroHash);
+        
+        leaves[0] = nonZeroHash;
+        leaves[1] = zeroHash;
+        expectedRootHash = merkle.getRoot(leaves);
+        
+        assertEq(finalRootHashMixed, expectedRootHash);
+    }
+    
+    function test_lastBatchTime_update() public {
+        // Verify that lastBatchTime gets updated when submitting batches
+        uint256 initialTime = block.timestamp;
+        
+        // Submit first batch
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(1, 1, bytes32(uint256(1)));
+        
+        // Verify time was set
+        assertEq(asset.getLastBatchTime(), initialTime);
+        
+        // Advance time
+        vm.warp(block.timestamp + 100);
+        uint256 newTime = block.timestamp;
+        
+        // Submit second batch
+        settlement.submitBatch(2, 1, bytes32(uint256(2)));
+        
+        // Verify new time was set
+        assertEq(asset.getLastBatchTime(), newTime);
+        vm.stopPrank();
+    }
+    
+    function test_finalizeSettlement_with_large_valid_items() public {
+        // Test with exactly MAX_ITEMS_PER_FINALIZE items (valid limit)
+        CompleteMerkle merkle = new CompleteMerkle();
+        uint256 itemCount = settlement.MAX_ITEMS_PER_FINALIZE();
+        
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](itemCount);
+        for (uint256 i = 0; i < itemCount; i++) {
+            items[i] = ISettlement.SettlementItem({
+                orderId: i,
+                businessOrderId: i,
+                amount: 1000,
+                user: signer1,
+                isAdd: true,
+                isSettleFee: false
+            });
+        }
+        
+        // Generate leaves and merkle root
+        uint256 batchId = 1;
+        uint256 startBlock = 1;
+        
+        bytes32[] memory leaves = new bytes32[](itemCount);
+        for (uint256 i = 0; i < itemCount; i++) {
+            leaves[i] = settlement.generateLeaf(batchId, items[i]);
+        }
+        bytes32 batchRootHash = merkle.getRoot(leaves);
+        
+        // Generate final root hash
+        bytes32 previousRootHash = bytes32(0);
+        bytes32 finalRootHash = settlement.generateFinalRootHash(batchRootHash, previousRootHash);
+        
+        // Submit batch
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(startBlock, items.length, finalRootHash);
+        
+        // Advance time past SETTLEMENT_TIME_LOCK
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
+        
+        // This should succeed as it's exactly at the maximum limit
+        settlement.finalizeSettlement(batchId, items);
+        vm.stopPrank();
+    }
+
+    function test_mixed_settlement_operations() public {
+        // Test mix of add, subtract and fee operations in one batch
+        CompleteMerkle merkle = new CompleteMerkle();
+        
+        // Create mixed operations: add for user1, subtract for user2, fee operation
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](3);
+        items[0] = ISettlement.SettlementItem({
+            orderId: 101,
+            businessOrderId: 101,
+            user: user1,
+            amount: 1000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        items[1] = ISettlement.SettlementItem({
+            orderId: 102,
+            businessOrderId: 102,
+            user: user2,
+            amount: 500,
+            isAdd: false, // Subtract operation
+            isSettleFee: false
+        });
+        
+        items[2] = ISettlement.SettlementItem({
+            orderId: 103,
+            businessOrderId: 103,
+            user: address(0), // Fee operations can have zero address
+            amount: 300,
+            isAdd: false,
+            isSettleFee: true  // Fee operation
+        });
+        
+        // Add some initial balance for user2 so we can subtract
+        vm.startPrank(owner);
+        asset.setSettlementContract(address(settlement));
+        
+        vm.startPrank(batchSubmitter[0]);
+        
+        // Setup test environment
+        uint256 batchId = 1;
+        bytes32[] memory leaves = new bytes32[](3);
+        leaves[0] = settlement.generateLeaf(batchId, items[0]);
+        leaves[1] = settlement.generateLeaf(batchId, items[1]);
+        leaves[2] = settlement.generateLeaf(batchId, items[2]);
+        
+        bytes32 batchRootHash = merkle.getRoot(leaves);
+        bytes32 finalRootHash = settlement.generateFinalRootHash(batchRootHash, bytes32(0));
+        
+        // Add initial balance for user2
+        vm.stopPrank();
+        vm.prank(address(settlement));
+        asset.addUserBalance(user2, 1000);
+        
+        // Submit and process batch
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(1, items.length, finalRootHash);
+        
+        // Advance time past SETTLEMENT_TIME_LOCK
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
+        
+        // Process the batch
+        settlement.finalizeSettlement(batchId, items);
+        
+        // Verify all balances
+        assertEq(asset.getUserBalance(user1), 1000);
+        assertEq(asset.getUserBalance(user2), 500); // 1000 - 500
+        assertEq(asset.getFeeBalance(), 300);
+        
+        vm.stopPrank();
+    }
+
+    function test_merkle_proof_verification() public {
+        // Test the merkle proof verification functionality more directly
+        CompleteMerkle merkle = new CompleteMerkle();
+        
+        // Create a simple batch with two items
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](2);
+        items[0] = ISettlement.SettlementItem({
+            orderId: 1001,
+            businessOrderId: 1001,
+            user: user1,
+            amount: 1000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        items[1] = ISettlement.SettlementItem({
+            orderId: 1002,
+            businessOrderId: 1002,
+            user: user2,
+            amount: 2000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        // Generate leaf nodes
+        uint256 batchId = 1;
+        bytes32[] memory leaves = new bytes32[](2);
+        leaves[0] = settlement.generateLeaf(batchId, items[0]);
+        leaves[1] = settlement.generateLeaf(batchId, items[1]);
+        
+        // Get root hash and proofs
+        bytes32 rootHash = merkle.getRoot(leaves);
+        bytes32[] memory proof0 = merkle.getProof(leaves, 0);
+        bytes32[] memory proof1 = merkle.getProof(leaves, 1);
+        
+        // Verify proofs directly
+        bool isValidProof0 = merkle.verifyProof(rootHash, proof0, leaves[0]);
+        bool isValidProof1 = merkle.verifyProof(rootHash, proof1, leaves[1]);
+        
+        assertTrue(isValidProof0, "Proof for first leaf should be valid");
+        assertTrue(isValidProof1, "Proof for second leaf should be valid");
+        
+        // Test invalid proof
+        bytes32 invalidLeaf = keccak256(abi.encodePacked("invalid"));
+        bool isInvalidProof = merkle.verifyProof(rootHash, proof0, invalidLeaf);
+        assertFalse(isInvalidProof, "Proof should fail for invalid leaf");
+    }
+    
+    function test_batch_sequence() public {
+        // Test proper sequence of batch IDs and block progression
+        vm.startPrank(batchSubmitter[0]);
+        
+        // Submit first batch
+        settlement.submitBatch(1, 1, bytes32(uint256(1)));
+        
+        // Check batch ID
+        assertEq(settlement.batchId(), 1);
+        
+        // Submit second batch
+        settlement.submitBatch(2, 2, bytes32(uint256(2)));
+        
+        // Check batch ID incremented
+        assertEq(settlement.batchId(), 2);
+        
+        // Submit third batch with invalid start block (should fail)
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidStartBlock.selector));
+        settlement.submitBatch(3, 3, bytes32(uint256(3)));
+        
+        // Submit third batch with correct start block
+        settlement.submitBatch(4, 3, bytes32(uint256(3)));
+        
+        // Verify sequence
+        assertEq(settlement.batchId(), 3);
+        
+        ISettlement.Batch memory batch1 = settlement.getBatch(1);
+        ISettlement.Batch memory batch2 = settlement.getBatch(2);
+        ISettlement.Batch memory batch3 = settlement.getBatch(3);
+        
+        assertEq(batch1.startBlock, 1);
+        assertEq(batch1.totalItems, 1);
+        assertEq(batch2.startBlock, 2);
+        assertEq(batch2.totalItems, 2);
+        assertEq(batch3.startBlock, 4);
+        assertEq(batch3.totalItems, 3);
+        
+        // Verify linkedList-like structure with previousRootHash
+        assertEq(batch1.previousRootHash, bytes32(0));
+        assertEq(batch2.previousRootHash, batch1.rootHash);
+        assertEq(batch3.previousRootHash, batch2.rootHash);
+        
+        vm.stopPrank();
+    }
+    
+    function test_fee_settlement_with_zero_address() public {
+        // Test fee settlement specifically with zero address
+        CompleteMerkle merkle = new CompleteMerkle();
+        
+        // Create fee settlement item with zero address (should be allowed)
+        // Add a second item to avoid single leaf error
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](2);
+        items[0] = ISettlement.SettlementItem({
+            orderId: 2001,
+            businessOrderId: 2001,
+            user: address(0), // Zero address
+            amount: 500,
+            isAdd: false,
+            isSettleFee: true // Fee settlement should allow zero address
+        });
+        
+        // Add a second item to avoid the single leaf error
+        items[1] = ISettlement.SettlementItem({
+            orderId: 2002,
+            businessOrderId: 2002,
+            user: user1, // Normal user
+            amount: 100,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        // Generate batch
+        uint256 batchId = 1;
+        uint256 startBlock = 1;
+        
+        bytes32[] memory leaves = new bytes32[](2);
+        leaves[0] = settlement.generateLeaf(batchId, items[0]);
+        leaves[1] = settlement.generateLeaf(batchId, items[1]);
+        bytes32 rootHash = merkle.getRoot(leaves);
+        bytes32 finalRootHash = settlement.generateFinalRootHash(rootHash, bytes32(0));
+        
+        // Submit batch
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(startBlock, items.length, finalRootHash);
+        
+        // Advance time past SETTLEMENT_TIME_LOCK
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
+        
+        // This should succeed since zero address is allowed for fee settlements
+        settlement.finalizeSettlement(batchId, items);
+        
+        // Verify fee balance and user balance
+        assertEq(asset.getFeeBalance(), 500);
+        assertEq(asset.getUserBalance(user1), 100);
+        
+        vm.stopPrank();
+    }
+    
+    function test_revert_nonbatch_submitter_pause() public {
+        // Test that non-batch submitters cannot pause the contract
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
+        settlement.pause();
+        vm.stopPrank();
+    }
+    
+    function test_full_validation_chain() public {
+        // Test the full sequence of validation checks in finalizeSettlement
+        CompleteMerkle merkle = new CompleteMerkle();
+        
+        // Create a test batch with 3 items
+        ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](3);
+        items[0] = ISettlement.SettlementItem({
+            orderId: 3001,
+            businessOrderId: 3001,
+            user: user1,
+            amount: 1000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        items[1] = ISettlement.SettlementItem({
+            orderId: 3002,
+            businessOrderId: 3002,
+            user: user2,
+            amount: 2000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        items[2] = ISettlement.SettlementItem({
+            orderId: 3003,
+            businessOrderId: 3003,
+            user: user3,
+            amount: 3000,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        // Generate batch
+        uint256 batchId = 1;
+        uint256 startBlock = 1;
+        
+        bytes32[] memory leaves = new bytes32[](3);
+        leaves[0] = settlement.generateLeaf(batchId, items[0]);
+        leaves[1] = settlement.generateLeaf(batchId, items[1]);
+        leaves[2] = settlement.generateLeaf(batchId, items[2]);
+        bytes32 rootHash = merkle.getRoot(leaves);
+        bytes32 finalRootHash = settlement.generateFinalRootHash(rootHash, bytes32(0));
+        
+        // Submit batch
+        vm.startPrank(batchSubmitter[0]);
+        settlement.submitBatch(startBlock, items.length, finalRootHash);
+        
+        // Advance time past SETTLEMENT_TIME_LOCK
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
+        
+        // Process batch
+        settlement.finalizeSettlement(batchId, items);
+        
+        // Verify all users got their balance
+        assertEq(asset.getUserBalance(user1), 1000);
+        assertEq(asset.getUserBalance(user2), 2000);
+        assertEq(asset.getUserBalance(user3), 3000);
+        
+        // Try to reuse orderId (should fail)
+        ISettlement.SettlementItem[] memory items2 = new ISettlement.SettlementItem[](2); // Use at least 2 items
+        items2[0] = ISettlement.SettlementItem({
+            orderId: 3001, // Already used
+            businessOrderId: 4001,
+            user: user1,
+            amount: 500,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        // Add second item to avoid single leaf error
+        items2[1] = ISettlement.SettlementItem({
+            orderId: 4002, // New ID
+            businessOrderId: 4002, 
+            user: user2,
+            amount: 600,
+            isAdd: true,
+            isSettleFee: false
+        });
+        
+        bytes32[] memory leaves2 = new bytes32[](2);
+        leaves2[0] = settlement.generateLeaf(batchId + 1, items2[0]);
+        leaves2[1] = settlement.generateLeaf(batchId + 1, items2[1]);
+        bytes32 rootHash2 = merkle.getRoot(leaves2);
+        bytes32 finalRootHash2 = settlement.generateFinalRootHash(rootHash2, finalRootHash);
+        
+        // Submit second batch
+        settlement.submitBatch(startBlock + items.length, items2.length, finalRootHash2);
+        
+        // Advance time past SETTLEMENT_TIME_LOCK
+        vm.warp(block.timestamp + SETTLEMENT_TIME_LOCK + 1);
+        
+        // This should fail because the orderId is already used
+        vm.expectRevert(abi.encodeWithSelector(ISettlement.OrderAlreadyExists.selector));
+        settlement.finalizeSettlement(batchId + 1, items2);
+        
+        vm.stopPrank();
     }
 }
