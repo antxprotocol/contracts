@@ -16,5 +16,8 @@
     "@layerzerolabs/lz-evm-protocol-v2": "^3.0.79",
     "@layerzerolabs/toolbox-foundry": "^0.1.12",
     "@openzeppelin/contracts": "^5.2.0"
+  },
+  "dependencies": {
+    "@stargatefinance/stg-evm-v2": "^2.0.2"
   }
 }

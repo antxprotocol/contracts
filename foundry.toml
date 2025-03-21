@@ -15,7 +15,8 @@ remappings = [
     "@murky/=lib/murky/src/",
     '@forge-std/=node_modules/@layerzerolabs/toolbox-foundry/lib/forge-std',
     '@layerzerolabs/=node_modules/@layerzerolabs/',
-    'solidity-bytes-utils/=lib/solidity-bytes-utils/'
+    'solidity-bytes-utils/=lib/solidity-bytes-utils/',
+    '@stargatefinance/=node_modules/@stargatefinance/'
 ]
 
 optimizer = true

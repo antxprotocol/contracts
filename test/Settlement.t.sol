@@ -76,8 +76,6 @@ contract SettlementTest is Test {
     }
 
     function test_pause_unpause() public {
-        uint256 batchTime = block.timestamp;
-
         // Non-admin cannot pause the contract
         vm.startPrank(signer1);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer1));
