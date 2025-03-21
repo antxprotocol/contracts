@@ -77,6 +77,8 @@ forge script script/Bridge.s.sol --rpc-url https://sepolia.drpc.org --broadcast
 
 ### stargate API
 
+api入口[https://scan-testnet.layerzero-api.com/v1/swagger]
+
 ```
 curl -X 'GET' \
   'https://scan-testnet.layerzero-api.com/v1/messages/tx/0xbb879586c6c36a898bbcd9a8f2bfe0f8caa55c035e21bb9da4b06177c138b2d8' \
