@@ -65,6 +65,15 @@ $ anvil --help
 $ cast --help
 ```
 
+### stargate合约集成
+```
+1.部署sepolia链的adapter
+forge script script/AntStrargateAdapter.s.sol --rpc-url https://sepolia.drpc.org --broadcast
+2.部署arb-sepolia链的adapter
+forge script script/AntStrargateAdapterARB.s.sol --rpc-url https://arbitrum-sepolia.drpc.org --broadcast 
+3.执行桥合约操作
+forge script script/Bridge.s.sol --rpc-url https://sepolia.drpc.org --broadcast
+```
 
 ### stargate API
 
