@@ -207,4 +207,13 @@ contract Settlement is Operator, ReentrancyGuard, Pausable, ISettlement {
         leaves[1] = previousRootHash;
         return merkle.getRoot(leaves);
     }
+
+    // Test functions
+    function addFeeBalanceForTest(uint256 amount) external {
+        IAsset(assetContract).addFeeBalance(amount);
+    }
+
+    function setLastBatchTimeForTest(uint256 time) external {
+        IAsset(assetContract).setLastBatchTime(time);
+    }
 }

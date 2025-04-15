@@ -70,7 +70,8 @@ contract SettlementTest is Test {
         
         // Test the state of correctly created contract
         Settlement newSettlement = new Settlement(address(asset), batchSubmitter);
-        assertEq(newSettlement.getAssetContract(), address(asset));
+        assertEq(newSettlement.lastBatchId(), 0);
+        assertEq(newSettlement.assetContract(), address(asset));
         assertEq(newSettlement.getBatchSubmitter(), batchSubmitter);
         vm.stopPrank();
     }
@@ -128,8 +129,7 @@ contract SettlementTest is Test {
             businessOrderId: 1,
             user: signer1,
             amount: 1000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
@@ -175,7 +175,7 @@ contract SettlementTest is Test {
         settlement.setAssetContract(address(0));
 
         settlement.setAssetContract(address(asset));
-        assertEq(settlement.getAssetContract(), address(asset));
+        assertEq(settlement.assetContract(), address(asset));
 
         vm.stopPrank();
     }
@@ -188,8 +188,7 @@ contract SettlementTest is Test {
                 businessOrderId: 1,
                 user: signer1,
                 amount: 1000,
-                isAdd: true,
-                isSettleFee: false
+                types: ISettlement.SettlementType.Deposit
             })
         );
 
@@ -274,24 +273,21 @@ contract SettlementTest is Test {
             businessOrderId: 1,
             user: signer1,
             amount: 1000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         items[1] = ISettlement.SettlementItem({
             orderId: 2,
             businessOrderId: 2,
             user: signer2,
             amount: 100,
-            isAdd: false,
-            isSettleFee: true
+            types: ISettlement.SettlementType.SettleFee
         });
         items[2] = ISettlement.SettlementItem({
             orderId: 3,
-            businessOrderId: 2,
+            businessOrderId: 3,
             user: signer3,
             amount: 500,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
 
         // generate leaf
@@ -360,24 +356,21 @@ contract SettlementTest is Test {
             items[0].businessOrderId,
             items[0].user,
             items[0].amount,
-            items[0].isAdd,
-            items[0].isSettleFee
+            ISettlement.SettlementType.Deposit
         );
         emit ISettlement.Settlement(
             items[1].orderId,
             items[1].businessOrderId,
             items[1].user,
             items[1].amount,
-            items[1].isAdd,
-            items[1].isSettleFee
+            ISettlement.SettlementType.SettleFee
         );
         emit ISettlement.Settlement(
             items[2].orderId,
             items[2].businessOrderId,
             items[2].user,
             items[2].amount,
-            items[2].isAdd,
-            items[2].isSettleFee
+            ISettlement.SettlementType.Deposit
         );
         settlement.finalizeSettlement(batchId, items);
 
@@ -429,8 +422,7 @@ contract SettlementTest is Test {
                 businessOrderId: i,
                 amount: 1000,
                 user: signer1,
-                isAdd: true,
-                isSettleFee: false
+                types: ISettlement.SettlementType.Deposit
             });
         }
 
@@ -471,8 +463,7 @@ contract SettlementTest is Test {
                 businessOrderId: i,
                 amount: 1000,
                 user: signer1,
-                isAdd: true,
-                isSettleFee: false
+                types: ISettlement.SettlementType.Deposit
             });
         }
 
@@ -508,16 +499,14 @@ contract SettlementTest is Test {
             businessOrderId: 1,
             user: signer1,
             amount: 1000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         validItems[1] = ISettlement.SettlementItem({
             orderId: 2,
             businessOrderId: 2,
             user: signer2,
             amount: 1000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         CompleteMerkle merkle = new CompleteMerkle();
@@ -550,8 +539,7 @@ contract SettlementTest is Test {
             businessOrderId: 1,
             user: signer1,
             amount: 1000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         items[1] = ISettlement.SettlementItem({
@@ -559,8 +547,7 @@ contract SettlementTest is Test {
             businessOrderId: 2,
             user: address(0), // Zero address
             amount: 1000,
-            isAdd: true,
-            isSettleFee: false // Not fee settlement
+            types: ISettlement.SettlementType.Deposit
         });
         
         // Generate and submit batch
@@ -596,8 +583,7 @@ contract SettlementTest is Test {
             businessOrderId: 100,
             user: user1,
             amount: 500,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         items[1] = ISettlement.SettlementItem({
@@ -605,8 +591,7 @@ contract SettlementTest is Test {
             businessOrderId: 101,
             user: user2,
             amount: 700,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         uint256 batchId = 1;
@@ -649,8 +634,7 @@ contract SettlementTest is Test {
             businessOrderId: 100,
             user: signer1,
             amount: 500,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         items[1] = ISettlement.SettlementItem({
@@ -658,8 +642,7 @@ contract SettlementTest is Test {
             businessOrderId: 101,
             user: signer2,
             amount: 700,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         // Create a simple batch
@@ -712,7 +695,7 @@ contract SettlementTest is Test {
         assertEq(batch.batchTime, currentTime);
         
         // Verify that lastBatchTime was also set in Asset contract
-        assertEq(asset.getLastBatchTime(), currentTime);
+        assertEq(asset.lastBatchTime(), currentTime);
     }
 
     function test_generateFinalRootHash_edge_cases() public {
@@ -750,7 +733,7 @@ contract SettlementTest is Test {
         settlement.submitBatch(1, 1, bytes32(uint256(1)));
         
         // Verify time was set
-        assertEq(asset.getLastBatchTime(), initialTime);
+        assertEq(asset.lastBatchTime(), initialTime);
         
         // Advance time
         vm.warp(block.timestamp + 100);
@@ -760,7 +743,7 @@ contract SettlementTest is Test {
         settlement.submitBatch(2, 1, bytes32(uint256(2)));
         
         // Verify new time was set
-        assertEq(asset.getLastBatchTime(), newTime);
+        assertEq(asset.lastBatchTime(), newTime);
         vm.stopPrank();
     }
     
@@ -776,8 +759,7 @@ contract SettlementTest is Test {
                 businessOrderId: i,
                 amount: 1000,
                 user: signer1,
-                isAdd: true,
-                isSettleFee: false
+                types: ISettlement.SettlementType.Deposit
             });
         }
         
@@ -818,8 +800,7 @@ contract SettlementTest is Test {
             businessOrderId: 101,
             user: user1,
             amount: 1000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         items[1] = ISettlement.SettlementItem({
@@ -827,8 +808,7 @@ contract SettlementTest is Test {
             businessOrderId: 102,
             user: user2,
             amount: 500,
-            isAdd: false, // Subtract operation
-            isSettleFee: false
+            types: ISettlement.SettlementType.Withdraw
         });
         
         items[2] = ISettlement.SettlementItem({
@@ -836,15 +816,8 @@ contract SettlementTest is Test {
             businessOrderId: 103,
             user: address(0), // Fee operations can have zero address
             amount: 300,
-            isAdd: false,
-            isSettleFee: true  // Fee operation
+            types: ISettlement.SettlementType.SettleFee
         });
-        
-        // Add some initial balance for user2 so we can subtract
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        
-        vm.startPrank(batchSubmitter[0]);
         
         // Setup test environment
         uint256 batchId = 1;
@@ -856,11 +829,6 @@ contract SettlementTest is Test {
         bytes32 batchRootHash = merkle.getRoot(leaves);
         bytes32 finalRootHash = settlement.generateFinalRootHash(batchRootHash, bytes32(0));
         
-        // Add initial balance for user2
-        vm.stopPrank();
-        vm.prank(address(settlement));
-        asset.addUserBalance(user2, 1000);
-        
         // Submit and process batch
         vm.startPrank(batchSubmitter[0]);
         settlement.submitBatch(1, items.length, finalRootHash);
@@ -871,10 +839,8 @@ contract SettlementTest is Test {
         // Process the batch
         settlement.finalizeSettlement(batchId, items);
         
-        // Verify all balances
-        assertEq(asset.getUserBalance(user1), 1000);
-        assertEq(asset.getUserBalance(user2), 500); // 1000 - 500
-        assertEq(asset.getFeeBalance(), 300);
+        // Verify fee balance
+        assertEq(asset.feeBalance(), 300);
         
         vm.stopPrank();
     }
@@ -890,8 +856,7 @@ contract SettlementTest is Test {
             businessOrderId: 1001,
             user: user1,
             amount: 1000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         items[1] = ISettlement.SettlementItem({
@@ -899,8 +864,7 @@ contract SettlementTest is Test {
             businessOrderId: 1002,
             user: user2,
             amount: 2000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         // Generate leaf nodes
@@ -935,13 +899,13 @@ contract SettlementTest is Test {
         settlement.submitBatch(1, 1, bytes32(uint256(1)));
         
         // Check batch ID
-        assertEq(settlement.batchId(), 1);
+        assertEq(settlement.lastBatchId(), 1);
         
         // Submit second batch
         settlement.submitBatch(2, 2, bytes32(uint256(2)));
         
         // Check batch ID incremented
-        assertEq(settlement.batchId(), 2);
+        assertEq(settlement.lastBatchId(), 2);
         
         // Submit third batch with invalid start block (should fail)
         vm.expectRevert(abi.encodeWithSelector(ISettlement.InvalidStartBlock.selector));
@@ -951,7 +915,7 @@ contract SettlementTest is Test {
         settlement.submitBatch(4, 3, bytes32(uint256(3)));
         
         // Verify sequence
-        assertEq(settlement.batchId(), 3);
+        assertEq(settlement.lastBatchId(), 3);
         
         ISettlement.Batch memory batch1 = settlement.getBatch(1);
         ISettlement.Batch memory batch2 = settlement.getBatch(2);
@@ -984,8 +948,7 @@ contract SettlementTest is Test {
             businessOrderId: 2001,
             user: address(0), // Zero address
             amount: 500,
-            isAdd: false,
-            isSettleFee: true // Fee settlement should allow zero address
+            types: ISettlement.SettlementType.SettleFee
         });
         
         // Add a second item to avoid the single leaf error
@@ -994,8 +957,7 @@ contract SettlementTest is Test {
             businessOrderId: 2002,
             user: user1, // Normal user
             amount: 100,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         // Generate batch
@@ -1018,9 +980,8 @@ contract SettlementTest is Test {
         // This should succeed since zero address is allowed for fee settlements
         settlement.finalizeSettlement(batchId, items);
         
-        // Verify fee balance and user balance
-        assertEq(asset.getFeeBalance(), 500);
-        assertEq(asset.getUserBalance(user1), 100);
+        // Verify fee balance
+        assertEq(asset.feeBalance(), 500);
         
         vm.stopPrank();
     }
@@ -1044,8 +1005,7 @@ contract SettlementTest is Test {
             businessOrderId: 3001,
             user: user1,
             amount: 1000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         items[1] = ISettlement.SettlementItem({
@@ -1053,8 +1013,7 @@ contract SettlementTest is Test {
             businessOrderId: 3002,
             user: user2,
             amount: 2000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         items[2] = ISettlement.SettlementItem({
@@ -1062,8 +1021,7 @@ contract SettlementTest is Test {
             businessOrderId: 3003,
             user: user3,
             amount: 3000,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         // Generate batch
@@ -1087,11 +1045,6 @@ contract SettlementTest is Test {
         // Process batch
         settlement.finalizeSettlement(batchId, items);
         
-        // Verify all users got their balance
-        assertEq(asset.getUserBalance(user1), 1000);
-        assertEq(asset.getUserBalance(user2), 2000);
-        assertEq(asset.getUserBalance(user3), 3000);
-        
         // Try to reuse orderId (should fail)
         ISettlement.SettlementItem[] memory items2 = new ISettlement.SettlementItem[](2); // Use at least 2 items
         items2[0] = ISettlement.SettlementItem({
@@ -1099,8 +1052,7 @@ contract SettlementTest is Test {
             businessOrderId: 4001,
             user: user1,
             amount: 500,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         // Add second item to avoid single leaf error
@@ -1109,8 +1061,7 @@ contract SettlementTest is Test {
             businessOrderId: 4002, 
             user: user2,
             amount: 600,
-            isAdd: true,
-            isSettleFee: false
+            types: ISettlement.SettlementType.Deposit
         });
         
         bytes32[] memory leaves2 = new bytes32[](2);

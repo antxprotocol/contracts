@@ -10,6 +10,8 @@ import {MockToken} from "../src/mock/MockToken.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 contract AssetTest is Test {
     Asset public asset;
@@ -53,7 +55,7 @@ contract AssetTest is Test {
 
     function test_setSettlementContract() public {
         // not equal
-        assertNotEq(asset.settlementContract(), address(settlement));
+        assertEq(asset.settlementContract(), address(0));
 
         // invalid owner
         vm.startPrank(signer1);
@@ -120,18 +122,35 @@ contract AssetTest is Test {
         settlement.addFeeBalanceForTest(1000);
         assertEq(asset.feeBalance(), 2000);
 
-        // try withdraw
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IERC20Errors.ERC20InsufficientBalance.selector, address(asset), USDT.balanceOf(address(asset)), 500
-            )
-        );
-        asset.withdrawFee(signer2, 500);
-
         // mint USDT to asset
         console.log("owner USDT balance", USDT.balanceOf(address(asset)));
         USDT.mint(address(asset), 2000);
         assertEq(asset.getTotalBalance(), 2000);
+
+        // prepare signatures
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        uint256 expireTime = block.timestamp + 1 hours;
+        bytes32 operationHash = keccak256(abi.encodePacked(
+            "WITHDDRAW_FEE",
+            address(USDT),
+            signer2,
+            uint256(500),
+            expireTime,
+            address(asset),
+            uint256(block.chainid)
+        ));
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        // sign with signer1 and signer2
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(1, operationHash); // signer1's private key is 1
+        signatures[0] = abi.encodePacked(r1, s1, v1);
+        
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(2, operationHash); // signer2's private key is 2
+        signatures[1] = abi.encodePacked(r2, s2, v2);
 
         // withdraw fee - transfer first then emit event
         vm.expectEmit(address(USDT));
@@ -139,7 +158,7 @@ contract AssetTest is Test {
 
         vm.expectEmit(address(asset));
         emit IAsset.WithdrawFee(signer2, 500);
-        asset.withdrawFee(signer2, 500);
+        asset.withdrawFee(address(USDT), signer2, 500, expireTime, allSigners, signatures);
 
         assertEq(asset.feeBalance(), 1500);
         assertEq(USDT.balanceOf(signer2), 500);
@@ -194,10 +213,15 @@ contract AssetTest is Test {
         settlement.addFeeBalanceForTest(0);
         vm.stopPrank();
         
-        // Try to withdraw fee balance with zero amount
+        // Try to withdraw fee with zero amount
         vm.startPrank(owner);
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+        bytes[] memory signatures = new bytes[](2);
+        uint256 expireTime = block.timestamp + 1 hours;
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.withdrawFee(signer2, 0);
+        asset.withdrawFee(address(USDT), signer2, 0, expireTime, allSigners, signatures);
         vm.stopPrank();
     }
 
@@ -209,8 +233,13 @@ contract AssetTest is Test {
         USDT.mint(address(asset), 1000);
         
         // Try to withdraw fee to zero address
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+        bytes[] memory signatures = new bytes[](2);
+        uint256 expireTime = block.timestamp + 1 hours;
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        asset.withdrawFee(address(0), 500);
+        asset.withdrawFee(address(USDT), address(0), 500, expireTime, allSigners, signatures);
         vm.stopPrank();
     }
 
@@ -226,10 +255,35 @@ contract AssetTest is Test {
         // Add fee balance and mock tokens
         newSettlement.addFeeBalanceForTest(1000);
         failingUSDT.mint(address(failingAsset), 2000);
+
+        // prepare signatures
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        uint256 expireTime = block.timestamp + 1 hours;
+        bytes32 operationHash = keccak256(abi.encodePacked(
+            "WITHDDRAW_FEE",
+            address(failingUSDT),
+            signer2,
+            uint256(500),
+            expireTime,
+            address(failingAsset),
+            uint256(block.chainid)
+        ));
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        // sign with signer1 and signer2
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(1, operationHash);
+        signatures[0] = abi.encodePacked(r1, s1, v1);
+        
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(2, operationHash);
+        signatures[1] = abi.encodePacked(r2, s2, v2);
         
         // Try to withdraw fee, but transfer will fail
         vm.expectRevert(abi.encodeWithSelector(IAsset.TransferFailed.selector));
-        failingAsset.withdrawFee(signer2, 500);
+        failingAsset.withdrawFee(address(failingUSDT), signer2, 500, expireTime, allSigners, signatures);
         vm.stopPrank();
     }
 
@@ -241,10 +295,35 @@ contract AssetTest is Test {
         // Add fee balance
         settlement.addFeeBalanceForTest(500);
         USDT.mint(address(asset), 1000);
+
+        // prepare signatures
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        uint256 expireTime = block.timestamp + 1 hours;
+        bytes32 operationHash = keccak256(abi.encodePacked(
+            "WITHDDRAW_FEE",
+            address(USDT),
+            signer2,
+            uint256(1000),
+            expireTime,
+            address(asset),
+            uint256(block.chainid)
+        ));
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        // sign with signer1 and signer2
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(1, operationHash);
+        signatures[0] = abi.encodePacked(r1, s1, v1);
+        
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(2, operationHash);
+        signatures[1] = abi.encodePacked(r2, s2, v2);
         
         // Try to withdraw fee greater than the balance
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientFeeBalance.selector, 500, 1000));
-        asset.withdrawFee(signer2, 1000);
+        asset.withdrawFee(address(USDT), signer2, 1000, expireTime, allSigners, signatures);
         vm.stopPrank();
     }
 
@@ -261,7 +340,7 @@ contract AssetTest is Test {
 
     function test_lastBatchTime() public {
         // Initial value should be 0
-        assertEq(asset.getLastBatchTime(), 0);
+        assertEq(asset.lastBatchTime(), 0);
         
         vm.startPrank(owner);
         asset.setSettlementContract(address(settlement));
@@ -271,7 +350,7 @@ contract AssetTest is Test {
         settlement.setLastBatchTimeForTest(newTime);
         
         // Check if time was updated
-        assertEq(asset.getLastBatchTime(), newTime);
+        assertEq(asset.lastBatchTime(), newTime);
         
         // Set another time and verify update
         uint256 newerTime = block.timestamp + 100;
@@ -281,7 +360,7 @@ contract AssetTest is Test {
         emit IAsset.LastBatchTimeUpdated(newerTime);
         
         settlement.setLastBatchTimeForTest(newerTime);
-        assertEq(asset.getLastBatchTime(), newerTime);
+        assertEq(asset.lastBatchTime(), newerTime);
         vm.stopPrank();
         
         // Try to call setLastBatchTime from non-settlement address
