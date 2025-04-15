@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {Script} from "@forge-std/Script.sol";
-import "../src/AntStrargateAdapterImpl.sol";
+import "../src/strargate/AntStrargateAdapterImpl.sol";
 
 // Deploys OFT adapter to Sepolia
 contract AntStrargateAdapterARBScript is Script {

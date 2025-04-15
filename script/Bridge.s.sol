@@ -6,8 +6,8 @@ import {IOFT,MessagingFee, OFTReceipt, SendParam } from "@layerzerolabs/lz-evm-o
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import "../src/AntStrargateAdapter.sol";
-import "../src/AntStrargateAdapterImpl.sol";
+import "../src/strargate/AntStrargateAdapter.sol";
+import "../src/strargate/AntStrargateAdapterImpl.sol";
 
 // Bridge tokens from Sepolia to BscChain
 contract SendOFTScript is Script {

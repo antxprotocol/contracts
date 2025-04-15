@@ -5,14 +5,13 @@ interface IAsset {
     // Events
     event SignersUpdated(address[] signers);
     event SettlementContractUpdated(address indexed settlementContract);
-    event Withdraw(address indexed user, uint256 amount);
     event WithdrawFee(address indexed to, uint256 amount);
-    event AddUserBalance(address indexed user, uint256 amount);
-    event SubUserBalance(address indexed user, uint256 amount);
     event AddFeeBalance(uint256 amount);
-    event ForceWithdraw(address indexed user, uint256 amount);
+    event ForceWithdrawRequest(address indexed user, uint256 amount);
     event LastBatchTimeUpdated(uint256 time);
-
+    event AcceptForceWithdrawal(address indexed user, uint256 amount);
+    event UserWithdraw(address indexed user, uint256 amount);
+    
     // Errors
     error NotSettlementContract();
     error InvalidSettlementContractAddress();
@@ -24,18 +23,14 @@ interface IAsset {
     error TransferFailed();
     error TimeLockNotPassed();
     error InvalidTime(uint256 time);
+    error OnlySettlement();
 
     // View/Pure functions
     function getTotalBalance() external view returns (uint256);
-    function getUserBalance(address user) external view returns (uint256);
-    function getFeeBalance() external view returns (uint256);
-    function getSigners() external view returns (address[] memory);
-    function getSettlementContract() external view returns (address);
-    function getUSDT() external view returns (address);
 
     // State-changing functions
-    function addUserBalance(address user, uint256 amount) external;
-    function subUserBalance(address user, uint256 amount) external;
     function addFeeBalance(uint256 amount) external;
     function setLastBatchTime(uint256 time) external;
+    function userWithdraw(address user, uint256 amount) external;
+    function acceptForceWithdrawal(address user, uint256 amount) external;
 }

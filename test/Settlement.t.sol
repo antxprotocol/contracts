@@ -7,7 +7,7 @@ import {ISettlement} from "../src/interfaces/ISettlement.sol";
 import {Settlement} from "../src/Settlement.sol";
 import {Asset} from "../src/Asset.sol";
 
-import {MockToken} from "../src/MockToken.sol";
+import {MockToken} from "../src/mock/MockToken.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 

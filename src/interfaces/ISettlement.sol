@@ -2,13 +2,23 @@
 pragma solidity ^0.8.28;
 
 interface ISettlement {
+    enum SettlementType {
+        Deposit,
+        Withdraw,
+        ForceWithdraw,
+        OrderFilled,
+        TransferIn,
+        TransferOut,
+        SettleFee,
+        WithdrawFee
+    }
+
     struct SettlementItem {
         uint256 orderId;
         uint256 businessOrderId;
         uint256 amount;
         address user;
-        bool isAdd; // true: add, false: sub
-        bool isSettleFee; // true: settle fee
+        SettlementType types;
     }
     
     struct Batch {
@@ -25,7 +35,7 @@ interface ISettlement {
         uint256 batchId, uint256 startBlock, uint256 totalElements, bytes32 rootHash, bytes32 previousRootHash
     );
     event Settlement(
-        uint256 orderId, uint256 businessOrderId, address user, uint256 amount, bool isAdd, bool isSettleFee
+        uint256 orderId, uint256 businessOrderId, address user, uint256 amount, SettlementType types
     );
 
     error NotBatchSubmitter();
@@ -45,7 +55,6 @@ interface ISettlement {
     error TimeLockNotPassed();
     
     function getBatchSubmitter() external view returns (address[] memory);
-    function getAssetContract() external view returns (address);
     function getBatch(uint256 _batchId) external view returns (Batch memory);
     function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) external;
     function finalizeSettlement(uint256 _batchId, SettlementItem[] calldata _items) external;

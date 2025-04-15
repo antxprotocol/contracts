@@ -8,7 +8,6 @@ import "./AntStrargateAdapter.sol";
 contract AntStrargateAdapterImpl is AntStrargateAdapter {
     constructor(address _stargate) AntStrargateAdapter(_stargate) {}
 
-    // 实现所有必要的接口方法
     function approvalRequired() external view returns (bool) {
         return stargate.approvalRequired();
     }
@@ -51,8 +50,6 @@ contract AntStrargateAdapterImpl is AntStrargateAdapter {
     }
 
     function stargateType() external pure returns (StargateType) {
-        // 这里不能调用stargate.stargateType()，因为这会改变函数的状态可变性
-        // 假设我们知道类型是OFT
         return StargateType.OFT;
     }
 

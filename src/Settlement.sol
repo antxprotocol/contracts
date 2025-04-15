@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {CompleteMerkle} from "@murky/CompleteMerkle.sol";
 import "./interfaces/ISettlement.sol";
 import "./interfaces/IAsset.sol";
+import "./Operator.sol";
 
-contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
-    uint256 public batchId;
+contract Settlement is Operator, ReentrancyGuard, Pausable, ISettlement {
+    uint256 public lastBatchId; 
     address public assetContract;
     mapping(address => bool) public isBatchSubmitter;
     address[] private batchSubmitterList;
@@ -20,7 +20,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
     // Constants for security limits
     uint256 public constant MAX_BATCH_SIZE = 1000; // Maximum items in a batch
     uint256 public constant MAX_ITEMS_PER_FINALIZE = 200; // Maximum items per finalize call
-    uint256 public constant SETTLEMENT_TIME_LOCK = 10 seconds; 
+    uint256 public constant SETTLEMENT_TIME_LOCK = 180 seconds; 
 
     modifier onlyBatchSubmitter() {
         if (!isBatchSubmitter[msg.sender]) revert NotBatchSubmitter();
@@ -32,7 +32,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         _;
     }
 
-    constructor(address _assetContract, address[] memory _batchSubmitter) Ownable(msg.sender) {
+    constructor(address _assetContract, address[] memory _batchSubmitter) {
         if (_assetContract == address(0)) revert ZeroAddressNotAllowed();
         assetContract = _assetContract;
         emit AssetContractUpdated(_assetContract);
@@ -68,10 +68,6 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         _updateBatchSubmitters(_batchSubmitter);
     }
 
-    function getAssetContract() external view returns (address) {
-        return assetContract;
-    }
-
     function setAssetContract(address _assetContract) external onlyOwner validAddress(_assetContract) whenNotPaused {
         assetContract = _assetContract;
         emit AssetContractUpdated(_assetContract);
@@ -97,7 +93,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         if (_rootHash == bytes32(0)) revert InvalidRootHash();
         
         bytes32 previousRootHash = bytes32(0);
-        uint256 currentBatchId = batchId;
+        uint256 currentBatchId = lastBatchId;
         
         if (currentBatchId > 0) {
             ISettlement.Batch storage previousBatch = batches[currentBatchId];
@@ -106,7 +102,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         }
 
         uint256 newBatchId = currentBatchId + 1;
-        batchId = newBatchId;
+        lastBatchId = newBatchId;
 
         ISettlement.Batch storage newBatch = batches[newBatchId];
         newBatch.startBlock = _startBlock;
@@ -136,7 +132,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         if (itemsLength == 0) revert EmptyArrayNotAllowed();
         if (itemsLength > MAX_ITEMS_PER_FINALIZE) revert TooManyItemsToFinalize();
         
-        // Verify batchId is valid
+        // Verify lastBatchId is valid
         ISettlement.Batch storage existBatch = batches[_batchId];
         if (existBatch.rootHash == bytes32(0)) revert InvalidBatchId();
         if (block.timestamp < existBatch.batchTime + SETTLEMENT_TIME_LOCK) revert TimeLockNotPassed();
@@ -149,7 +145,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
             ISettlement.SettlementItem calldata item = _items[i];
             
             // Verify item has valid user address
-            if (item.user == address(0) && !item.isSettleFee) revert ZeroAddressNotAllowed();
+            if (item.user == address(0)) revert ZeroAddressNotAllowed();
             
             // Verify order doesn't already exist
             if (orders[item.orderId].orderId != 0 || orders[item.orderId].businessOrderId != 0) {
@@ -185,22 +181,22 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
             orders[item.orderId] = item;
 
             // Update asset contract
-            if (item.isAdd) {
-                IAsset(assetContractCache).addUserBalance(item.user, item.amount);
-            } else if (item.isSettleFee) {
+            if (item.types == SettlementType.SettleFee) {
                 IAsset(assetContractCache).addFeeBalance(item.amount);
-            } else {
-                IAsset(assetContractCache).subUserBalance(item.user, item.amount);
+            } else if (item.types == SettlementType.ForceWithdraw) {
+                IAsset(assetContractCache).acceptForceWithdrawal(item.user, item.amount);
+            } else if (item.types == SettlementType.Withdraw) {
+                IAsset(assetContractCache).userWithdraw(item.user, item.amount);
             }
 
-            emit Settlement(item.orderId, item.businessOrderId, item.user, item.amount, item.isAdd, item.isSettleFee);
+            emit Settlement(item.orderId, item.businessOrderId, item.user, item.amount, item.types);
         }
     }
 
     function generateLeaf(uint256 _batchId, ISettlement.SettlementItem calldata item) public pure returns (bytes32) {
         return keccak256(
             abi.encodePacked(
-                _batchId, item.orderId, item.businessOrderId, item.user, item.amount, item.isAdd, item.isSettleFee
+                _batchId, item.orderId, item.businessOrderId, item.user, item.amount, item.types
             )
         );
     }
