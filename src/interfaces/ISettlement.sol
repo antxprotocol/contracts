@@ -27,9 +27,9 @@ interface ISettlement {
         bytes32 rootHash;
         bytes32 previousRootHash;
         uint256 batchTime;
+        bool finalized;
     }
     
-    event BatchSubmitterUpdated(address[] batchSubmitter);
     event AssetContractUpdated(address assetContract);
     event BatchSubmitted(
         uint256 batchId, uint256 startBlock, uint256 totalElements, bytes32 rootHash, bytes32 previousRootHash
@@ -40,24 +40,20 @@ interface ISettlement {
     event LogOperatorAdded(address operator);
     event LogOperatorRemoved(address operator);
 
-    error NotBatchSubmitter();
-    error InvalidBatchSubmitter();
     error InvalidAssetContract();
     error InvalidStartBlock();
     error InvalidTotalItems();
     error InvalidRootHash();
     error InvalidBatchId();
-    error OrderAlreadyExists();
     error MismatchRootHash();
     error ErrInvalidProof();
     error BatchTooLarge();
-    error TooManyItemsToFinalize();
     error ZeroAddressNotAllowed();
     error EmptyArrayNotAllowed();
     error TimeLockNotPassed();
     error NotOperator();
+    error BatchAlreadyFinalized();
     
-    function getBatchSubmitter() external view returns (address[] memory);
     function getBatch(uint256 _batchId) external view returns (Batch memory);
     function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) external;
     function finalizeSettlement(uint256 _batchId, SettlementItem[] calldata _items) external;

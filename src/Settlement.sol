@@ -12,22 +12,14 @@ import "./interfaces/IAsset.sol";
 contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
     uint256 public lastBatchId; 
     address public assetContract;
-    mapping(address => bool) public isBatchSubmitter;
-    address[] private batchSubmitterList;
-    mapping(uint256 => ISettlement.SettlementItem) public orders;
     mapping(uint256 => ISettlement.Batch) public batches;
     mapping(address => bool) public operators;
+    bytes32 public rootHash;
     CompleteMerkle private immutable merkle;
     
     // Constants for security limits
     uint256 public constant MAX_BATCH_SIZE = 1000; // Maximum items in a batch
-    uint256 public constant MAX_ITEMS_PER_FINALIZE = 200; // Maximum items per finalize call
     uint256 public constant SETTLEMENT_TIME_LOCK = 180 seconds; 
-
-    modifier onlyBatchSubmitter() {
-        if (!isBatchSubmitter[msg.sender]) revert NotBatchSubmitter();
-        _;
-    }
 
     modifier validAddress(address addr) {
         if (addr == address(0)) revert ZeroAddressNotAllowed();
@@ -39,43 +31,27 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         _;
     }
 
-    constructor(address _assetContract, address[] memory _batchSubmitter) Ownable(msg.sender) {
+    constructor(address _assetContract, address[] memory _operators) Ownable(msg.sender) {
         if (_assetContract == address(0)) revert ZeroAddressNotAllowed();
         assetContract = _assetContract;
         emit AssetContractUpdated(_assetContract);
 
-        _updateBatchSubmitters(_batchSubmitter);
-
-        operators[msg.sender] = true;
-        emit LogOperatorAdded(msg.sender);
+        for (uint256 i = 0; i < _operators.length; i++) {
+            operators[_operators[i]] = true;
+            emit LogOperatorAdded(_operators[i]);
+        }
         
         merkle = new CompleteMerkle();
     }
 
-    function getBatchSubmitter() external view returns (address[] memory) {
-        return batchSubmitterList;
+    function registerOperator(address newOperator) external onlyOwner validAddress(newOperator) {
+        operators[newOperator] = true;
+        emit LogOperatorAdded(newOperator);
     }
 
-    function _updateBatchSubmitters(address[] memory _batchSubmitter) private {
-        if (_batchSubmitter.length == 0) revert EmptyArrayNotAllowed();
-        
-        uint256 currentLength = batchSubmitterList.length;
-        for (uint256 i = 0; i < currentLength; i++) {
-            isBatchSubmitter[batchSubmitterList[i]] = false;
-        }
-        
-        uint256 newLength = _batchSubmitter.length;
-        for (uint256 i = 0; i < newLength; i++) {
-            if (_batchSubmitter[i] == address(0)) revert ZeroAddressNotAllowed();
-            isBatchSubmitter[_batchSubmitter[i]] = true;
-        }
-        
-        batchSubmitterList = _batchSubmitter;
-        emit BatchSubmitterUpdated(_batchSubmitter);
-    }
-
-    function setBatchSubmitter(address[] calldata _batchSubmitter) external onlyOwner whenNotPaused {
-        _updateBatchSubmitters(_batchSubmitter);
+    function unregisterOperator(address removedOperator) external onlyOwner validAddress(removedOperator) {
+        operators[removedOperator] = false;
+        emit LogOperatorRemoved(removedOperator);
     }
 
     function setAssetContract(address _assetContract) external onlyOwner validAddress(_assetContract) whenNotPaused {
@@ -92,23 +68,13 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         _unpause();
     }
 
-    function registerOperator(address newOperator) external onlyOwner {
-        operators[newOperator] = true;
-        emit LogOperatorAdded(newOperator);
-    }
-
-    function unregisterOperator(address removedOperator) external onlyOwner {
-        operators[removedOperator] = false;
-        emit LogOperatorRemoved(removedOperator);
-    }
-
     function isOperator(address testedOperator) public view returns (bool) {
         return operators[testedOperator];
     }
 
     function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) 
         external 
-        onlyBatchSubmitter 
+        onlyOperator 
         whenNotPaused 
     {
         if (_startBlock == 0) revert InvalidStartBlock();
@@ -147,19 +113,20 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
 
     function finalizeSettlement(uint256 _batchId, ISettlement.SettlementItem[] calldata _items) 
         external 
-        onlyBatchSubmitter 
+        onlyOperator 
         nonReentrant 
         whenNotPaused 
     {
         // Check batch size limit for gas efficiency
         uint256 itemsLength = _items.length;
         if (itemsLength == 0) revert EmptyArrayNotAllowed();
-        if (itemsLength > MAX_ITEMS_PER_FINALIZE) revert TooManyItemsToFinalize();
         
         // Verify lastBatchId is valid
         ISettlement.Batch storage existBatch = batches[_batchId];
         if (existBatch.rootHash == bytes32(0)) revert InvalidBatchId();
         if (block.timestamp < existBatch.batchTime + SETTLEMENT_TIME_LOCK) revert TimeLockNotPassed();
+        if (existBatch.finalized) revert BatchAlreadyFinalized();
+        if (itemsLength != existBatch.totalItems) revert InvalidTotalItems();
         
         // Pre-allocate memory for leaves array
         bytes32[] memory leaves = new bytes32[](itemsLength);
@@ -170,11 +137,6 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
             
             // Verify item has valid user address, except for fee settlements
             if (item.user == address(0) && item.types != SettlementType.SettleFee) revert ZeroAddressNotAllowed();
-            
-            // Verify order doesn't already exist
-            if (orders[item.orderId].orderId != 0 || orders[item.orderId].businessOrderId != 0) {
-                revert OrderAlreadyExists();
-            }
             
             // Calculate leaf node hash
             leaves[i] = generateLeaf(_batchId, item);
@@ -201,9 +163,6 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
                 revert ErrInvalidProof();
             }
             
-            // Store order information after verification
-            orders[item.orderId] = item;
-
             // Update asset contract
             if (item.types == SettlementType.SettleFee) {
                 IAsset(assetContractCache).addFeeBalance(item.amount);
@@ -215,6 +174,9 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
 
             emit Settlement(item.orderId, item.businessOrderId, item.user, item.amount, item.types);
         }
+
+        // Mark batch as finalized
+        existBatch.finalized = true;
     }
 
     function generateLeaf(uint256 _batchId, ISettlement.SettlementItem calldata item) public pure returns (bytes32) {
