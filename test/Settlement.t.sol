@@ -180,7 +180,7 @@ contract SettlementTest is Test {
         vm.stopPrank();
     }
 
-    function test_generateLeaf() public view {
+    function test_generateLeaf() public {
         bytes32 leaf = settlement.generateLeaf(
             1,
             ISettlement.SettlementItem({
@@ -192,10 +192,19 @@ contract SettlementTest is Test {
             })
         );
 
-        console.logBytes32(leaf);
+        // Calculate expected hash
+        bytes32 expectedHash = keccak256(
+            abi.encodePacked(
+                uint256(1), // batchId
+                uint256(1), // orderId
+                uint256(1), // businessOrderId
+                signer1,    // user
+                uint256(1000), // amount
+                ISettlement.SettlementType.Deposit // types
+            )
+        );
 
-        bytes32 hexStr = hex"46b4568c9394403fefe0eb2c678659efa6e5324acdccfbddfd30294830034863";
-        assertEq(leaf, hexStr);
+        assertEq(leaf, expectedHash);
     }
 
     function test_generateFinalRootHash() public {
@@ -373,6 +382,9 @@ contract SettlementTest is Test {
             ISettlement.SettlementType.Deposit
         );
         settlement.finalizeSettlement(batchId, items);
+
+        // Verify fee balance
+        assertEq(asset.feeBalance(), 100);
 
         // submit batch 2
         vm.stopPrank();
@@ -793,6 +805,24 @@ contract SettlementTest is Test {
         // Test mix of add, subtract and fee operations in one batch
         CompleteMerkle merkle = new CompleteMerkle();
         
+        // Give user1 and user2 some tokens first
+        vm.startPrank(owner);
+        USDT.mint(user1, 1000);
+        USDT.mint(user2, 1000);
+        vm.stopPrank();
+        
+        // Have user1 approve and deposit tokens
+        vm.startPrank(user1);
+        USDT.approve(address(asset), 1000);
+        USDT.transfer(address(asset), 1000);
+        vm.stopPrank();
+        
+        // Have user2 approve and deposit tokens
+        vm.startPrank(user2);
+        USDT.approve(address(asset), 1000);
+        USDT.transfer(address(asset), 1000);
+        vm.stopPrank();
+        
         // Create mixed operations: add for user1, subtract for user2, fee operation
         ISettlement.SettlementItem[] memory items = new ISettlement.SettlementItem[](3);
         items[0] = ISettlement.SettlementItem({
@@ -946,7 +976,7 @@ contract SettlementTest is Test {
         items[0] = ISettlement.SettlementItem({
             orderId: 2001,
             businessOrderId: 2001,
-            user: address(0), // Zero address
+            user: address(0), // Zero address for fee settlement
             amount: 500,
             types: ISettlement.SettlementType.SettleFee
         });

@@ -144,8 +144,8 @@ contract Settlement is Operator, ReentrancyGuard, Pausable, ISettlement {
         for (uint256 i = 0; i < itemsLength; i++) {
             ISettlement.SettlementItem calldata item = _items[i];
             
-            // Verify item has valid user address
-            if (item.user == address(0)) revert ZeroAddressNotAllowed();
+            // Verify item has valid user address, except for fee settlements
+            if (item.user == address(0) && item.types != SettlementType.SettleFee) revert ZeroAddressNotAllowed();
             
             // Verify order doesn't already exist
             if (orders[item.orderId].orderId != 0 || orders[item.orderId].businessOrderId != 0) {

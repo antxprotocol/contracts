@@ -16,31 +16,45 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 contract AssetTest is Test {
     Asset public asset;
     Settlement public settlement;
-
-    // mock token
-    MockToken internal USDT = new MockToken("USDT", "USDT");
-
-    // initial addresses
-    address internal signer1 = address(0x1);
-    address internal signer2 = address(0x2);
-    address internal signer3 = address(0x3);
-    address internal owner = address(0x4);
+    MockToken public USDT;
+    address public owner;
+    address public signer1;
+    address public signer2;
+    uint256 public signer1PrivateKey;
+    uint256 public signer2PrivateKey;
     address internal user1 = address(0x5);
-    address[] internal signers = [signer1, signer2, signer3];
-    address[] internal batchSubmitter = signers;
-
-    // MockToken that can fail transfers for testing
-    MockToken internal failingUSDT;
+    address[] public signers;
 
     function setUp() public {
+        // Initialize private keys and addresses
+        signer1PrivateKey = 1;
+        signer2PrivateKey = 2;
+        signer1 = vm.addr(signer1PrivateKey);
+        signer2 = vm.addr(signer2PrivateKey);
+        owner = vm.addr(999);  // Use a different private key for owner
+
+        // Deploy mock USDT
+        USDT = new MockToken("USDT", "USDT");
+
+        // Initialize signers array
+        signers = new address[](2);
+        signers[0] = signer1;
+        signers[1] = signer2;
+
+        // Create batch submitters array
+        address[] memory batchSubmitters = new address[](1);
+        batchSubmitters[0] = owner;
+
+        // Deploy contracts with proper owner
         vm.startPrank(owner);
         asset = new Asset(address(USDT), signers);
-        settlement = new Settlement(address(asset), batchSubmitter);
-        
-        // Create a failing USDT mock for testing transfer failures
-        failingUSDT = new MockToken("fUSDT", "fUSDT");
-        failingUSDT.setFailTransfers(true);
+        settlement = new Settlement(address(asset), batchSubmitters);
         vm.stopPrank();
+    }
+
+    function signMessage(bytes32 hash, uint256 privateKey) internal returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, hash);
+        return abi.encodePacked(r, s, v);
     }
 
     function test_initial() public {
@@ -122,8 +136,11 @@ contract AssetTest is Test {
         settlement.addFeeBalanceForTest(1000);
         assertEq(asset.feeBalance(), 2000);
 
+        // mint USDT to owner first
+        USDT.mint(owner, 1000);
+        console.log("owner USDT balance", USDT.balanceOf(owner));
+
         // mint USDT to asset
-        console.log("owner USDT balance", USDT.balanceOf(address(asset)));
         USDT.mint(address(asset), 2000);
         assertEq(asset.getTotalBalance(), 2000);
 
@@ -146,10 +163,10 @@ contract AssetTest is Test {
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
 
         // sign with signer1 and signer2
-        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(1, operationHash); // signer1's private key is 1
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(1, operationHash);
         signatures[0] = abi.encodePacked(r1, s1, v1);
         
-        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(2, operationHash); // signer2's private key is 2
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(2, operationHash);
         signatures[1] = abi.encodePacked(r2, s2, v2);
 
         // withdraw fee - transfer first then emit event
@@ -189,7 +206,7 @@ contract AssetTest is Test {
         address[] memory invalidSigners = new address[](3);
         invalidSigners[0] = signer1;
         invalidSigners[1] = address(0);  // Zero address
-        invalidSigners[2] = signer3;
+        invalidSigners[2] = signer2;
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         new Asset(address(USDT), invalidSigners);
         vm.stopPrank();
@@ -244,47 +261,61 @@ contract AssetTest is Test {
     }
 
     function test_withdrawFee_transferFailed() public {
-        // Create a new asset contract using the failing transfer token
+        // Set up settlement contract and add fee balance for testing
         vm.startPrank(owner);
-        Asset failingAsset = new Asset(address(failingUSDT), signers);
-        
-        // Set settlement contract
-        Settlement newSettlement = new Settlement(address(failingAsset), batchSubmitter);
-        failingAsset.setSettlementContract(address(newSettlement));
-        
-        // Add fee balance and mock tokens
-        newSettlement.addFeeBalanceForTest(1000);
-        failingUSDT.mint(address(failingAsset), 2000);
+        asset.setSettlementContract(address(settlement));
+        vm.stopPrank();
 
-        // prepare signatures
+        // Add fee balance through settlement contract
+        vm.prank(address(settlement));
+        asset.addFeeBalance(1000);
+
+        // Make USDT fail transfers
+        vm.mockCall(
+            address(USDT),
+            abi.encodeWithSelector(IERC20.transfer.selector),
+            abi.encode(false)
+        );
+
+        // Prepare signatures with two different signers
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "WITHDDRAW_FEE",
+                address(USDT),
+                signer1,
+                uint256(1000),
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
+
         address[] memory allSigners = new address[](2);
         allSigners[0] = signer1;
         allSigners[1] = signer2;
 
         bytes[] memory signatures = new bytes[](2);
-        uint256 expireTime = block.timestamp + 1 hours;
-        bytes32 operationHash = keccak256(abi.encodePacked(
-            "WITHDDRAW_FEE",
-            address(failingUSDT),
-            signer2,
-            uint256(500),
-            expireTime,
-            address(failingAsset),
-            uint256(block.chainid)
-        ));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
 
-        // sign with signer1 and signer2
-        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(1, operationHash);
-        signatures[0] = abi.encodePacked(r1, s1, v1);
-        
-        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(2, operationHash);
-        signatures[1] = abi.encodePacked(r2, s2, v2);
-        
-        // Try to withdraw fee, but transfer will fail
-        vm.expectRevert(abi.encodeWithSelector(IAsset.TransferFailed.selector));
-        failingAsset.withdrawFee(address(failingUSDT), signer2, 500, expireTime, allSigners, signatures);
-        vm.stopPrank();
+        // Call withdrawFee and expect it to revert due to transfer failure
+        vm.expectRevert(IAsset.TransferFailed.selector);
+        asset.withdrawFee(
+            address(USDT),
+            signer1,
+            1000,
+            expireTime,
+            allSigners,
+            signatures
+        );
+
+        // Verify fee balance remains unchanged
+        assertEq(asset.feeBalance(), 1000);
     }
 
     // Test insufficient balance error when withdrawing fee

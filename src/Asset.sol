@@ -36,7 +36,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
      modifier onlySettlement() {
-        if (msg.sender != settlementContract) revert OnlySettlement();
+        if (msg.sender != settlementContract) revert NotSettlementContract();
         _;
     }
 
