@@ -52,7 +52,7 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
-    function signMessage(bytes32 hash, uint256 privateKey) internal returns (bytes memory) {
+    function signMessage(bytes32 hash, uint256 privateKey) internal pure returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, hash);
         return abi.encodePacked(r, s, v);
     }

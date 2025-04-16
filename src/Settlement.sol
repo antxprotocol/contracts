@@ -2,19 +2,21 @@
 pragma solidity ^0.8.28;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {CompleteMerkle} from "@murky/CompleteMerkle.sol";
 import "./interfaces/ISettlement.sol";
 import "./interfaces/IAsset.sol";
-import "./Operator.sol";
 
-contract Settlement is Operator, ReentrancyGuard, Pausable, ISettlement {
+contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
     uint256 public lastBatchId; 
     address public assetContract;
     mapping(address => bool) public isBatchSubmitter;
     address[] private batchSubmitterList;
     mapping(uint256 => ISettlement.SettlementItem) public orders;
     mapping(uint256 => ISettlement.Batch) public batches;
+    mapping(address => bool) public operators;
     CompleteMerkle private immutable merkle;
     
     // Constants for security limits
@@ -32,12 +34,20 @@ contract Settlement is Operator, ReentrancyGuard, Pausable, ISettlement {
         _;
     }
 
-    constructor(address _assetContract, address[] memory _batchSubmitter) {
+    modifier onlyOperator() {
+        if (!isOperator(msg.sender)) revert NotOperator();
+        _;
+    }
+
+    constructor(address _assetContract, address[] memory _batchSubmitter) Ownable(msg.sender) {
         if (_assetContract == address(0)) revert ZeroAddressNotAllowed();
         assetContract = _assetContract;
         emit AssetContractUpdated(_assetContract);
 
         _updateBatchSubmitters(_batchSubmitter);
+
+        operators[msg.sender] = true;
+        emit LogOperatorAdded(msg.sender);
         
         merkle = new CompleteMerkle();
     }
@@ -80,6 +90,20 @@ contract Settlement is Operator, ReentrancyGuard, Pausable, ISettlement {
 
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    function registerOperator(address newOperator) external onlyOwner {
+        operators[newOperator] = true;
+        emit LogOperatorAdded(newOperator);
+    }
+
+    function unregisterOperator(address removedOperator) external onlyOwner {
+        operators[removedOperator] = false;
+        emit LogOperatorRemoved(removedOperator);
+    }
+
+    function isOperator(address testedOperator) public view returns (bool) {
+        return operators[testedOperator];
     }
 
     function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) 

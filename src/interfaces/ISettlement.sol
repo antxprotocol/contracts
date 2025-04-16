@@ -37,6 +37,8 @@ interface ISettlement {
     event Settlement(
         uint256 orderId, uint256 businessOrderId, address user, uint256 amount, SettlementType types
     );
+    event LogOperatorAdded(address operator);
+    event LogOperatorRemoved(address operator);
 
     error NotBatchSubmitter();
     error InvalidBatchSubmitter();
@@ -53,6 +55,7 @@ interface ISettlement {
     error ZeroAddressNotAllowed();
     error EmptyArrayNotAllowed();
     error TimeLockNotPassed();
+    error NotOperator();
     
     function getBatchSubmitter() external view returns (address[] memory);
     function getBatch(uint256 _batchId) external view returns (Batch memory);
