@@ -14,7 +14,9 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     address public settlementContract;
     address[] public signers;
     mapping(address => mapping(uint256 => uint256)) public forcedWithdrawalRequest;  // user => amount => timestamp
+    mapping(address => uint256) public userBalance;
     uint256 public feeBalance;
+    uint256 public riskMarginBalance;
     uint256 public feeWithdrawn;
     uint256 public lastBatchTime;
     
@@ -144,9 +146,29 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         emit LastBatchTimeUpdated(_lastBatchTime);
     }
 
+    function addUserBalance(address user, uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
+        userBalance[user] += amount;
+        emit AddUserBalance(user, amount);
+    }
+
+    function subUserBalance(address user, uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
+        userBalance[user] -= amount;
+        emit SubUserBalance(user, amount);
+    }
+
     function addFeeBalance(uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
         feeBalance += amount;
         emit AddFeeBalance(amount);
+    }
+
+     function addRiskMarginBalance(uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
+        riskMarginBalance += amount;
+        emit AddRiskMarginBalance(amount);
+    }
+
+    function subRiskMarginBalance(uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
+        riskMarginBalance -= amount;
+        emit SubRiskMarginBalance(amount);
     }
 
     function userWithdraw(address user, uint256 amount) external onlySettlement nonReentrant validAmount(amount) {

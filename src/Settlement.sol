@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {CompleteMerkle} from "@murky/CompleteMerkle.sol";
 import "./interfaces/ISettlement.sol";
@@ -72,7 +71,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         return operators[testedOperator];
     }
 
-    function submitBatch(uint256 _startBlock, uint256 _totalItems, bytes32 _rootHash) 
+    function submitBatch(uint256 _startBlock,uint256 _endBlock, uint256 _totalItems, bytes32 _rootHash) 
         external 
         onlyOperator 
         whenNotPaused 
@@ -81,6 +80,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         if (_totalItems == 0) revert InvalidTotalItems();
         if (_totalItems > MAX_BATCH_SIZE) revert BatchTooLarge();
         if (_rootHash == bytes32(0)) revert InvalidRootHash();
+        if (_startBlock >= _endBlock) revert InvalidStartBlock();
         
         bytes32 previousRootHash = bytes32(0);
         uint256 currentBatchId = lastBatchId;
@@ -88,7 +88,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         if (currentBatchId > 0) {
             ISettlement.Batch storage previousBatch = batches[currentBatchId];
             previousRootHash = previousBatch.rootHash;
-            if (_startBlock != previousBatch.startBlock + previousBatch.totalItems) revert InvalidStartBlock();
+            if (_startBlock != previousBatch.endBlock + 1) revert InvalidStartBlock();
         }
 
         uint256 newBatchId = currentBatchId + 1;
@@ -96,12 +96,13 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
 
         ISettlement.Batch storage newBatch = batches[newBatchId];
         newBatch.startBlock = _startBlock;
+        newBatch.endBlock = _endBlock;
         newBatch.totalItems = _totalItems;
         newBatch.rootHash = _rootHash;
         newBatch.previousRootHash = previousRootHash;
         newBatch.batchTime = block.timestamp;
         
-        emit BatchSubmitted(newBatchId, _startBlock, _totalItems, _rootHash, previousRootHash);
+        emit BatchSubmitted(newBatchId, _startBlock,_endBlock, _totalItems, _rootHash, previousRootHash);
 
         // set last batch time
         IAsset(assetContract).setLastBatchTime(block.timestamp);
@@ -123,7 +124,7 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         
         // Verify lastBatchId is valid
         ISettlement.Batch storage existBatch = batches[_batchId];
-        if (existBatch.rootHash == bytes32(0)) revert InvalidBatchId();
+        if (existBatch.rootHash == bytes32(0)) revert InvalidRootHash();
         if (block.timestamp < existBatch.batchTime + SETTLEMENT_TIME_LOCK) revert TimeLockNotPassed();
         if (existBatch.finalized) revert BatchAlreadyFinalized();
         if (itemsLength != existBatch.totalItems) revert InvalidTotalItems();
@@ -135,8 +136,11 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
         for (uint256 i = 0; i < itemsLength; i++) {
             ISettlement.SettlementItem calldata item = _items[i];
             
-            // Verify item has valid user address, except for fee settlements
-            if (item.user == address(0) && item.types != SettlementType.SettleFee) revert ZeroAddressNotAllowed();
+            // Verify item has valid user address, except for trade fee in, risk margin in, risk margin out
+            if (item.user == address(0) && 
+            (item.types != SettlementType.TradeFeeIn ||
+                 item.types != SettlementType.RiskMarginIn || 
+                 item.types != SettlementType.RiskMarginOut)) revert ZeroAddressNotAllowed();
             
             // Calculate leaf node hash
             leaves[i] = generateLeaf(_batchId, item);
@@ -164,12 +168,22 @@ contract Settlement is Ownable, ReentrancyGuard, Pausable, ISettlement {
             }
             
             // Update asset contract
-            if (item.types == SettlementType.SettleFee) {
+            if (item.types == SettlementType.Deposit || item.types == SettlementType.TransferIn){
+                IAsset(assetContractCache).addUserBalance(item.user, item.amount);
+            } else if (item.types == SettlementType.TradeFeeOut || item.types == SettlementType.TransferOut || item.types == SettlementType.Liquidation) {
+                IAsset(assetContractCache).subUserBalance(item.user, item.amount);
+            } else if (item.types == SettlementType.TradeFeeIn) {
                 IAsset(assetContractCache).addFeeBalance(item.amount);
-            } else if (item.types == SettlementType.ForceWithdraw) {
-                IAsset(assetContractCache).acceptForceWithdrawal(item.user, item.amount);
             } else if (item.types == SettlementType.Withdraw) {
                 IAsset(assetContractCache).userWithdraw(item.user, item.amount);
+            } else if (item.types == SettlementType.ForceWithdraw) {
+                IAsset(assetContractCache).acceptForceWithdrawal(item.user, item.amount);
+            } else if (item.types == SettlementType.Liquidation) {
+                IAsset(assetContractCache).subUserBalance(item.user, item.amount);
+            } else if (item.types == SettlementType.RiskMarginIn) {
+                IAsset(assetContractCache).addRiskMarginBalance(item.amount);
+            } else if (item.types == SettlementType.RiskMarginOut) {
+                IAsset(assetContractCache).subRiskMarginBalance(item.amount);
             }
 
             emit Settlement(item.orderId, item.businessOrderId, item.user, item.amount, item.types);

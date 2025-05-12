@@ -7,6 +7,10 @@ interface IAsset {
     event SettlementContractUpdated(address indexed settlementContract);
     event WithdrawFee(address indexed to, uint256 amount);
     event AddFeeBalance(uint256 amount);
+    event AddRiskMarginBalance(uint256 amount);
+    event SubRiskMarginBalance(uint256 amount);
+    event AddUserBalance(address indexed user, uint256 amount);
+    event SubUserBalance(address indexed user, uint256 amount);
     event ForceWithdrawRequest(address indexed user, uint256 amount);
     event LastBatchTimeUpdated(uint256 time);
     event AcceptForceWithdrawal(address indexed user, uint256 amount);
@@ -29,7 +33,11 @@ interface IAsset {
     function getTotalBalance() external view returns (uint256);
 
     // State-changing functions
+    function addUserBalance(address user, uint256 amount) external;
+    function subUserBalance(address user, uint256 amount) external;
     function addFeeBalance(uint256 amount) external;
+    function addRiskMarginBalance(uint256 amount) external;
+    function subRiskMarginBalance(uint256 amount) external;
     function setLastBatchTime(uint256 time) external;
     function userWithdraw(address user, uint256 amount) external;
     function acceptForceWithdrawal(address user, uint256 amount) external;
