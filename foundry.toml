@@ -19,8 +19,9 @@ remappings = [
     '@stargatefinance/=node_modules/@stargatefinance/'
 ]
 
+via_ir = true
+ir-minimum=true
 optimizer = true
 optimizer_runs = 200
 
 gas_reports = ["*"]
-via_ir = true
