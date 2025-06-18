@@ -9,11 +9,14 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../src/strargate/AntStrargateAdapter.sol";
 import "../src/strargate/AntStrargateAdapterImpl.sol";
 
+// stargate endpoint list
+// https://stargateprotocol.gitbook.io/stargate/v2-developer-docs/technical-reference/testnet-contracts
+
 // Bridge tokens from Sepolia to BscChain
 contract SendOFTScript is Script {
     address constant USDC_TOKEN = 0x2F6F07CDcf3588944Bf4C42aC74ff24bF56e7590;
     address constant USDC_STARGATE_ENDPOINT = 0x4985b8fcEA3659FD801a5b857dA1D00e985863F0;
-    address constant receiver = 0xF6d79F80758029D8957ee4028Fc0156ebEb3b751;
+    address constant receiver = 0x55Ca8edc95fB3c55587A9a15dd6e76eB31945CF6;
     uint32 constant destinationEndpointId = 40231;  // ARB testnet
 
     function run() external {
