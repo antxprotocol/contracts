@@ -31,6 +31,7 @@ interface IAsset {
 
     // View/Pure functions
     function getTotalBalance() external view returns (uint256);
+    function feeBalance() external view returns (uint256);
 
     // State-changing functions
     function addUserBalance(address user, uint256 amount) external;

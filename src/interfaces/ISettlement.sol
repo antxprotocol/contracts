@@ -68,4 +68,6 @@ interface ISettlement {
     function finalizeSettlement(uint256 _batchId, SettlementItem[] calldata _items) external;
     function pause() external;
     function unpause() external;
+    function generateLeaf(uint256 _batchId, SettlementItem calldata _item) external view returns (bytes32);
+    function generateFinalRootHash(bytes32 _batchRootHash, bytes32 _previousRootHash) external view returns (bytes32);
 }

@@ -6,10 +6,13 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import "./interfaces/IAsset.sol";
 
 contract Asset is Ownable, ReentrancyGuard, IAsset {
+    using SafeERC20 for IERC20;
+
     IERC20 public immutable USDT;
     address public settlementContract;
     address[] public signers;
@@ -85,8 +88,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         uint256 preBalance = USDT.balanceOf(address(this));
         
         // Execute transfer
-        bool success = USDT.transfer(user, amount);
-        if (!success) revert TransferFailed();
+        IERC20(USDT).safeTransfer(user, amount);
         
         // Verify transfer happened correctly (optional, for extra safety)
         uint256 postBalance = USDT.balanceOf(address(this));
@@ -126,8 +128,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         uint256 preBalance = USDT.balanceOf(address(this));
         
         // Execute transfer
-        bool success = USDT.transfer(to, amount);
-        if (!success) revert TransferFailed();
+        IERC20(USDT).safeTransfer(to, amount);
 
         // Verify transfer happened correctly
         uint256 postBalance = USDT.balanceOf(address(this));
