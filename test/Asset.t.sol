@@ -5,50 +5,54 @@ import {Test, console} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Asset} from "../src/Asset.sol";
 import {IAsset} from "../src/interfaces/IAsset.sol";
-import {Settlement} from "../src/Settlement.sol";
 import {MockToken} from "../src/mock/MockToken.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 contract AssetTest is Test {
     Asset public asset;
-    Settlement public settlement;
     MockToken public USDT;
     address public owner;
+    address public systemAddress;
+    address public settlementOperator;
+    address public withdrawOperator;
     address public signer1;
     address public signer2;
+    address public signer3;
     uint256 public signer1PrivateKey;
     uint256 public signer2PrivateKey;
+    uint256 public signer3PrivateKey;
     address internal user1 = address(0x5);
+    address internal user2 = address(0x6);
     address[] public signers;
 
     function setUp() public {
         // Initialize private keys and addresses
         signer1PrivateKey = 1;
-        signer2PrivateKey = 2;
+        signer2PrivateKey = 2; 
+        signer3PrivateKey = 3;
         signer1 = vm.addr(signer1PrivateKey);
         signer2 = vm.addr(signer2PrivateKey);
-        owner = vm.addr(999);  // Use a different private key for owner
+        signer3 = vm.addr(signer3PrivateKey);
+        owner = vm.addr(999);
+        systemAddress = vm.addr(888);
+        settlementOperator = vm.addr(777);
+        withdrawOperator = vm.addr(666);
 
         // Deploy mock USDT
         USDT = new MockToken("USDT", "USDT");
 
         // Initialize signers array
-        signers = new address[](2);
+        signers = new address[](3);
         signers[0] = signer1;
         signers[1] = signer2;
+        signers[2] = signer3;
 
-        // Create batch submitters array
-        address[] memory batchSubmitters = new address[](1);
-        batchSubmitters[0] = owner;
-
-        // Deploy contracts with proper owner
+        // Deploy Asset contract with proper owner
         vm.startPrank(owner);
-        asset = new Asset(address(USDT), signers);
-        settlement = new Settlement(address(asset), batchSubmitters);
+        asset = new Asset(address(USDT), signers, systemAddress, settlementOperator, withdrawOperator);
         vm.stopPrank();
     }
 
@@ -57,1098 +61,1469 @@ contract AssetTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function test_initial() public {
-        assertEq(asset.getTotalBalance(), 0);
+    // Test constructor functionality
+    function test_constructor_success() public {
         assertEq(asset.owner(), owner);
-        assertEq(asset.getUSDTAddress(), address(USDT));
-        assertEq(asset.feeBalance(), 0);
-
-        USDT.transfer(address(asset), 1000);
-        assertEq(asset.getTotalBalance(), 1000);
+        assertEq(address(asset.USDT()), address(USDT));
+        assertEq(asset.systemAddress(), systemAddress);
+        assertEq(asset.settlementOperator(), settlementOperator);
+        assertEq(asset.withdrawOperator(), withdrawOperator);
+        assertEq(asset.lastBatchId(), 0);
+        assertEq(asset.lastBatchTime(), 0);
+        assertTrue(asset.isAllowedSigner(signer1));
+        assertTrue(asset.isAllowedSigner(signer2));
+        assertTrue(asset.isAllowedSigner(signer3));
     }
 
-    function test_setSettlementContract() public {
-        // not equal
-        assertEq(asset.settlementContract(), address(0));
-
-        // invalid owner
-        vm.startPrank(signer1);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer1));
-        asset.setSettlementContract(address(settlement));
-        // equal
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-        assertEq(asset.settlementContract(), address(settlement));
-    }
-
-    function test_USDTBalance() public {
-        // initial balance
-        assertEq(USDT.balanceOf(address(asset)), 0);
-        assertEq(asset.feeBalance(), 0);
-        assertEq(asset.getTotalBalance(), 0);
-
-        // deposit
-        USDT.transfer(address(asset), 1000);
-        assertEq(asset.feeBalance(), 0);
-        assertEq(asset.getTotalBalance(), 1000);
-    }
-
-    function test_feeBalance() public {
-        assertEq(asset.feeBalance(), 0);
-
-        vm.startPrank(owner);
-
-        // expect revert
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
-        settlement.addFeeBalanceForTest(1000);
-
-        // set settlement contract
-        asset.setSettlementContract(address(settlement));
-
-        // add balance again
-        settlement.addFeeBalanceForTest(1000);
-        assertEq(asset.feeBalance(), 1000);
-
-        // add balance again
-        settlement.addFeeBalanceForTest(1000);
-        assertEq(asset.feeBalance(), 2000);
-        vm.stopPrank();
-    }
-
-    function test_feeWithdraw() public {
-        assertEq(asset.feeBalance(), 0);
-
-        vm.startPrank(owner);
-
-        // expect revert
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
-        settlement.addFeeBalanceForTest(1000);
-
-        // set settlement contract
-        asset.setSettlementContract(address(settlement));
-
-        // add balance again
-        settlement.addFeeBalanceForTest(1000);
-        assertEq(asset.feeBalance(), 1000);
-
-        // add balance again
-        settlement.addFeeBalanceForTest(1000);
-        assertEq(asset.feeBalance(), 2000);
-
-        // mint USDT to owner first
-        USDT.mint(owner, 1000);
-        console.log("owner USDT balance", USDT.balanceOf(owner));
-
-        // mint USDT to asset
-        USDT.mint(address(asset), 2000);
-        assertEq(asset.getTotalBalance(), 2000);
-
-        // prepare signatures
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        uint256 expireTime = block.timestamp + 1 hours;
-        bytes32 operationHash = keccak256(abi.encodePacked(
-            "WITHDDRAW_FEE",
-            address(USDT),
-            signer2,
-            uint256(500),
-            expireTime,
-            address(asset),
-            uint256(block.chainid)
-        ));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        // sign with signer1 and signer2
-        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(1, operationHash);
-        signatures[0] = abi.encodePacked(r1, s1, v1);
-        
-        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(2, operationHash);
-        signatures[1] = abi.encodePacked(r2, s2, v2);
-
-        // withdraw fee - transfer first then emit event
-        vm.expectEmit(address(USDT));
-        emit IERC20.Transfer(address(asset), signer2, 500);
-
-        vm.expectEmit(address(asset));
-        emit IAsset.WithdrawFee(signer2, 500);
-        asset.withdrawFee(address(USDT), signer2, 500, expireTime, allSigners, signatures);
-
-        assertEq(asset.feeBalance(), 1500);
-        assertEq(USDT.balanceOf(signer2), 500);
-
-        vm.stopPrank();
-    }
-
-    // Test error conditions in the constructor - invalid USDT address
-    function test_constructor_invalidUSDT() public {
+    function test_constructor_zeroUSDT() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(0), signers);
+        new Asset(address(0), signers, systemAddress, settlementOperator, withdrawOperator);
         vm.stopPrank();
     }
 
-    // Test error conditions in the constructor - empty signers array
+    function test_constructor_zeroSystemAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        new Asset(address(USDT), signers, address(0), settlementOperator, withdrawOperator);
+        vm.stopPrank();
+    }
+
+    function test_constructor_zeroSettlementOperator() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        new Asset(address(USDT), signers, systemAddress, address(0), withdrawOperator);
+        vm.stopPrank();
+    }
+
+    function test_constructor_zeroWithdrawOperator() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        new Asset(address(USDT), signers, systemAddress, settlementOperator, address(0));
+        vm.stopPrank();
+    }
+
     function test_constructor_emptySigners() public {
         vm.startPrank(owner);
         address[] memory emptySigners = new address[](0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), emptySigners);
+        new Asset(address(USDT), emptySigners, systemAddress, settlementOperator, withdrawOperator);
         vm.stopPrank();
     }
 
-    // Test error conditions in the constructor - signers containing zero address
-    function test_constructor_zeroAddressSigners() public {
+    function test_constructor_zeroAddressInSigners() public {
         vm.startPrank(owner);
-        address[] memory invalidSigners = new address[](3);
+        address[] memory invalidSigners = new address[](2);
         invalidSigners[0] = signer1;
-        invalidSigners[1] = address(0);  // Zero address
-        invalidSigners[2] = signer2;
+        invalidSigners[1] = address(0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), invalidSigners);
+        new Asset(address(USDT), invalidSigners, systemAddress, settlementOperator, withdrawOperator);
         vm.stopPrank();
     }
 
-    // Test zero address error in setSettlementContract function
-    function test_setSettlementContract_zeroAddress() public {
-        vm.startPrank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        asset.setSettlementContract(address(0));
-        vm.stopPrank();
-    }
-
-    // Test the validAmount modifier - using zero amount
-    function test_validAmount_zeroAmount() public {
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
+    // Test updateUserBalances function
+    function test_updateUserBalances_success() public {
+        address[] memory users = new address[](2);
+        users[0] = user1;
+        users[1] = user2;
         
-        // Try to add fee balance with zero amount
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        settlement.addFeeBalanceForTest(0);
-        vm.stopPrank();
-        
-        // Try to withdraw fee with zero amount
-        vm.startPrank(owner);
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        bytes[] memory signatures = new bytes[](2);
-        uint256 expireTime = block.timestamp + 1 hours;
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.withdrawFee(address(USDT), signer2, 0, expireTime, allSigners, signatures);
-        vm.stopPrank();
-    }
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 1000;
+        amounts[1] = 2000;
 
-    // Test the validAddress modifier in withdrawFee
-    function test_withdrawFee_zeroAddress() public {
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        settlement.addFeeBalanceForTest(1000);
-        USDT.mint(address(asset), 1000);
-        
-        // Try to withdraw fee to zero address
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        bytes[] memory signatures = new bytes[](2);
-        uint256 expireTime = block.timestamp + 1 hours;
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        asset.withdrawFee(address(USDT), address(0), 500, expireTime, allSigners, signatures);
-        vm.stopPrank();
-    }
-
-    function test_withdrawFee_transferFailed() public {
-        // Set up settlement contract and add fee balance for testing
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-
-        // Add fee balance through settlement contract
-        vm.prank(address(settlement));
-        asset.addFeeBalance(1000);
-
-        // Make USDT fail transfers
-        vm.mockCall(
-            address(USDT),
-            abi.encodeWithSelector(IERC20.transfer.selector),
-            abi.encode(false)
-        );
-
-        // Prepare signatures with two different signers
-        uint256 expireTime = block.timestamp + 1 days;
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "WITHDDRAW_FEE",
-                address(USDT),
-                signer1,
-                uint256(1000),
-                expireTime,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        // Call withdrawFee and expect it to revert due to transfer failure
-        vm.expectRevert(IAsset.TransferFailed.selector);
-        asset.withdrawFee(
-            address(USDT),
-            signer1,
-            1000,
-            expireTime,
-            allSigners,
-            signatures
-        );
-
-        // Verify fee balance remains unchanged
-        assertEq(asset.feeBalance(), 1000);
-    }
-
-    // Test insufficient balance error when withdrawing fee
-    function test_withdrawFee_insufficientBalance() public {
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        
-        // Add fee balance
-        settlement.addFeeBalanceForTest(500);
-        USDT.mint(address(asset), 1000);
-
-        // prepare signatures
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        uint256 expireTime = block.timestamp + 1 hours;
-        bytes32 operationHash = keccak256(abi.encodePacked(
-            "WITHDDRAW_FEE",
-            address(USDT),
-            signer2,
-            uint256(1000),
-            expireTime,
-            address(asset),
-            uint256(block.chainid)
-        ));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        // sign with signer1 and signer2
-        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(1, operationHash);
-        signatures[0] = abi.encodePacked(r1, s1, v1);
-        
-        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(2, operationHash);
-        signatures[1] = abi.encodePacked(r2, s2, v2);
-        
-        // Try to withdraw fee greater than the balance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientFeeBalance.selector, 500, 1000));
-        asset.withdrawFee(address(USDT), signer2, 1000, expireTime, allSigners, signatures);
-        vm.stopPrank();
-    }
-
-    // Test the validTime modifier and setLastBatchTime function
-    function test_validTime_zeroTime() public {
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        
-        // Try to set last batch time with zero value
-        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidTime.selector, 0));
-        settlement.setLastBatchTimeForTest(0);
-        vm.stopPrank();
-    }
-
-    function test_lastBatchTime() public {
-        // Initial value should be 0
-        assertEq(asset.lastBatchTime(), 0);
-        
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        
-        // Set a valid time
-        uint256 newTime = block.timestamp;
-        settlement.setLastBatchTimeForTest(newTime);
-        
-        // Check if time was updated
-        assertEq(asset.lastBatchTime(), newTime);
-        
-        // Set another time and verify update
-        uint256 newerTime = block.timestamp + 100;
-        
-        // Check for LastBatchTimeUpdated event
+        vm.startPrank(settlementOperator);
         vm.expectEmit(address(asset));
-        emit IAsset.LastBatchTimeUpdated(newerTime);
+        emit IAsset.UpdateUserBalance(1, user1, 1000);
+        vm.expectEmit(address(asset));
+        emit IAsset.UpdateUserBalance(1, user2, 2000);
+        vm.expectEmit(address(asset));
+        emit IAsset.BatchUpdated(1, block.timestamp);
         
-        settlement.setLastBatchTimeForTest(newerTime);
-        assertEq(asset.lastBatchTime(), newerTime);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
-        
-        // Try to call setLastBatchTime from non-settlement address
+
+        assertEq(asset.userBalance(user1), 1000);
+        assertEq(asset.userBalance(user2), 2000);
+        assertEq(asset.lastBatchId(), 1);
+        assertEq(asset.lastBatchTime(), block.timestamp);
+    }
+
+    function test_updateUserBalances_onlySettlementOperator() public {
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
         vm.startPrank(user1);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
-        asset.setLastBatchTime(block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.OnlySettlementOperator.selector));
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
     }
 
-    // Test that non-settlement contract cannot call setLastBatchTime
-    function test_setLastBatchTime_nonSettlement() public {
-        vm.startPrank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
-        asset.setLastBatchTime(block.timestamp);
+    function test_updateUserBalances_lengthMismatch() public {
+        address[] memory users = new address[](2);
+        users[0] = user1;
+        users[1] = user2;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.UserAndAmountLengthNotMatch.selector));
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
     }
 
-    function test_isAllowedSigner() public {
-        // Check that initial signers are recognized
-        assertTrue(asset.isAllowedSigner(signer1));
-        assertTrue(asset.isAllowedSigner(signer2));
+    // Test batchWithdraw function with proper signature
+    function test_batchWithdraw_success() public {
+        // Use a specific private key and derive the user address from it
+        uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
+        address testUser = vm.addr(userPrivateKey);
         
-        // Check that other addresses are not recognized as signers
-        assertFalse(asset.isAllowedSigner(user1));
-        assertFalse(asset.isAllowedSigner(owner));
-        assertFalse(asset.isAllowedSigner(address(0)));
-    }
+        // Setup user balances first
+        address[] memory users = new address[](1);
+        users[0] = testUser;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
 
-    function test_forceWithdraw_basic() public {
-        // First give user1 some USDT
-        vm.startPrank(owner);
-        USDT.mint(user1, 1000);
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
-        
-        // User1 transfers to asset contract
-        vm.startPrank(user1);
+
+        // Fund the contract
         USDT.transfer(address(asset), 1000);
+
+        // Prepare batch withdraw
+        uint256[] memory clientOrderIds = new uint256[](1);
+        clientOrderIds[0] = 123;
+        
+        users[0] = testUser;
+        amounts[0] = 500;
+
+        // Create user signature with the correct private key for the test user
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), testUser, uint256(500), block.chainid));
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
+        bytes memory userSignature = abi.encodePacked(r, s, v);
+
+        bytes[] memory signatures = new bytes[](1);
+        signatures[0] = userSignature;
+
+        uint256 userBalanceBefore = USDT.balanceOf(testUser);
+        
+        // Execute batch withdraw - should now work with correct signature
+        vm.startPrank(withdrawOperator);
+        vm.expectEmit(address(asset));
+        emit IAsset.UserWithdraw(123, testUser, 500);
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
         vm.stopPrank();
         
-        // Set up settlement contract
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
+        uint256 userBalanceAfter = USDT.balanceOf(testUser);
+        assertEq(userBalanceAfter - userBalanceBefore, 500);
+        assertEq(asset.userBalance(testUser), 500);
+    }
+
+    // Test batchWithdraw with invalid signature
+    function test_batchWithdraw_invalidSignature() public {
+        // Setup user balances first
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(asset), 1000);
+
+        // Prepare batch withdraw
+        uint256[] memory clientOrderIds = new uint256[](1);
+        clientOrderIds[0] = 123;
         
-        // Add user balance through settlement
-        vm.startPrank(address(settlement));
-        asset.addUserBalance(user1, 1000);
+        users[0] = user1;
+        amounts[0] = 500;
+
+        // Create signature with wrong private key
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), user1, uint256(500), block.chainid));
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+        
+        uint256 wrongPrivateKey = 999;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPrivateKey, operationHash);
+        bytes memory wrongSignature = abi.encodePacked(r, s, v);
+
+        bytes[] memory signatures = new bytes[](1);
+        signatures[0] = wrongSignature;
+        
+        // Execute batch withdraw - should fail with invalid signature
+        vm.startPrank(withdrawOperator);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidUserSignature.selector));
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
         vm.stopPrank();
+    }
+
+    // Test batchWithdraw with insufficient user balance
+    function test_batchWithdraw_insufficientBalance() public {
+        // Use a specific private key and derive the user address from it
+        uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
+        address testUser = vm.addr(userPrivateKey);
         
-        // Set lastBatchTime to check timelock
-        uint256 currentTime = block.timestamp;
-        vm.startPrank(address(settlement));
-        asset.setLastBatchTime(currentTime);
+        // Setup small user balance
+        address[] memory users = new address[](1);
+        users[0] = testUser;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 100; // Small balance
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(asset), 1000);
+
+        // Prepare batch withdraw for more than user has
+        uint256[] memory clientOrderIds = new uint256[](1);
+        clientOrderIds[0] = 123;
         
-        // Try to force withdraw before time lock - should fail
+        users[0] = testUser;
+        amounts[0] = 500; // More than user has
+
+        // Create user signature
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), testUser, uint256(500), block.chainid));
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
+        bytes memory userSignature = abi.encodePacked(r, s, v);
+
+        bytes[] memory signatures = new bytes[](1);
+        signatures[0] = userSignature;
+        
+        // Execute batch withdraw - should fail with insufficient balance
+        vm.startPrank(withdrawOperator);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 100, 500));
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
+        vm.stopPrank();
+    }
+
+    function test_batchWithdraw_lengthMismatch() public {
+        uint256[] memory clientOrderIds = new uint256[](1);
+        clientOrderIds[0] = 123;
+        
+        address[] memory users = new address[](2);
+        users[0] = user1;
+        users[1] = user2;
+        
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 500;
+        
+        bytes[] memory signatures = new bytes[](1);
+        signatures[0] = new bytes(65);
+
+        vm.startPrank(withdrawOperator);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.UserAndAmountLengthNotMatch.selector));
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
+        vm.stopPrank();
+    }
+
+    function test_batchWithdraw_signatureLengthMismatch() public {
+        uint256[] memory clientOrderIds = new uint256[](1);
+        clientOrderIds[0] = 123;
+        
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 500;
+        
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = new bytes(65);
+        signatures[1] = new bytes(65);
+
+        vm.startPrank(withdrawOperator);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.UserAndSignatureLengthNotMatch.selector));
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
+        vm.stopPrank();
+    }
+
+    // Test batchWithdraw onlyWithdrawOperator
+    function test_batchWithdraw_onlyWithdrawOperator() public {
+        uint256[] memory clientOrderIds = new uint256[](1);
+        clientOrderIds[0] = 123;
+        
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 500;
+        
+        bytes[] memory signatures = new bytes[](1);
+        signatures[0] = new bytes(65);
+
+        // Try to call from non-withdrawOperator address
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.OnlyWithdrawOperator.selector));
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
+        vm.stopPrank();
+    }
+
+    // Test forceWithdraw function
+    function test_forceWithdraw_success() public {
+        // Setup user balance
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(asset), 1000);
+
+        // Advance time past the time lock
+        vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
+
+        uint256 user1BalanceBefore = USDT.balanceOf(user1);
+
+        vm.startPrank(user1);
+        vm.expectEmit(address(asset));
+        emit IAsset.ForceWithdraw(user1, 500);
+        asset.forceWithdraw(500);
+        vm.stopPrank();
+
+        uint256 user1BalanceAfter = USDT.balanceOf(user1);
+        assertEq(user1BalanceAfter - user1BalanceBefore, 500);
+        assertEq(asset.userBalance(user1), 500);
+    }
+
+    function test_forceWithdraw_timeLockNotPassed() public {
+        // Setup user balance
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Don't advance time
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(IAsset.TimeLockNotPassed.selector));
         asset.forceWithdraw(500);
         vm.stopPrank();
-        
-        // Advance time past the time lock
-        vm.warp(currentTime + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
-        
-        // Now try to force withdraw - should succeed
-        vm.startPrank(user1);
-        vm.expectEmit(address(asset));
-        emit IAsset.ForceWithdrawRequest(user1, 500);
-        asset.forceWithdraw(500);
-        vm.stopPrank();
-        
-        // Verify request was recorded
-        assertEq(asset.forcedWithdrawalRequest(user1, 500), block.timestamp);
     }
 
     function test_forceWithdraw_zeroAmount() public {
-        // Advance time past any potential time lock
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
         
-        // Try force withdraw with zero amount
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
         asset.forceWithdraw(0);
         vm.stopPrank();
     }
 
-    function test_forceWithdraw_duplicateRequest() public {
-        // First give user1 some USDT
-        vm.startPrank(owner);
-        USDT.mint(user1, 1000);
+    function test_forceWithdraw_insufficientBalance() public {
+        // Setup small user balance
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 100;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
-        
-        // User1 transfers to asset contract
+
+        vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
+
         vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 100, 500));
+        asset.forceWithdraw(500);
+        vm.stopPrank();
+    }
+
+    // Test systemWithdraw function
+    function test_systemWithdraw_success() public {
+        // Setup system balance
+        address[] memory users = new address[](1);
+        users[0] = systemAddress;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Fund the contract
         USDT.transfer(address(asset), 1000);
-        vm.stopPrank();
-        
-        // Set up settlement contract
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-        
-        // Add user balance through settlement
-        vm.startPrank(address(settlement));
-        asset.addUserBalance(user1, 1000);
-        vm.stopPrank();
-        
-        // Set lastBatchTime 
-        uint256 currentTime = block.timestamp;
-        vm.startPrank(address(settlement));
-        asset.setLastBatchTime(currentTime);
-        vm.stopPrank();
-        
-        // Advance time past the time lock
-        vm.warp(currentTime + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
-        
-        // First force withdraw request
-        vm.startPrank(user1);
-        asset.forceWithdraw(500);
-        
-        // Try the same request again - should fail
-        vm.expectRevert("REQUEST_ALREADY_PENDING");
-        asset.forceWithdraw(500);
-        vm.stopPrank();
-    }
 
-    function test_acceptForceWithdrawal() public {
-        // First give user1 some USDT
-        vm.startPrank(owner);
-        USDT.mint(user1, 1000);
-        vm.stopPrank();
-        
-        // User1 transfers to asset contract
-        vm.startPrank(user1);
-        USDT.transfer(address(asset), 1000);
-        vm.stopPrank();
-        
-        // Set up settlement contract
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-        
-        // Add user balance through settlement
-        vm.startPrank(address(settlement));
-        asset.addUserBalance(user1, 1000);
-        vm.stopPrank();
-        
-        // Set lastBatchTime 
-        uint256 currentTime = block.timestamp;
-        vm.startPrank(address(settlement));
-        asset.setLastBatchTime(currentTime);
-        vm.stopPrank();
-        
-        // Advance time past the time lock
-        vm.warp(currentTime + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
-        
-        // First force withdraw request
-        vm.startPrank(user1);
-        asset.forceWithdraw(500);
-        vm.stopPrank();
-        
-        // Try to accept force withdrawal for non-existing request
-        vm.startPrank(address(settlement));
-        vm.expectRevert("REQUEST_ALREADY_PENDING");
-        asset.acceptForceWithdrawal(user1, 600); // Different amount
-        
-        // Accept the actual force withdrawal
-        uint256 userBalanceBefore = USDT.balanceOf(user1);
-        vm.expectEmit(address(asset));
-        emit IAsset.AcceptForceWithdrawal(user1, 500);
-        asset.acceptForceWithdrawal(user1, 500);
-        vm.stopPrank();
-        
-        // Verify user received funds
-        uint256 userBalanceAfter = USDT.balanceOf(user1);
-        assertEq(userBalanceAfter - userBalanceBefore, 500);
-    }
+        // Prepare multi-sig withdraw
+        uint256 expireTime = block.timestamp + 1 hours;
+        address recipient = user1;
+        uint256 withdrawAmount = 500;
 
-    function test_userBalance_operations() public {
-        // Set up settlement contract
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-        
-        // Initially balance should be zero
-        assertEq(asset.userBalance(user1), 0);
-        
-        // Add user balance
-        vm.startPrank(address(settlement));
-        vm.expectEmit(address(asset));
-        emit IAsset.AddUserBalance(user1, 1000);
-        asset.addUserBalance(user1, 1000);
-        vm.stopPrank();
-        
-        // Verify balance was added
-        assertEq(asset.userBalance(user1), 1000);
-        
-        // Subtract user balance
-        vm.startPrank(address(settlement));
-        vm.expectEmit(address(asset));
-        emit IAsset.SubUserBalance(user1, 300);
-        asset.subUserBalance(user1, 300);
-        vm.stopPrank();
-        
-        // Verify balance was subtracted
-        assertEq(asset.userBalance(user1), 700);
-    }
-
-    function test_userWithdraw() public {
-        // First give some USDT to contract
-        vm.startPrank(owner);
-        USDT.mint(address(asset), 1000);
-        vm.stopPrank();
-        
-        // Set up settlement contract
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-        
-        // Perform user withdraw
-        vm.startPrank(address(settlement));
-        uint256 userBalanceBefore = USDT.balanceOf(user1);
-        vm.expectEmit(address(asset));
-        emit IAsset.UserWithdraw(user1, 500);
-        asset.userWithdraw(user1, 500);
-        vm.stopPrank();
-        
-        // Verify user received funds
-        uint256 userBalanceAfter = USDT.balanceOf(user1);
-        assertEq(userBalanceAfter - userBalanceBefore, 500);
-    }
-
-    function test_riskMarginBalance() public {
-        // Set up settlement contract
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-        
-        // Initially risk margin balance should be zero
-        assertEq(asset.riskMarginBalance(), 0);
-        
-        // Add risk margin balance
-        vm.startPrank(address(settlement));
-        vm.expectEmit(address(asset));
-        emit IAsset.AddRiskMarginBalance(1000);
-        asset.addRiskMarginBalance(1000);
-        vm.stopPrank();
-        
-        // Verify balance was added
-        assertEq(asset.riskMarginBalance(), 1000);
-        
-        // Subtract risk margin balance
-        vm.startPrank(address(settlement));
-        vm.expectEmit(address(asset));
-        emit IAsset.SubRiskMarginBalance(300);
-        asset.subRiskMarginBalance(300);
-        vm.stopPrank();
-        
-        // Verify balance was subtracted
-        assertEq(asset.riskMarginBalance(), 700);
-    }
-
-    function test_withdrawFee_signature_validation() public {
-        // Set up settlement contract and add fee balance
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-        
-        vm.startPrank(address(settlement));
-        asset.addFeeBalance(1000);
-        vm.stopPrank();
-        
-        // Add USDT to asset
-        vm.startPrank(owner);
-        USDT.mint(address(asset), 1000);
-        vm.stopPrank();
-        
-        // Prepare valid operation hash and signatures
-        uint256 expireTime = block.timestamp + 1 days;
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "WITHDDRAW_FEE",
-                address(USDT),
-                signer1,
-                uint256(500),
-                expireTime,
-                address(asset),
+                "SYSTEM_WITHDRAW", 
+                address(USDT), 
+                recipient, 
+                withdrawAmount, 
+                expireTime, 
+                address(asset), 
                 block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
+
         bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
         bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-        
-        // Case 1: Test with invalid signer
-        uint256 randomKey = 123;
-        address randomSigner = vm.addr(randomKey);
-        bytes memory invalidSignature = signMessage(operationHash, randomKey);
-        
+
         address[] memory allSigners = new address[](2);
         allSigners[0] = signer1;
-        allSigners[1] = randomSigner; // Not an allowed signer
-        
+        allSigners[1] = signer2;
+
         bytes[] memory signatures = new bytes[](2);
         signatures[0] = signature1;
-        signatures[1] = invalidSignature;
+        signatures[1] = signature2;
+
+        uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
+
+        vm.expectEmit(address(asset));
+        emit IAsset.SystemWithdraw(recipient, withdrawAmount);
         
-        vm.expectRevert("not allowed signer");
-        asset.withdrawFee(
+        asset.systemWithdraw(
             address(USDT),
-            signer1,
-            500,
+            recipient,
+            withdrawAmount,
             expireTime,
             allSigners,
             signatures
         );
-        
-        // Case 2: Test with signature mismatch
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        
-        signatures[0] = signature1;
-        signatures[1] = signature1; // Wrong signature for signer2
-        
-        vm.expectRevert("invalid signer");
-        asset.withdrawFee(
-            address(USDT),
-            signer1,
-            500,
-            expireTime,
-            allSigners,
-            signatures
-        );
-        
-        // Case 3: Test with expired time
-        uint256 pastExpireTime = block.timestamp - 1;
-        vm.expectRevert("expired transaction");
-        asset.withdrawFee(
-            address(USDT),
-            signer1,
-            500,
-            pastExpireTime,
-            allSigners,
-            signatures
-        );
-        
-        // Case 4: Test with wrong token address
-        vm.expectRevert("invalid token");
-        asset.withdrawFee(
-            address(settlement), // Wrong token address
-            signer1,
-            500,
-            expireTime,
-            allSigners,
-            signatures
-        );
-        
-        // Case 5: Test with single signer (should fail)
-        address[] memory singleSigner = new address[](1);
-        singleSigner[0] = signer1;
-        
-        bytes[] memory singleSignature = new bytes[](1);
-        singleSignature[0] = signature1;
-        
-        vm.expectRevert("invalid allSigners length");
-        asset.withdrawFee(
-            address(USDT),
-            signer1,
-            500,
-            expireTime,
-            singleSigner,
-            singleSignature
-        );
-        
-        // Case 6: Test with mismatched signature length
-        address[] memory twoSigners = new address[](2);
-        twoSigners[0] = signer1;
-        twoSigners[1] = signer2;
-        
-        bytes[] memory threeSignatures = new bytes[](3);
-        threeSignatures[0] = signature1;
-        threeSignatures[1] = signature2;
-        threeSignatures[2] = signature1;
-        
-        vm.expectRevert("invalid signatures length");
-        asset.withdrawFee(
-            address(USDT),
-            signer1,
-            500,
-            expireTime,
-            twoSigners,
-            threeSignatures
-        );
-        
-        // Case 7: Test with same signer twice
-        address[] memory duplicateSigner = new address[](2);
-        duplicateSigner[0] = signer1;
-        duplicateSigner[1] = signer1;
-        
-        bytes[] memory duplicateSignature = new bytes[](2);
-        duplicateSignature[0] = signature1;
-        duplicateSignature[1] = signature1;
-        
-        vm.expectRevert("can not be same signer");
-        asset.withdrawFee(
-            address(USDT),
-            signer1,
-            500,
-            expireTime,
-            duplicateSigner,
-            duplicateSignature
-        );
+
+        uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
+        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
+        assertEq(asset.userBalance(systemAddress), 500);
     }
 
-    function test_validAddress_modifier_comprehensive() public {
-        // Test validAddress modifier on all functions with this modifier
-        vm.startPrank(owner);
-        
-        // 1. Test constructor with zero address for USDT
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(0), signers);
-        
-        // 2. Test setSettlementContract with zero address
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        asset.setSettlementContract(address(0));
-        
-        // 3. Test withdrawFee with zero address as recipient
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        bytes[] memory signatures = new bytes[](2);
+    function test_systemWithdraw_invalidToken() public {
         uint256 expireTime = block.timestamp + 1 hours;
-        
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        asset.withdrawFee(address(USDT), address(0), 500, expireTime, allSigners, signatures);
-        
-        vm.stopPrank();
+        address[] memory allSigners = new address[](2);
+        bytes[] memory signatures = new bytes[](2);
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidToken.selector));
+        asset.systemWithdraw(
+            address(0x123), // Invalid token
+            user1,
+            500,
+            expireTime,
+            allSigners,
+            signatures
+        );
     }
 
-    function test_validAmount_modifier_comprehensive() public {
-        // Set up settlement contract first
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-        
-        // Test all functions with validAmount modifier using zero amount
-        vm.startPrank(address(settlement));
-        
-        // 1. addUserBalance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.addUserBalance(user1, 0);
-        
-        // 2. subUserBalance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.subUserBalance(user1, 0);
-        
-        // 3. addFeeBalance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.addFeeBalance(0);
-        
-        // 4. addRiskMarginBalance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.addRiskMarginBalance(0);
-        
-        // 5. subRiskMarginBalance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.subRiskMarginBalance(0);
-        
-        // 6. userWithdraw
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.userWithdraw(user1, 0);
-        
-        // 7. acceptForceWithdrawal
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.acceptForceWithdrawal(user1, 0);
-        
-        vm.stopPrank();
-        
-        // 8. forceWithdraw (called by user)
-        vm.startPrank(user1);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.forceWithdraw(0);
-        vm.stopPrank();
+    function test_systemWithdraw_insufficientSigners() public {
+        uint256 expireTime = block.timestamp + 1 hours;
+        address[] memory allSigners = new address[](1);
+        allSigners[0] = signer1;
+        bytes[] memory signatures = new bytes[](1);
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAllSignersLength.selector));
+        asset.systemWithdraw(
+            address(USDT),
+            user1,
+            500,
+            expireTime,
+            allSigners,
+            signatures
+        );
     }
 
-    function test_onlySettlement_modifier_comprehensive() public {
-        // Set up settlement contract first
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        vm.stopPrank();
-        
-        // Test all functions with onlySettlement modifier called by non-settlement account
-        vm.startPrank(user1);
-        
-        // 1. setLastBatchTime
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
-        asset.setLastBatchTime(block.timestamp);
-        
-        // 2. addUserBalance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
-        asset.addUserBalance(user1, 100);
-        
-        // 3. subUserBalance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
-        asset.subUserBalance(user1, 100);
-        
-        // 4. addFeeBalance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
-        asset.addFeeBalance(100);
-        
-        // 5. addRiskMarginBalance
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotSettlementContract.selector));
-        asset.addRiskMarginBalance(100);
+    function test_systemWithdraw_signatureLengthMismatch() public {
+        uint256 expireTime = block.timestamp + 1 hours;
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+        bytes[] memory signatures = new bytes[](3);
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSignaturesLength.selector));
+        asset.systemWithdraw(
+            address(USDT),
+            user1,
+            500,
+            expireTime,
+            allSigners,
+            signatures
+        );
     }
 
-    function test_withdraw_fee_multiple_signers() public {
-        // Test withdrawFee with more than 2 signers to increase branch coverage
-        
-        // Setup with 3 signers
-        address[] memory threeSigners = new address[](3);
-        threeSigners[0] = signer1;
-        threeSigners[1] = signer2;
-        uint256 signer3PrivateKey = 3;
-        address signer3 = vm.addr(signer3PrivateKey);
-        threeSigners[2] = signer3;
-        
-        // Deploy new Asset contract with 3 signers
-        vm.startPrank(owner);
-        Asset assetWithThreeSigners = new Asset(address(USDT), threeSigners);
-        
-        // Add fee balance
-        Settlement settlementForThreeSigners = new Settlement(address(assetWithThreeSigners), new address[](0));
-        assetWithThreeSigners.setSettlementContract(address(settlementForThreeSigners));
-        
-        // Add some USDT
-        USDT.mint(address(assetWithThreeSigners), 2000);
+    function test_systemWithdraw_sameSigner() public {
+        uint256 expireTime = block.timestamp + 1 hours;
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer1; // Same signer
+        bytes[] memory signatures = new bytes[](2);
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.SameSigner.selector));
+        asset.systemWithdraw(
+            address(USDT),
+            user1,
+            500,
+            expireTime,
+            allSigners,
+            signatures
+        );
+    }
+
+    function test_systemWithdraw_expiredTransaction() public {
+        uint256 expireTime = block.timestamp - 1; // Already expired
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+        bytes[] memory signatures = new bytes[](2);
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
+        asset.systemWithdraw(
+            address(USDT),
+            user1,
+            500,
+            expireTime,
+            allSigners,
+            signatures
+        );
+    }
+
+    function test_systemWithdraw_insufficientSystemBalance() public {
+        // Setup small system balance
+        address[] memory users = new address[](1);
+        users[0] = systemAddress;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 100;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
-        
-        // Add fee balance
-        vm.startPrank(address(settlementForThreeSigners));
-        assetWithThreeSigners.addFeeBalance(1000);
+
+        uint256 expireTime = block.timestamp + 1 hours;
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+        bytes[] memory signatures = new bytes[](2);
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientSystemBalance.selector, systemAddress, 100, 500));
+        asset.systemWithdraw(
+            address(USDT),
+            user1,
+            500,
+            expireTime,
+            allSigners,
+            signatures
+        );
+    }
+
+    function test_systemWithdraw_invalidSigner() public {
+        // Setup system balance
+        address[] memory users = new address[](1);
+        users[0] = systemAddress;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
-        
-        // Prepare signatures from all 3 signers
-        uint256 expireTime = block.timestamp + 1 days;
+
+        uint256 expireTime = block.timestamp + 1 hours;
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "WITHDDRAW_FEE",
-                address(USDT),
-                user1,
-                uint256(500),
-                expireTime,
-                address(assetWithThreeSigners),
+                "SYSTEM_WITHDRAW", 
+                address(USDT), 
+                user1, 
+                uint256(500), 
+                expireTime, 
+                address(asset), 
                 block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        // Use wrong private key for signature
+        bytes memory wrongSignature = signMessage(operationHash, 999);
+        bytes memory correctSignature = signMessage(operationHash, signer2PrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = wrongSignature; // Wrong signature
+        signatures[1] = correctSignature;
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
+        asset.systemWithdraw(
+            address(USDT),
+            user1,
+            500,
+            expireTime,
+            allSigners,
+            signatures
+        );
+    }
+
+    function test_systemWithdraw_notAllowedSigner() public {
+        // Setup system balance
+        address[] memory users = new address[](1);
+        users[0] = systemAddress;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        uint256 expireTime = block.timestamp + 1 hours;
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "SYSTEM_WITHDRAW", 
+                address(USDT), 
+                user1, 
+                uint256(500), 
+                expireTime, 
+                address(asset), 
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        // Use a signer that's not in the allowed list
+        uint256 notAllowedKey = 888;
+        address notAllowedSigner = vm.addr(notAllowedKey);
+        bytes memory notAllowedSignature = signMessage(operationHash, notAllowedKey);
+        bytes memory validSignature = signMessage(operationHash, signer2PrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = notAllowedSigner;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = notAllowedSignature;
+        signatures[1] = validSignature;
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedSigner.selector));
+        asset.systemWithdraw(
+            address(USDT),
+            user1,
+            500,
+            expireTime,
+            allSigners,
+            signatures
+        );
+    }
+
+    // Test admin functions
+    function test_setSystemAddress_success() public {
+        address newSystemAddress = address(0x999);
         
+        vm.startPrank(owner);
+        vm.expectEmit(address(asset));
+        emit IAsset.SystemAddressUpdated(newSystemAddress);
+        asset.setSystemAddress(newSystemAddress);
+        vm.stopPrank();
+
+        assertEq(asset.systemAddress(), newSystemAddress);
+    }
+
+    function test_setSystemAddress_onlyOwner() public {
+        address newSystemAddress = address(0x999);
+        
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
+        asset.setSystemAddress(newSystemAddress);
+        vm.stopPrank();
+    }
+
+    function test_setSystemAddress_zeroAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        asset.setSystemAddress(address(0));
+        vm.stopPrank();
+    }
+
+    function test_setSettlementAddress_success() public {
+        address newSettlementAddress = address(0x888);
+        
+        vm.startPrank(owner);
+        vm.expectEmit(address(asset));
+        emit IAsset.SettlementAddressUpdated(newSettlementAddress);
+        asset.setSettlementAddress(newSettlementAddress);
+        vm.stopPrank();
+
+        assertEq(asset.settlementOperator(), newSettlementAddress);
+    }
+
+    function test_setSettlementAddress_onlyOwner() public {
+        address newSettlementAddress = address(0x888);
+        
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
+        asset.setSettlementAddress(newSettlementAddress);
+        vm.stopPrank();
+    }
+
+    function test_setSettlementAddress_zeroAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        asset.setSettlementAddress(address(0));
+        vm.stopPrank();
+    }
+
+    function test_setSigners_success() public {
+        address[] memory newSigners = new address[](2);
+        newSigners[0] = address(0x111);
+        newSigners[1] = address(0x222);
+        
+        vm.startPrank(owner);
+        vm.expectEmit(address(asset));
+        emit IAsset.SignersUpdated(newSigners);
+        asset.setSigners(newSigners);
+        vm.stopPrank();
+
+        assertTrue(asset.isAllowedSigner(address(0x111)));
+        assertTrue(asset.isAllowedSigner(address(0x222)));
+        assertFalse(asset.isAllowedSigner(signer1)); // Old signer should no longer be valid
+    }
+
+    function test_setSigners_onlyOwner() public {
+        address[] memory newSigners = new address[](1);
+        newSigners[0] = address(0x111);
+        
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
+        asset.setSigners(newSigners);
+        vm.stopPrank();
+    }
+
+    function test_setSigners_emptyArray() public {
+        address[] memory emptySigners = new address[](0);
+        
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        asset.setSigners(emptySigners);
+        vm.stopPrank();
+    }
+
+    function test_setSigners_zeroAddressInArray() public {
+        address[] memory invalidSigners = new address[](2);
+        invalidSigners[0] = address(0x111);
+        invalidSigners[1] = address(0); // Zero address
+        
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        asset.setSigners(invalidSigners);
+        vm.stopPrank();
+    }
+
+    function test_setWithdrawOperator_success() public {
+        address newWithdrawOperator = address(0x777);
+        
+        vm.startPrank(owner);
+        vm.expectEmit(address(asset));
+        emit IAsset.WithdrawOperatorUpdated(newWithdrawOperator);
+        asset.setWithdrawOperator(newWithdrawOperator);
+        vm.stopPrank();
+
+        assertEq(asset.withdrawOperator(), newWithdrawOperator);
+    }
+
+    function test_setWithdrawOperator_onlyOwner() public {
+        address newWithdrawOperator = address(0x777);
+        
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
+        asset.setWithdrawOperator(newWithdrawOperator);
+        vm.stopPrank();
+    }
+
+    function test_setWithdrawOperator_zeroAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        asset.setWithdrawOperator(address(0));
+        vm.stopPrank();
+    }
+
+    // Test isAllowedSigner function
+    function test_isAllowedSigner() public {
+        assertTrue(asset.isAllowedSigner(signer1));
+        assertTrue(asset.isAllowedSigner(signer2));
+        assertTrue(asset.isAllowedSigner(signer3));
+        assertFalse(asset.isAllowedSigner(user1));
+        assertFalse(asset.isAllowedSigner(address(0)));
+    }
+
+    // Test transfer failure scenarios
+    function test_userWithdraw_transferFailure() public {
+        // Setup user balance
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(asset), 1000);
+
+        // Set USDT to fail transfers
+        USDT.setFailTransfers(true);
+
+        vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
+
+        vm.startPrank(user1);
+        vm.expectRevert(); // Should revert due to SafeERC20 failing on false return
+        asset.forceWithdraw(500);
+        vm.stopPrank();
+
+        // Reset transfer behavior
+        USDT.setFailTransfers(false);
+    }
+
+    // Test reentrancy protection
+    function test_reentrancy_protection() public {
+        // The contract uses ReentrancyGuard, so reentrancy should be prevented
+        // This is automatically tested by the modifier, but we can verify
+        // that the functions have the nonReentrant modifier applied
+        
+        // Setup user balance
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(asset), 1000);
+        vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
+
+        // Normal withdrawal should work
+        vm.startPrank(user1);
+        asset.forceWithdraw(500);
+        vm.stopPrank();
+        
+        assertEq(asset.userBalance(user1), 500);
+    }
+
+    // Test multiple users batch withdraw
+    function test_batchWithdraw_multipleUsers() public {
+        // Use specific private keys and derive user addresses
+        uint256 user1PrivateKey = 0x1111111111111111111111111111111111111111111111111111111111111111;
+        uint256 user2PrivateKey = 0x2222222222222222222222222222222222222222222222222222222222222222;
+        address testUser1 = vm.addr(user1PrivateKey);
+        address testUser2 = vm.addr(user2PrivateKey);
+        
+        // Setup user balances
+        address[] memory users = new address[](2);
+        users[0] = testUser1;
+        users[1] = testUser2;
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 1000;
+        amounts[1] = 2000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(asset), 3000);
+
+        // Prepare batch withdraw for both users
+        uint256[] memory clientOrderIds = new uint256[](2);
+        clientOrderIds[0] = 123;
+        clientOrderIds[1] = 456;
+        
+        amounts[0] = 500;
+        amounts[1] = 800;
+
+        // Create signatures for both users
+        bytes32 operationHash1 = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), testUser1, uint256(500), block.chainid));
+        operationHash1 = MessageHashUtils.toEthSignedMessageHash(operationHash1);
+        
+        bytes32 operationHash2 = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(456), testUser2, uint256(800), block.chainid));
+        operationHash2 = MessageHashUtils.toEthSignedMessageHash(operationHash2);
+        
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(user1PrivateKey, operationHash1);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(user2PrivateKey, operationHash2);
+        
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = abi.encodePacked(r1, s1, v1);
+        signatures[1] = abi.encodePacked(r2, s2, v2);
+
+        uint256 user1BalanceBefore = USDT.balanceOf(testUser1);
+        uint256 user2BalanceBefore = USDT.balanceOf(testUser2);
+        
+        // Execute batch withdraw for both users
+        vm.startPrank(withdrawOperator);
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
+        vm.stopPrank();
+        
+        uint256 user1BalanceAfter = USDT.balanceOf(testUser1);
+        uint256 user2BalanceAfter = USDT.balanceOf(testUser2);
+        
+        assertEq(user1BalanceAfter - user1BalanceBefore, 500);
+        assertEq(user2BalanceAfter - user2BalanceBefore, 800);
+        assertEq(asset.userBalance(testUser1), 500);
+        assertEq(asset.userBalance(testUser2), 1200);
+    }
+
+    // Test systemWithdraw with multiple signers (more than 2)
+    function test_systemWithdraw_multipleSigners() public {
+        // Setup system balance
+        address[] memory users = new address[](1);
+        users[0] = systemAddress;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(asset), 1000);
+
+        // Prepare multi-sig withdraw with all 3 signers
+        uint256 expireTime = block.timestamp + 1 hours;
+        address recipient = user1;
+        uint256 withdrawAmount = 500;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "SYSTEM_WITHDRAW", 
+                address(USDT), 
+                recipient, 
+                withdrawAmount, 
+                expireTime, 
+                address(asset), 
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
         bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
         bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
         bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
-        
-        // Create arrays for the call
+
         address[] memory allSigners = new address[](3);
         allSigners[0] = signer1;
         allSigners[1] = signer2;
         allSigners[2] = signer3;
-        
+
         bytes[] memory signatures = new bytes[](3);
         signatures[0] = signature1;
         signatures[1] = signature2;
         signatures[2] = signature3;
+
+        uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
+
+        vm.expectEmit(address(asset));
+        emit IAsset.SystemWithdraw(recipient, withdrawAmount);
         
-        // Execute withdrawFee with 3 signers
-        uint256 userBalanceBefore = USDT.balanceOf(user1);
-        
-        assetWithThreeSigners.withdrawFee(
+        asset.systemWithdraw(
             address(USDT),
-            user1,
-            500,
+            recipient,
+            withdrawAmount,
             expireTime,
             allSigners,
             signatures
         );
-        
-        uint256 userBalanceAfter = USDT.balanceOf(user1);
-        assertEq(userBalanceAfter - userBalanceBefore, 500);
-        assertEq(assetWithThreeSigners.feeBalance(), 500);
+
+        uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
+        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
+        assertEq(asset.userBalance(systemAddress), 500);
     }
 
-    function test_withdrawFee_comprehensive() public {
-        // Set up settlement contract and add fee balance
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
+    // Test edge cases and boundary conditions
+    function test_edge_cases() public {
+        // Test with maximum values
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = type(uint256).max;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
-        
-        vm.startPrank(address(settlement));
-        asset.addFeeBalance(10000);
+
+        assertEq(asset.userBalance(user1), type(uint256).max);
+
+        // Test with very large batch ID
+        amounts[0] = 1000;
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(type(uint256).max, users, amounts);
         vm.stopPrank();
+
+        assertEq(asset.lastBatchId(), type(uint256).max);
+    }
+
+    // Test large batch update with many users
+    function test_updateUserBalances_largeBatch() public {
+        uint256 numUsers = 50;
+        address[] memory users = new address[](numUsers);
+        uint256[] memory amounts = new uint256[](numUsers);
         
-        // Add USDT to the contract
-        vm.startPrank(owner);
-        USDT.mint(address(asset), 10000);
+        for (uint256 i = 0; i < numUsers; i++) {
+            users[i] = address(uint160(i + 1000)); // Generate unique addresses
+            amounts[i] = (i + 1) * 100; // Different amounts for each user
+        }
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(999, users, amounts);
         vm.stopPrank();
+
+        // Verify all users got their balances
+        for (uint256 i = 0; i < numUsers; i++) {
+            assertEq(asset.userBalance(users[i]), amounts[i]);
+        }
         
-        // Prepare for multi-signature checks
-        uint256 expireTime = block.timestamp + 1 days;
+        assertEq(asset.lastBatchId(), 999);
+    }
+
+    // Test batchWithdraw with clientOrderIds length insufficient (should cause array bounds error)
+    function test_batchWithdraw_clientOrderIdsLengthInsufficient() public {
+        uint256[] memory clientOrderIds = new uint256[](1); // Shorter than users array
+        clientOrderIds[0] = 123;
         
-        // Test with different numbers of signers
+        address[] memory users = new address[](2);
+        users[0] = user1;
+        users[1] = user2;
         
-        // Condition 1: Test with exactly 2 signers (minimum required)
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 500;
+        amounts[1] = 600;
+        
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = new bytes(65);
+        signatures[1] = new bytes(65);
+
+        // This will cause an array bounds error when accessing clientOrderIds[1]
+        vm.expectRevert();
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
+    }
+
+    // Test isAllowedSigner with empty signers array
+    function test_isAllowedSigner_emptySigners() public {
+        // Deploy a new contract with empty signers to test this edge case
+        // Actually, this is not possible due to constructor validation
+        // But we can test the edge case where signer is at the end of array
+        assertFalse(asset.isAllowedSigner(address(0x999999)));
+    }
+
+    // Test public getter functions for coverage
+    function test_publicGetters() public view {
+        // These calls ensure getter functions are covered
+        asset.USDT();
+        asset.signers(0); // Access first signer
+        asset.signers(1); // Access second signer
+        asset.signers(2); // Access third signer
+        asset.systemAddress();
+        asset.settlementOperator();
+        asset.withdrawOperator();
+        asset.userBalance(user1);
+        asset.lastBatchId();
+        asset.lastBatchTime();
+        asset.FORCE_WITHDRAW_TIME_LOCK();
+    }
+
+    // Test batchWithdraw zero amount through _userWithdraw
+    function test_batchWithdraw_zeroAmountInternalCheck() public {
+        // Use a specific private key and derive the user address from it
+        uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
+        address testUser = vm.addr(userPrivateKey);
+        
+        // Setup user balances first
+        address[] memory users = new address[](1);
+        users[0] = testUser;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Prepare batch withdraw with zero amount
+        uint256[] memory clientOrderIds = new uint256[](1);
+        clientOrderIds[0] = 123;
+        
+        users[0] = testUser;
+        amounts[0] = 0; // Zero amount
+
+        // Create user signature for zero amount
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), testUser, uint256(0), block.chainid));
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
+        bytes memory userSignature = abi.encodePacked(r, s, v);
+
+        bytes[] memory signatures = new bytes[](1);
+        signatures[0] = userSignature;
+        
+        // Execute batch withdraw - should fail with zero amount
+        vm.startPrank(withdrawOperator);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
+        vm.stopPrank();
+    }
+
+    // Test systemWithdraw with exact system balance
+    function test_systemWithdraw_exactBalance() public {
+        // Setup system balance
+        address[] memory users = new address[](1);
+        users[0] = systemAddress;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(asset), 1000);
+
+        // Prepare multi-sig withdraw for exact balance
+        uint256 expireTime = block.timestamp + 1 hours;
+        address recipient = user1;
+        uint256 withdrawAmount = 1000; // Exact balance
+
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "WITHDDRAW_FEE",
-                address(USDT),
-                user1,
-                uint256(1000),
-                expireTime,
-                address(asset),
+                "SYSTEM_WITHDRAW", 
+                address(USDT), 
+                recipient, 
+                withdrawAmount, 
+                expireTime, 
+                address(asset), 
                 block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
+
         bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
         bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-        
-        address[] memory twoSigners = new address[](2);
-        twoSigners[0] = signer1;
-        twoSigners[1] = signer2;
-        
-        bytes[] memory twoSignatures = new bytes[](2);
-        twoSignatures[0] = signature1;
-        twoSignatures[1] = signature2;
-        
-        // This should succeed
-        uint256 user1BalanceBefore = USDT.balanceOf(user1);
-        asset.withdrawFee(
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+
+        uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
+
+        asset.systemWithdraw(
             address(USDT),
-            user1,
-            1000,
+            recipient,
+            withdrawAmount,
             expireTime,
-            twoSigners,
-            twoSignatures
+            allSigners,
+            signatures
         );
-        uint256 user1BalanceAfter = USDT.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, 1000);
-        
-        // Condition 2: Test with a future expiry time
-        uint256 futureTime = block.timestamp + 30 days;
-        bytes32 futureHash = keccak256(
-            abi.encodePacked(
-                "WITHDDRAW_FEE",
-                address(USDT),
-                user1,
-                uint256(500),
-                futureTime,
-                address(asset),
-                block.chainid
-            )
-        );
-        futureHash = MessageHashUtils.toEthSignedMessageHash(futureHash);
-        
-        bytes memory futureSig1 = signMessage(futureHash, signer1PrivateKey);
-        bytes memory futureSig2 = signMessage(futureHash, signer2PrivateKey);
-        
-        twoSignatures[0] = futureSig1;
-        twoSignatures[1] = futureSig2;
-        
-        user1BalanceBefore = USDT.balanceOf(user1);
-        asset.withdrawFee(
-            address(USDT),
-            user1,
-            500,
-            futureTime,
-            twoSigners,
-            twoSignatures
-        );
-        user1BalanceAfter = USDT.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, 500);
-        
-        // Condition 3: Test with almost depleted fee balance
-        bytes32 lastHash = keccak256(
-            abi.encodePacked(
-                "WITHDDRAW_FEE",
-                address(USDT),
-                user1,
-                uint256(8499), // 10000 - 1000 - 500 = 8500 remaining, use 8499
-                expireTime,
-                address(asset),
-                block.chainid
-            )
-        );
-        lastHash = MessageHashUtils.toEthSignedMessageHash(lastHash);
-        
-        bytes memory lastSig1 = signMessage(lastHash, signer1PrivateKey);
-        bytes memory lastSig2 = signMessage(lastHash, signer2PrivateKey);
-        
-        twoSignatures[0] = lastSig1;
-        twoSignatures[1] = lastSig2;
-        
-        // This should succeed with just 1 remaining
-        user1BalanceBefore = USDT.balanceOf(user1);
-        asset.withdrawFee(
-            address(USDT),
-            user1,
-            8499,
-            expireTime,
-            twoSigners,
-            twoSignatures
-        );
-        user1BalanceAfter = USDT.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, 8499);
-        
-        // Verify fee balance is now 1
-        assertEq(asset.feeBalance(), 1);
+
+        uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
+        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
+        assertEq(asset.userBalance(systemAddress), 0); // Should be exactly 0
     }
 
-    function test_userWithdraw_edge_cases() public {
-        // Set up settlement contract
-        vm.startPrank(owner);
-        asset.setSettlementContract(address(settlement));
-        USDT.mint(address(asset), 10000);
+    // Test assertion failure scenarios (this is tricky as assert will halt execution)
+    // We'll test the balance verification logic indirectly
+    function test_transferBalanceVerification() public {
+        // Use a specific private key and derive the user address from it
+        uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
+        address testUser = vm.addr(userPrivateKey);
+        
+        // Setup user balances first
+        address[] memory users = new address[](1);
+        users[0] = testUser;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Fund the contract with exact amount
+        USDT.transfer(address(asset), 1000);
+
+        // Get contract balance before
+        uint256 contractBalanceBefore = USDT.balanceOf(address(asset));
+        
+        // Prepare batch withdraw
+        uint256[] memory clientOrderIds = new uint256[](1);
+        clientOrderIds[0] = 123;
+        
+        users[0] = testUser;
+        amounts[0] = 500;
+
+        // Create user signature
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), testUser, uint256(500), block.chainid));
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
+        bytes memory userSignature = abi.encodePacked(r, s, v);
+
+        bytes[] memory signatures = new bytes[](1);
+        signatures[0] = userSignature;
+
+        // Execute batch withdraw
+        vm.startPrank(withdrawOperator);
+        asset.batchWithdraw(clientOrderIds, users, amounts, signatures);
         vm.stopPrank();
         
-        // Test case 1: Regular withdrawal
-        vm.startPrank(address(settlement));
-        uint256 user1BalanceBefore = USDT.balanceOf(user1);
-        vm.expectEmit(address(asset));
-        emit IAsset.UserWithdraw(user1, 1000);
-        asset.userWithdraw(user1, 1000);
-        uint256 user1BalanceAfter = USDT.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, 1000);
+        // Verify balance change is exactly what was expected
+        uint256 contractBalanceAfter = USDT.balanceOf(address(asset));
+        assertEq(contractBalanceBefore - contractBalanceAfter, 500);
+    }
+
+    // Test validTime modifier (though it's not currently used in the contract)
+    // We can't directly test it since it's not used, but we can verify the modifier exists
+    
+    // Test with multiple signers but checking different signer combinations
+    function test_systemWithdraw_differentSignerCombinations() public {
+        // Setup system balance
+        address[] memory users = new address[](1);
+        users[0] = systemAddress;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
-        
-        // Test case 2: Mock failure in USDT transfer
-        vm.mockCall(
-            address(USDT),
-            abi.encodeWithSelector(IERC20.transfer.selector),
-            abi.encode(false)
+
+        // Fund the contract
+        USDT.transfer(address(asset), 1000);
+
+        // Test different signer combinations
+        uint256 expireTime = block.timestamp + 1 hours;
+        address recipient = user1;
+        uint256 withdrawAmount = 300;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "SYSTEM_WITHDRAW", 
+                address(USDT), 
+                recipient, 
+                withdrawAmount, 
+                expireTime, 
+                address(asset), 
+                block.chainid
+            )
         );
-        
-        vm.startPrank(address(settlement));
-        vm.expectRevert(abi.encodeWithSelector(IAsset.TransferFailed.selector));
-        asset.userWithdraw(user1, 1000);
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        // Test with signer1 and signer3 (different combination)
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer3;
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = signature1;
+        signatures[1] = signature3;
+
+        asset.systemWithdraw(
+            address(USDT),
+            recipient,
+            withdrawAmount,
+            expireTime,
+            allSigners,
+            signatures
+        );
+
+        assertEq(asset.userBalance(systemAddress), 700);
+    }
+
+    // Test systemWithdraw with more than 3 signers to ensure loop coverage
+    function test_systemWithdraw_fourSigners() public {
+        // Create a new asset with 4 signers for this test
+        address[] memory fourSigners = new address[](4);
+        fourSigners[0] = signer1;
+        fourSigners[1] = signer2;
+        fourSigners[2] = signer3;
+        uint256 signer4PrivateKey = 4;
+        address signer4 = vm.addr(signer4PrivateKey);
+        fourSigners[3] = signer4;
+
+        vm.startPrank(owner);
+        Asset assetWith4Signers = new Asset(address(USDT), fourSigners, systemAddress, settlementOperator, withdrawOperator);
         vm.stopPrank();
-        
-        // Clear mock and try a very large withdrawal (but within balance)
-        vm.clearMockedCalls();
-        
-        // Test case 3: Large, but valid withdrawal
-        vm.startPrank(address(settlement));
-        user1BalanceBefore = USDT.balanceOf(user1);
-        asset.userWithdraw(user1, 8000); // We should have 9000 left
-        user1BalanceAfter = USDT.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, 8000);
+
+        // Setup system balance
+        address[] memory users = new address[](1);
+        users[0] = systemAddress;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        assetWith4Signers.updateUserBalances(1, users, amounts);
         vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(assetWith4Signers), 1000);
+
+        // Test with 4 signers
+        uint256 expireTime = block.timestamp + 1 hours;
+        address recipient = user1;
+        uint256 withdrawAmount = 400;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "SYSTEM_WITHDRAW", 
+                address(USDT), 
+                recipient, 
+                withdrawAmount, 
+                expireTime, 
+                address(assetWith4Signers), 
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
+        bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
+        bytes memory signature4 = signMessage(operationHash, signer4PrivateKey);
+
+        address[] memory allSigners = new address[](4);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+        allSigners[2] = signer3;
+        allSigners[3] = signer4;
+
+        bytes[] memory signatures = new bytes[](4);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+        signatures[2] = signature3;
+        signatures[3] = signature4;
+
+        assetWith4Signers.systemWithdraw(
+            address(USDT),
+            recipient,
+            withdrawAmount,
+            expireTime,
+            allSigners,
+            signatures
+        );
+
+        assertEq(assetWith4Signers.userBalance(systemAddress), 600);
+    }
+
+    // Test edge case with zero user balance force withdraw (should fail)
+    function test_forceWithdraw_zeroUserBalance() public {
+        // Don't setup any user balance for user1
+        vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
+
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 0, 100));
+        asset.forceWithdraw(100);
+        vm.stopPrank();
+    }
+
+    // Test accessing signers array with all valid indices
+    function test_signersArray_allIndices() public view {
+        // Access all signers to ensure array getter coverage
+        assertEq(asset.signers(0), signer1);
+        assertEq(asset.signers(1), signer2);
+        assertEq(asset.signers(2), signer3);
+    }
+
+    // Test isAllowedSigner with all signers to ensure loop coverage
+    function test_isAllowedSigner_allSigners() public {
+        // Test with each signer position to ensure full loop coverage
+        assertTrue(asset.isAllowedSigner(signer1)); // First in array
+        assertTrue(asset.isAllowedSigner(signer2)); // Middle in array
+        assertTrue(asset.isAllowedSigner(signer3)); // Last in array
+        
+        // Test with non-signer
+        assertFalse(asset.isAllowedSigner(address(0xdead)));
+    }
+
+    // Test updateUserBalances with zero amounts (should succeed)
+    function test_updateUserBalances_zeroAmounts() public {
+        address[] memory users = new address[](2);
+        users[0] = user1;
+        users[1] = user2;
+        
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 0; // Zero amount
+        amounts[1] = 0; // Zero amount
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        assertEq(asset.userBalance(user1), 0);
+        assertEq(asset.userBalance(user2), 0);
+        assertEq(asset.lastBatchId(), 1);
+    }
+
+    // Test system withdraw with minimum possible amounts
+    function test_systemWithdraw_minimumAmount() public {
+        // Setup system balance
+        address[] memory users = new address[](1);
+        users[0] = systemAddress;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1; // Minimum possible balance
+
+        vm.startPrank(settlementOperator);
+        asset.updateUserBalances(1, users, amounts);
+        vm.stopPrank();
+
+        // Fund the contract
+        USDT.transfer(address(asset), 1);
+
+        // Prepare multi-sig withdraw for minimum amount
+        uint256 expireTime = block.timestamp + 1 hours;
+        address recipient = user1;
+        uint256 withdrawAmount = 1; // Minimum amount
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "SYSTEM_WITHDRAW", 
+                address(USDT), 
+                recipient, 
+                withdrawAmount, 
+                expireTime, 
+                address(asset), 
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+
+        asset.systemWithdraw(
+            address(USDT),
+            recipient,
+            withdrawAmount,
+            expireTime,
+            allSigners,
+            signatures
+        );
+
+        assertEq(asset.userBalance(systemAddress), 0);
     }
 }

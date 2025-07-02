@@ -14,13 +14,12 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     using SafeERC20 for IERC20;
 
     IERC20 public immutable USDT;
-    address public settlementContract;
     address[] public signers;
-    mapping(address => mapping(uint256 => uint256)) public forcedWithdrawalRequest;  // user => amount => timestamp
+    address public systemAddress;
+    address public settlementOperator;
+    address public withdrawOperator;
     mapping(address => uint256) public userBalance;
-    uint256 public feeBalance;
-    uint256 public riskMarginBalance;
-    uint256 public feeWithdrawn;
+    uint256 public lastBatchId;
     uint256 public lastBatchTime;
     
     uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days; 
@@ -40,14 +39,28 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         _;
     }
 
-     modifier onlySettlement() {
-        if (msg.sender != settlementContract) revert NotSettlementContract();
+    modifier onlySettlementOperator() {
+        if (msg.sender != settlementOperator) revert OnlySettlementOperator();
         _;
     }
 
-    constructor(address _USDT, address[] memory _signers) Ownable(msg.sender) {
+    modifier onlyWithdrawOperator() {
+        if (msg.sender != withdrawOperator) revert OnlyWithdrawOperator();
+        _;
+    }
+
+    constructor(address _USDT, address[] memory _signers,address _systemAddress,address _settlementAddress,address _withdrawOperator) Ownable(msg.sender) {
         if (_USDT == address(0)) revert ZeroAddressNotAllowed();
         USDT = IERC20(_USDT);
+
+        if (_systemAddress == address(0)) revert ZeroAddressNotAllowed();
+        systemAddress = _systemAddress;
+
+        if (_settlementAddress == address(0)) revert ZeroAddressNotAllowed();
+        settlementOperator = _settlementAddress;
+
+        if (_withdrawOperator == address(0)) revert ZeroAddressNotAllowed();
+        withdrawOperator = _withdrawOperator;
 
         // Check signers
         if (_signers.length == 0) revert ZeroAddressNotAllowed();
@@ -58,44 +71,52 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         emit SignersUpdated(_signers);
     }
 
+
+    function batchWithdraw(uint256 []memory clientOrderIds,address []memory users, uint256 []memory amounts,bytes[] memory signatures) external nonReentrant onlyWithdrawOperator {
+        if (users.length != amounts.length) revert UserAndAmountLengthNotMatch();
+        if (users.length != signatures.length) revert UserAndSignatureLengthNotMatch();
+
+        for (uint256 i = 0; i < users.length; i++) {
+            _userWithdraw(clientOrderIds[i],users[i],amounts[i],signatures[i],false);
+            emit UserWithdraw(clientOrderIds[i],users[i],amounts[i]);
+        }
+    }
+
     function forceWithdraw(uint256 amount) external nonReentrant validAmount(amount) {
-        require(amount > 0, "Amount must be greater than 0");
         // check time lock
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
-
-        require(
-            getForcedWithdrawalRequest(msg.sender, amount) == 0,
-            "REQUEST_ALREADY_PENDING"
-        );
-
-        // Start timer on escape request.
-        setForcedWithdrawalRequest(msg.sender, amount);
-
-        // Log request.
-        emit ForceWithdrawRequest(msg.sender, amount);
+        // force withdraw
+        _userWithdraw(0,msg.sender, amount, new bytes(0), true);
+        emit ForceWithdraw(msg.sender, amount);
     }
 
-    function setForcedWithdrawalRequest(address user, uint256 amount) internal {
-        forcedWithdrawalRequest[user][amount] = block.timestamp;
-    }
+    function _userWithdraw(uint256 clientOrderId,address user, uint256 amount,bytes memory signatures,bool isForce) internal validAmount(amount) {
+        if (!isForce) {
+            // check user signature
+            bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, amount, block.chainid));
+            operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+            if (user != ECDSA.recover(operationHash, signatures)) revert InvalidUserSignature();
+        }
 
-    function getForcedWithdrawalRequest(address user, uint256 amount) internal view returns (uint256) {
-        return forcedWithdrawalRequest[user][amount];
-    }
+        // check user balance
+        if (userBalance[user] < amount) revert InsufficientUserBalance(userBalance[user], amount);
 
-    function _userWithdraw(address user, uint256 amount) internal validAmount(amount) {
+        // update user balance
+        userBalance[user] -= amount;
+        emit UserWithdraw(clientOrderId, user, amount);
+
         // Store balance before transfer
         uint256 preBalance = USDT.balanceOf(address(this));
         
         // Execute transfer
         IERC20(USDT).safeTransfer(user, amount);
         
-        // Verify transfer happened correctly (optional, for extra safety)
+        // Verify transfer happened correctly 
         uint256 postBalance = USDT.balanceOf(address(this));
         assert(preBalance - postBalance == amount);
     }
 
-    function withdrawFee(
+    function systemWithdraw(
         address token,
         address to, 
         uint256 amount,
@@ -103,26 +124,26 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         address[] memory allSigners,
         bytes[] memory signatures
     ) external nonReentrant validAddress(to) validAmount(amount) {
-        require(token == address(USDT),"invalid token");
-        require(allSigners.length >=2, "invalid allSigners length");
-        require(allSigners.length == signatures.length, "invalid signatures length");
-        require(allSigners[0] != allSigners[1],"can not be same signer"); // must be different signer
-        require(expireTime >= block.timestamp,"expired transaction");
+        if (token != address(USDT)) revert InvalidToken();
+        if (allSigners.length < 2) revert InvalidAllSignersLength();
+        if (allSigners.length != signatures.length) revert InvalidSignaturesLength();
+        if (allSigners[0] == allSigners[1]) revert SameSigner();
+        if (expireTime < block.timestamp) revert ExpiredTransaction();
 
-        if (amount > feeBalance) revert InsufficientFeeBalance(feeBalance, amount);
+        if (amount > userBalance[systemAddress]) revert InsufficientSystemBalance(systemAddress, userBalance[systemAddress], amount);
 
         // verify multi signatures
-        bytes32 operationHash = keccak256(abi.encodePacked("WITHDDRAW_FEE", token, to, amount, expireTime, address(this), block.chainid));
+        bytes32 operationHash = keccak256(abi.encodePacked("SYSTEM_WITHDRAW", token, to, amount, expireTime, address(this), block.chainid));
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
 
         for (uint8 index = 0; index < allSigners.length; index++) {
             address signer = ECDSA.recover(operationHash, signatures[index]);
-            require(signer == allSigners[index], "invalid signer");
-            require(isAllowedSigner(signer),"not allowed signer");
+            if (signer != allSigners[index]) revert InvalidSigner();
+            if (!isAllowedSigner(signer)) revert NotAllowedSigner();
         }
         
         // Update state before external call to prevent reentrancy
-        feeBalance -= amount;
+        userBalance[systemAddress] -= amount;
         
         // Store balance before transfer
         uint256 preBalance = USDT.balanceOf(address(this));
@@ -134,56 +155,19 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         uint256 postBalance = USDT.balanceOf(address(this));
         assert(preBalance - postBalance == amount);
 
-        feeWithdrawn += amount;
-        emit WithdrawFee(to, amount);
+        emit SystemWithdraw(to, amount);
     }
 
-    function getTotalBalance() external view returns (uint256) {
-        return USDT.balanceOf(address(this));
-    }
+    function updateUserBalances(uint256 batchId,address []memory users, uint256 []memory amounts) external onlySettlementOperator {
+        if (users.length != amounts.length) revert UserAndAmountLengthNotMatch();
+        for (uint256 i = 0; i < users.length; i++) {
+            userBalance[users[i]] = amounts[i];
+            emit UpdateUserBalance(batchId, users[i], amounts[i]);
+        }
 
-    function setLastBatchTime(uint256 _lastBatchTime) external onlySettlement nonReentrant validTime(_lastBatchTime) {
-        lastBatchTime = _lastBatchTime;
-        emit LastBatchTimeUpdated(_lastBatchTime);
-    }
-
-    function addUserBalance(address user, uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
-        userBalance[user] += amount;
-        emit AddUserBalance(user, amount);
-    }
-
-    function subUserBalance(address user, uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
-        userBalance[user] -= amount;
-        emit SubUserBalance(user, amount);
-    }
-
-    function addFeeBalance(uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
-        feeBalance += amount;
-        emit AddFeeBalance(amount);
-    }
-
-     function addRiskMarginBalance(uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
-        riskMarginBalance += amount;
-        emit AddRiskMarginBalance(amount);
-    }
-
-    function subRiskMarginBalance(uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
-        riskMarginBalance -= amount;
-        emit SubRiskMarginBalance(amount);
-    }
-
-    function userWithdraw(address user, uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
-        _userWithdraw(user,amount);
-        emit UserWithdraw(user,amount);
-    }
-
-    function acceptForceWithdrawal(address user, uint256 amount) external onlySettlement nonReentrant validAmount(amount) {
-        require(
-            getForcedWithdrawalRequest(user, amount) > 0,
-            "REQUEST_ALREADY_PENDING"
-        );
-        _userWithdraw(user,amount);
-        emit AcceptForceWithdrawal(user,amount);
+        lastBatchId = batchId;
+        lastBatchTime = block.timestamp;
+        emit BatchUpdated(batchId,block.timestamp);
     }
 
     function isAllowedSigner(address signer) public view returns (bool) {
@@ -195,12 +179,27 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         return false;
     }
 
-    function getUSDTAddress() external view returns (address) {
-        return address(USDT);
+    function setSystemAddress(address _systemAddress) external onlyOwner validAddress(_systemAddress) {
+        systemAddress = _systemAddress;
+        emit SystemAddressUpdated(_systemAddress);
     }
 
-    function setSettlementContract(address _settlementContract) external onlyOwner validAddress(_settlementContract) {
-        settlementContract = _settlementContract;
-        emit SettlementContractUpdated(_settlementContract);
+    function setSettlementAddress(address _settlementAddress) external onlyOwner validAddress(_settlementAddress) {
+        settlementOperator = _settlementAddress;
+        emit SettlementAddressUpdated(_settlementAddress);
+    }
+
+    function setWithdrawOperator(address _withdrawOperator) external onlyOwner validAddress(_withdrawOperator) {
+        withdrawOperator = _withdrawOperator;
+        emit WithdrawOperatorUpdated(_withdrawOperator);
+    }
+
+    function setSigners(address[] memory _signers) external onlyOwner  {
+        if (_signers.length == 0) revert ZeroAddressNotAllowed();
+        for (uint256 i = 0; i < _signers.length; i++) {
+            if (_signers[i] == address(0)) revert ZeroAddressNotAllowed();
+        }
+        signers = _signers;
+        emit SignersUpdated(_signers);
     }
 }

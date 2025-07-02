@@ -4,42 +4,44 @@ pragma solidity ^0.8.28;
 interface IAsset {
     // Events
     event SignersUpdated(address[] signers);
-    event SettlementContractUpdated(address indexed settlementContract);
-    event WithdrawFee(address indexed to, uint256 amount);
-    event AddFeeBalance(uint256 amount);
-    event AddRiskMarginBalance(uint256 amount);
-    event SubRiskMarginBalance(uint256 amount);
-    event AddUserBalance(address indexed user, uint256 amount);
-    event SubUserBalance(address indexed user, uint256 amount);
-    event ForceWithdrawRequest(address indexed user, uint256 amount);
+    event SystemAddressUpdated(address indexed systemAddress);
     event LastBatchTimeUpdated(uint256 time);
-    event AcceptForceWithdrawal(address indexed user, uint256 amount);
-    event UserWithdraw(address indexed user, uint256 amount);
-    
+    event UserWithdraw(uint256 clientOrderId,address indexed user, uint256 amount);
+    event ForceWithdraw(address indexed user, uint256 amount);
+    event BatchUpdated(uint256 batchId, uint256 time);
+    event SettlementAddressUpdated(address indexed settlementAddress);
+    event UpdateUserBalance(uint256 batchId, address indexed user, uint256 amount);
+    event SystemWithdraw(address indexed to, uint256 amount);
+    event WithdrawOperatorUpdated(address indexed withdrawOperator);
+
     // Errors
-    error NotSettlementContract();
-    error InvalidSettlementContractAddress();
-    error InsufficientUserBalance(address user, uint256 available, uint256 required);
-    error InsufficientFeeBalance(uint256 available, uint256 required);
+    error InsufficientUserBalance(uint256 available, uint256 required);
+    error InsufficientSystemBalance(address systemAddress, uint256 available, uint256 required);
     error ZeroAddressNotAllowed();
     error ZeroAmountNotAllowed();
     error FeeExceedsLimit(uint256 current, uint256 toAdd, uint256 limit);
     error TransferFailed();
     error TimeLockNotPassed();
     error InvalidTime(uint256 time);
-    error OnlySettlement();
-
-    // View/Pure functions
-    function getTotalBalance() external view returns (uint256);
-    function feeBalance() external view returns (uint256);
+    error UserAndAmountLengthNotMatch();
+    error UserAndSignatureLengthNotMatch();
+    error InvalidUserSignature();
+    error InvalidToken();
+    error InvalidAllSignersLength();
+    error InvalidSignaturesLength();
+    error SameSigner();
+    error ExpiredTransaction();
+    error InvalidSigner();
+    error NotAllowedSigner();
+    error OnlySettlementOperator();
+    error OnlyWithdrawOperator();
 
     // State-changing functions
-    function addUserBalance(address user, uint256 amount) external;
-    function subUserBalance(address user, uint256 amount) external;
-    function addFeeBalance(uint256 amount) external;
-    function addRiskMarginBalance(uint256 amount) external;
-    function subRiskMarginBalance(uint256 amount) external;
-    function setLastBatchTime(uint256 time) external;
-    function userWithdraw(address user, uint256 amount) external;
-    function acceptForceWithdrawal(address user, uint256 amount) external;
+    function batchWithdraw(uint256 []memory clientOrderIds,address []memory users, uint256 []memory amounts,bytes[] memory signatures) external;
+    function forceWithdraw(uint256 amount) external;
+    function setSigners(address[] memory _signers) external;
+    function setSystemAddress(address _systemAddress) external;
+    function setSettlementAddress(address _settlementAddress) external;
+    function setWithdrawOperator(address _withdrawOperator) external;
+    function updateUserBalances(uint256 batchId,address []memory users, uint256 []memory amounts) external;
 }
