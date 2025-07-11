@@ -35,7 +35,8 @@ interface IAsset {
     error NotAllowedSigner();
     error OnlySettlementOperator();
     error OnlyWithdrawOperator();
-
+    error InvalidBatchId();
+    
     // State-changing functions
     function batchWithdraw(uint256 []memory clientOrderIds,address []memory users, uint256 []memory amounts,bytes[] memory signatures) external;
     function forceWithdraw(uint256 amount) external;

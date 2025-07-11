@@ -159,6 +159,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
     function updateUserBalances(uint256 batchId,address []memory users, uint256 []memory amounts) external onlySettlementOperator {
+        if (batchId != lastBatchId + 1) revert InvalidBatchId();
         if (users.length != amounts.length) revert UserAndAmountLengthNotMatch();
         for (uint256 i = 0; i < users.length; i++) {
             userBalance[users[i]] = amounts[i];
