@@ -148,6 +148,52 @@ contract AssetTest is Test {
         assertEq(asset.lastBatchTime(), block.timestamp);
     }
 
+    function test_updateUserBalances_invalidBatchId() public {
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        
+        // Try to update with invalid batch ID (should be 1, but using 2)
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
+        asset.updateUserBalances(2, users, amounts);
+        
+        // Try with 0 (should also fail since lastBatchId is 0, expecting 1)
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
+        asset.updateUserBalances(0, users, amounts);
+        
+        vm.stopPrank();
+    }
+
+    function test_updateUserBalances_sequentialBatchIds() public {
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
+
+        vm.startPrank(settlementOperator);
+        
+        // First batch should be ID 1
+        asset.updateUserBalances(1, users, amounts);
+        assertEq(asset.lastBatchId(), 1);
+        
+        // Second batch should be ID 2
+        amounts[0] = 2000;
+        asset.updateUserBalances(2, users, amounts);
+        assertEq(asset.lastBatchId(), 2);
+        
+        // Third batch should be ID 3
+        amounts[0] = 3000;
+        asset.updateUserBalances(3, users, amounts);
+        assertEq(asset.lastBatchId(), 3);
+        
+        vm.stopPrank();
+        
+        assertEq(asset.userBalance(user1), 3000);
+    }
+
     function test_updateUserBalances_onlySettlementOperator() public {
         address[] memory users = new address[](1);
         users[0] = user1;
@@ -1058,14 +1104,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         assertEq(asset.userBalance(user1), type(uint256).max);
-
-        // Test with very large batch ID
-        amounts[0] = 1000;
-        vm.startPrank(settlementOperator);
-        asset.updateUserBalances(type(uint256).max, users, amounts);
-        vm.stopPrank();
-
-        assertEq(asset.lastBatchId(), type(uint256).max);
+        assertEq(asset.lastBatchId(), 1);
     }
 
     // Test large batch update with many users
@@ -1080,7 +1119,7 @@ contract AssetTest is Test {
         }
 
         vm.startPrank(settlementOperator);
-        asset.updateUserBalances(999, users, amounts);
+        asset.updateUserBalances(1, users, amounts);
         vm.stopPrank();
 
         // Verify all users got their balances
@@ -1088,7 +1127,7 @@ contract AssetTest is Test {
             assertEq(asset.userBalance(users[i]), amounts[i]);
         }
         
-        assertEq(asset.lastBatchId(), 999);
+        assertEq(asset.lastBatchId(), 1);
     }
 
     // Test batchWithdraw with clientOrderIds length insufficient (should cause array bounds error)

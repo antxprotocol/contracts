@@ -23,10 +23,10 @@ contract AssetScript is Script {
         address systemAddress = 0x4626eb76a7c2896645B0117614Ec0555e6E3a180;
         console.log("System address at:", address(systemAddress));
 
-        address settlementOperator = 0x6c7459c4B3B84E24734E59D4a6749EB02Ea26406;
+        address settlementOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2;
         console.log("Settlement address at:", address(settlementOperator));
 
-        address withdrawOperator = 0x3171E2318402Cea35849CDaed28261A25e25849c;
+        address withdrawOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2;
         console.log("Withdraw operator address at:", address(withdrawOperator));
 
         // Deploy asset
