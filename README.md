@@ -65,19 +65,19 @@ $ anvil --help
 $ cast --help
 ```
 
-### stargate合约集成
+### Stargate Contract Integration
 ```
-1.部署sepolia链的adapter
+1. Deploy sepolia chain adapter
 forge script script/AntStrargateAdapter.s.sol --rpc-url https://sepolia.drpc.org --broadcast
-2.部署arb-sepolia链的adapter
+2. Deploy arb-sepolia chain adapter
 forge script script/AntStrargateAdapterARB.s.sol --rpc-url https://arbitrum-sepolia.drpc.org --broadcast 
-3.执行桥合约操作
+3. Execute bridge contract operations
 forge script script/Bridge.s.sol --rpc-url https://sepolia.drpc.org --broadcast
 ```
 
 ### stargate API
 
-api入口[https://scan-testnet.layerzero-api.com/v1/swagger]
+API endpoint [https://scan-testnet.layerzero-api.com/v1/swagger]
 
 ```
 curl -X 'GET' \
@@ -217,5 +217,5 @@ curl -X 'GET' \
 }
 ```
 
-检查整体交易的status, name=DELIVERED message=Executor transaction confirmed
-检查source, status=SUCCESS + from + payload(toAddress+Amount)
+Check overall transaction status, name=DELIVERED message=Executor transaction confirmed
+Check source, status=SUCCESS + from + payload(toAddress+Amount)

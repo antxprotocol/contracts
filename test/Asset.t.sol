@@ -1565,4 +1565,38 @@ contract AssetTest is Test {
 
         assertEq(asset.userBalance(systemAddress), 0);
     }
+
+
+    function test_recover_address() public {
+        address testUser = 0xc77DdA9341EBa51A705AFEEd0628B9316D4cf5a0;
+        uint256 amount = 1000000;
+        uint256 clientOrderID = 1752463521625;
+        uint256 chainID = 421614;
+        string memory strSignature = "0x5a1496f5262ce0338d82968dc8b304d4ae4985e7e7355b9c725b74b68fc450307d63bb27d961d16219617cf439b1bced2a033d4a505ec761347dc67418effe9a1c";
+        bytes memory signatures = vm.parseBytes(strSignature);
+
+        console.log("=== Test Recover Address ===");
+        console.log("testUser:", testUser);
+        console.log("amount:", amount);
+        console.log("clientOrderID:", clientOrderID);
+        console.log("chainID:", chainID);
+        console.log("strSignature:", strSignature);
+        console.log("signatures length:", signatures.length);
+
+        // Create user signature with the correct private key for the test user
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderID, testUser, amount, chainID));
+        console.log("operationHash before toEthSignedMessageHash:");
+        console.logBytes32(operationHash);
+        
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+        console.log("operationHash after toEthSignedMessageHash:");
+        console.logBytes32(operationHash);
+        
+        address recoveredAddress = ECDSA.recover(operationHash, signatures);
+        console.log("recoveredAddress:", recoveredAddress);
+        console.log("Expected testUser:", testUser);
+        console.log("Addresses match:", recoveredAddress == testUser);
+        
+        assertEq(recoveredAddress, testUser);
+    }
 }
