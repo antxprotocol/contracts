@@ -6,13 +6,14 @@ interface IAsset {
     event SignersUpdated(address[] signers);
     event SystemAddressUpdated(address indexed systemAddress);
     event LastBatchTimeUpdated(uint256 time);
-    event UserWithdraw(uint256 clientOrderId,address indexed user, uint256 amount);
-    event ForceWithdraw(address indexed user, uint256 amount);
+    event UserWithdraw(uint256 clientOrderId,bytes32 indexed user, uint256 amount);
+    event ForceWithdraw(bytes32 indexed user, uint256 amount);
     event BatchUpdated(uint256 batchId, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
-    event UpdateUserBalance(uint256 batchId, address indexed user, uint256 amount);
+    event UpdateUserBalance(uint256 batchId, bytes32 indexed user, uint256 amount);
     event SystemWithdraw(address indexed to, uint256 amount);
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
+    event Ed25519OracleUpdated(address indexed ed25519Oracle);
 
     // Errors
     error InsufficientUserBalance(uint256 available, uint256 required);
@@ -36,13 +37,18 @@ interface IAsset {
     error OnlySettlementOperator();
     error OnlyWithdrawOperator();
     error InvalidBatchId();
+
+    enum SignatureType {
+        ECDSA,
+        ED25519
+    }
     
     // State-changing functions
-    function batchWithdraw(uint256 []memory clientOrderIds,address []memory users, uint256 []memory amounts,bytes[] memory signatures) external;
-    function forceWithdraw(uint256 amount) external;
+    function batchWithdraw(uint256 []memory clientOrderIds,bytes32 []memory users, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external;
+    function forceWithdraw(bytes32 user,uint256 amount, SignatureType signatureType, bytes memory signatures) external;
     function setSigners(address[] memory _signers) external;
     function setSystemAddress(address _systemAddress) external;
     function setSettlementAddress(address _settlementAddress) external;
     function setWithdrawOperator(address _withdrawOperator) external;
-    function updateUserBalances(uint256 batchId,address []memory users, uint256 []memory amounts) external;
+    function updateUserBalances(uint256 batchId,bytes32 []memory users, uint256 []memory amounts) external;
 }

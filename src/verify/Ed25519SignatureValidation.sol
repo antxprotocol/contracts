@@ -24,21 +24,20 @@ contract Ed25519SignatureValidation is Ownable {
         signatureValidationOperator = _signatureValidationOperator;
     }
 
-
     // Submit verification result
     function submitVerification(
         bytes32 publicKey,
-        string memory message,
+        bytes32 messageHash,
         bytes calldata signature,
         bool isValid) public onlySignatureValidationOperator {
-        verifiedMessages[keccak256(abi.encodePacked(publicKey, message, signature))] = isValid;
+        verifiedMessages[keccak256(abi.encodePacked(publicKey, messageHash, signature))] = isValid;
     }
 
     // Query if verified
-    function isVerified(  bytes32 publicKey,
-        string memory message,
+    function isVerified(
+        bytes32 publicKey,
+        bytes32 messageHash,
         bytes calldata signature) public view returns (bool) {
-        bytes32 messageHash = keccak256(abi.encodePacked(publicKey, message, signature));
-        return verifiedMessages[messageHash];
+        return verifiedMessages[keccak256(abi.encodePacked(publicKey, messageHash, signature))];
     }
 }

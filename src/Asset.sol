@@ -7,8 +7,9 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
+import {IEd25519Oracle} from "./interfaces/IEd25519Oracle.sol";
 import "./interfaces/IAsset.sol";
+
 
 contract Asset is Ownable, ReentrancyGuard, IAsset {
     using SafeERC20 for IERC20;
@@ -18,10 +19,10 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     address public systemAddress;
     address public settlementOperator;
     address public withdrawOperator;
-    mapping(address => uint256) public userBalance;
+    mapping(bytes32 => uint256) public userBalance;
     uint256 public lastBatchId;
     uint256 public lastBatchTime;
-    
+    IEd25519Oracle public ed25519Oracle;
     uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days; 
 
     modifier validAddress(address addr) {
@@ -49,7 +50,13 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         _;
     }
 
-    constructor(address _USDT, address[] memory _signers,address _systemAddress,address _settlementAddress,address _withdrawOperator) Ownable(msg.sender) {
+    constructor(
+    address _USDT, 
+    address[] memory _signers,
+    address _systemAddress,
+    address _settlementAddress,
+    address _withdrawOperator,
+    address _ed25519Oracle) Ownable(msg.sender) {
         if (_USDT == address(0)) revert ZeroAddressNotAllowed();
         USDT = IERC20(_USDT);
 
@@ -69,33 +76,41 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         }
         signers = _signers;
         emit SignersUpdated(_signers);
+
+        if (_ed25519Oracle != address(0)) {
+            ed25519Oracle = IEd25519Oracle(_ed25519Oracle);
+            emit Ed25519OracleUpdated(_ed25519Oracle);
+        }
     }
 
-
-    function batchWithdraw(uint256 []memory clientOrderIds,address []memory users, uint256 []memory amounts,bytes[] memory signatures) external nonReentrant onlyWithdrawOperator {
+    function batchWithdraw(uint256 []memory clientOrderIds,bytes32 []memory users, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
         if (users.length != amounts.length) revert UserAndAmountLengthNotMatch();
         if (users.length != signatures.length) revert UserAndSignatureLengthNotMatch();
 
         for (uint256 i = 0; i < users.length; i++) {
-            _userWithdraw(clientOrderIds[i],users[i],amounts[i],signatures[i],false);
+            _userWithdraw(clientOrderIds[i],users[i],amounts[i],signatures[i],false,signatureType);
             emit UserWithdraw(clientOrderIds[i],users[i],amounts[i]);
         }
     }
 
-    function forceWithdraw(uint256 amount) external nonReentrant validAmount(amount) {
+    function forceWithdraw(bytes32 user,uint256 amount,SignatureType signatureType,bytes memory signatures) external nonReentrant validAmount(amount) {
         // check time lock
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
         // force withdraw
-        _userWithdraw(0,msg.sender, amount, new bytes(0), true);
-        emit ForceWithdraw(msg.sender, amount);
+        _userWithdraw(0, user, amount, signatures, true, signatureType);
+        emit ForceWithdraw(user, amount);
     }
 
-    function _userWithdraw(uint256 clientOrderId,address user, uint256 amount,bytes memory signatures,bool isForce) internal validAmount(amount) {
+    function _userWithdraw(uint256 clientOrderId,bytes32 user, uint256 amount,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
         if (!isForce) {
             // check user signature
             bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, amount, block.chainid));
             operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-            if (user != ECDSA.recover(operationHash, signatures)) revert InvalidUserSignature();
+            if (signatureType == SignatureType.ECDSA) {
+                if (user != bytes32(uint256(uint160(ECDSA.recover(operationHash, signatures))))) revert InvalidUserSignature();
+            } else {
+                if (!ed25519Oracle.isVerified(user, operationHash, signatures)) revert InvalidUserSignature();
+            }
         }
 
         // check user balance
@@ -109,7 +124,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         uint256 preBalance = USDT.balanceOf(address(this));
         
         // Execute transfer
-        IERC20(USDT).safeTransfer(user, amount);
+        IERC20(USDT).safeTransfer(address(uint160(uint256(user))), amount);
         
         // Verify transfer happened correctly 
         uint256 postBalance = USDT.balanceOf(address(this));
@@ -130,7 +145,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         if (allSigners[0] == allSigners[1]) revert SameSigner();
         if (expireTime < block.timestamp) revert ExpiredTransaction();
 
-        if (amount > userBalance[systemAddress]) revert InsufficientSystemBalance(systemAddress, userBalance[systemAddress], amount);
+        if (amount > userBalance[bytes32(uint256(uint160(systemAddress)))]) revert InsufficientSystemBalance(systemAddress, userBalance[bytes32(uint256(uint160(systemAddress)))], amount);
 
         // verify multi signatures
         bytes32 operationHash = keccak256(abi.encodePacked("SYSTEM_WITHDRAW", token, to, amount, expireTime, address(this), block.chainid));
@@ -143,7 +158,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         }
         
         // Update state before external call to prevent reentrancy
-        userBalance[systemAddress] -= amount;
+        userBalance[bytes32(uint256(uint160(systemAddress)))] -= amount;
         
         // Store balance before transfer
         uint256 preBalance = USDT.balanceOf(address(this));
@@ -158,7 +173,8 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         emit SystemWithdraw(to, amount);
     }
 
-    function updateUserBalances(uint256 batchId,address []memory users, uint256 []memory amounts) external onlySettlementOperator {
+    // Interface-required signature
+    function updateUserBalances(uint256 batchId,bytes32 []memory users, uint256 []memory amounts) public onlySettlementOperator {
         if (batchId != lastBatchId + 1) revert InvalidBatchId();
         if (users.length != amounts.length) revert UserAndAmountLengthNotMatch();
         for (uint256 i = 0; i < users.length; i++) {
@@ -193,6 +209,11 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     function setWithdrawOperator(address _withdrawOperator) external onlyOwner validAddress(_withdrawOperator) {
         withdrawOperator = _withdrawOperator;
         emit WithdrawOperatorUpdated(_withdrawOperator);
+    }
+
+    function setEd25519Oracle(address _ed25519Oracle) external onlyOwner validAddress(_ed25519Oracle) {
+        ed25519Oracle = IEd25519Oracle(_ed25519Oracle);
+        emit Ed25519OracleUpdated(_ed25519Oracle);
     }
 
     function setSigners(address[] memory _signers) external onlyOwner  {

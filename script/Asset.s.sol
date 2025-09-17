@@ -35,7 +35,8 @@ contract AssetScript is Script {
             signers,
             systemAddress,
             settlementOperator,
-            withdrawOperator
+            withdrawOperator,
+            address(0) // ed25519Oracle address (placeholder)
         );
         console.log("Asset deployed at:", address(asset));
 
