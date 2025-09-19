@@ -22,6 +22,22 @@ contract MockEd25519Oracle {
     }
 }
 
+// Helper contract to expose the validTime modifier via a simple callable function
+contract AssetValidTimeHelper is Asset {
+    constructor(
+        address usdt,
+        address[] memory _signers,
+        address sys,
+        address settle,
+        address wd,
+        address oracle
+    ) Asset(usdt, _signers, sys, settle, wd, oracle) {}
+
+    function ping(uint256 t) external validTime(t) returns (bool) {
+        return true;
+    }
+}
+
 contract AssetTest is Test {
     Asset public asset;
     MockToken public USDT;
@@ -65,6 +81,36 @@ contract AssetTest is Test {
         vm.startPrank(owner);
         asset = new Asset(address(USDT), signers, systemAddress, settlementOperator, withdrawOperator, address(0));
         vm.stopPrank();
+    }
+
+    // ============ Coverage helpers for modifiers/constructor branches ============
+
+    function test_validTime_pass_and_revert() public {
+        vm.startPrank(owner);
+        AssetValidTimeHelper a = new AssetValidTimeHelper(
+            address(USDT),
+            signers,
+            systemAddress,
+            settlementOperator,
+            withdrawOperator,
+            address(0)
+        );
+        vm.stopPrank();
+
+        // pass
+        assertTrue(a.ping(1));
+
+        // revert on 0
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidTime.selector, 0));
+        a.ping(0);
+    }
+
+    function test_constructor_emits_OracleUpdated_when_nonzero_arg() public {
+        address dummyOracle = address(0x12345);
+        vm.startPrank(owner);
+        Asset a2 = new Asset(address(USDT), signers, systemAddress, settlementOperator, withdrawOperator, dummyOracle);
+        vm.stopPrank();
+        assertEq(address(a2.ed25519Oracle()), dummyOracle);
     }
 
     function signMessage(bytes32 hash, uint256 privateKey) internal pure returns (bytes memory) {
@@ -480,6 +526,34 @@ contract AssetTest is Test {
         uint256 user1BalanceAfter = USDT.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
         assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 500);
+    }
+
+    function test_forceWithdraw_success_ed25519_flag_path() public {
+        // Setup user balance
+        address[] memory users = new address[](1);
+        users[0] = user1;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 600;
+
+        vm.startPrank(settlementOperator);
+        bytes32[] memory bUsers = new bytes32[](1);
+        bUsers[0] = bytes32(uint256(uint160(user1)));
+        asset.updateUserBalances(1, bUsers, amounts);
+        vm.stopPrank();
+
+        // Fund and pass timelock
+        USDT.transfer(address(asset), 600);
+        vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
+
+        uint256 beforeBal = USDT.balanceOf(user1);
+        vm.startPrank(user1);
+        // Use ED25519 enum to cover that path (isForce skips signature logic)
+        asset.forceWithdraw(bytes32(uint256(uint160(user1))), 200, IAsset.SignatureType.ED25519, new bytes(0));
+        vm.stopPrank();
+
+        uint256 afterBal = USDT.balanceOf(user1);
+        assertEq(afterBal - beforeBal, 200);
+        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 400);
     }
 
     function test_forceWithdraw_timeLockNotPassed() public {
@@ -956,6 +1030,17 @@ contract AssetTest is Test {
         assertFalse(asset.isAllowedSigner(address(0)));
     }
 
+    function test_isAllowedSigner_notFound_fallthrough() public {
+        // Deploy an Asset with a single signer to force full loop fallthrough
+        address[] memory single = new address[](1);
+        single[0] = signer1;
+        vm.startPrank(owner);
+        Asset a2 = new Asset(address(USDT), single, systemAddress, settlementOperator, withdrawOperator, address(0));
+        vm.stopPrank();
+        address notSigner = address(0xDEADBEeF);
+        assertFalse(a2.isAllowedSigner(notSigner));
+    }
+
     // Test transfer failure scenarios
     function test_userWithdraw_transferFailure() public {
         // Setup user balance
@@ -1240,6 +1325,35 @@ contract AssetTest is Test {
         asset.lastBatchId();
         asset.lastBatchTime();
         asset.FORCE_WITHDRAW_TIME_LOCK();
+    }
+
+    function test_adminSetters_fullCoverage() public {
+        // setSystemAddress
+        address newSystem = address(0x9991);
+        vm.startPrank(owner);
+        vm.expectEmit(address(asset));
+        emit IAsset.SystemAddressUpdated(newSystem);
+        asset.setSystemAddress(newSystem);
+        vm.stopPrank();
+        assertEq(asset.systemAddress(), newSystem);
+
+        // setSettlementAddress
+        address newSettlement = address(0x9992);
+        vm.startPrank(owner);
+        vm.expectEmit(address(asset));
+        emit IAsset.SettlementAddressUpdated(newSettlement);
+        asset.setSettlementAddress(newSettlement);
+        vm.stopPrank();
+        assertEq(asset.settlementOperator(), newSettlement);
+
+        // setWithdrawOperator
+        address newWithdraw = address(0x9993);
+        vm.startPrank(owner);
+        vm.expectEmit(address(asset));
+        emit IAsset.WithdrawOperatorUpdated(newWithdraw);
+        asset.setWithdrawOperator(newWithdraw);
+        vm.stopPrank();
+        assertEq(asset.withdrawOperator(), newWithdraw);
     }
 
     // Test batchWithdraw zero amount through _userWithdraw

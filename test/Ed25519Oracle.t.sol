@@ -105,6 +105,76 @@ contract Ed25519OracleTest is Test {
         // Check stake was returned
         assertEq(node1.balance, initialBalance + 2 ether);
     }
+
+    function testUnregisterNodeRemovesFromMiddle() public {
+        // Register two nodes so that node list is [owner, node1, node2]
+        vm.prank(owner);
+        oracle.registerNode{value: 2 ether}(node1, 2 ether);
+        vm.prank(owner);
+        oracle.registerNode{value: 2 ether}(node2, 2 ether);
+
+        address[] memory beforeNodes = oracle.getAllNodes();
+        assertEq(beforeNodes.length, 3);
+        assertEq(beforeNodes[0], owner);
+        assertEq(beforeNodes[1], node1);
+        assertEq(beforeNodes[2], node2);
+
+        // Unregister node1 which is in the middle; this triggers swap-with-last and pop
+        vm.prank(owner);
+        oracle.unregisterNode(node1);
+
+        address[] memory afterNodes = oracle.getAllNodes();
+        assertEq(afterNodes.length, 2);
+        assertEq(afterNodes[0], owner);
+        assertEq(afterNodes[1], node2);
+    }
+
+    function testUnregisterOwnerRemovesHead() public {
+        // Register two nodes so that node list is [owner, node1, node2]
+        vm.prank(owner);
+        oracle.registerNode{value: 2 ether}(node1, 2 ether);
+        vm.prank(owner);
+        oracle.registerNode{value: 2 ether}(node2, 2 ether);
+
+        address[] memory beforeNodes = oracle.getAllNodes();
+        assertEq(beforeNodes.length, 3);
+        assertEq(beforeNodes[0], owner);
+
+        // Unregister owner at index 0, triggers swap-with-last and pop
+        vm.prank(owner);
+        oracle.unregisterNode(owner);
+
+        address[] memory afterNodes = oracle.getAllNodes();
+        assertEq(afterNodes.length, 2);
+        // Owner should be gone; remaining should be node1 and node2 in any order
+        assertTrue(afterNodes[0] == node1 || afterNodes[0] == node2);
+        assertTrue(afterNodes[1] == node1 || afterNodes[1] == node2);
+        assertTrue(afterNodes[0] != owner && afterNodes[1] != owner);
+    }
+
+    function testUnregisterNodeRemovesTail() public {
+        // Register two nodes so that node list is [owner, node1, node2]
+        vm.prank(owner);
+        oracle.registerNode{value: 2 ether}(node1, 2 ether);
+        vm.prank(owner);
+        oracle.registerNode{value: 2 ether}(node2, 2 ether);
+
+        address[] memory beforeNodes = oracle.getAllNodes();
+        assertEq(beforeNodes.length, 3);
+        assertEq(beforeNodes[2], node2);
+
+        // Unregister the tail element; still executes assignment and pop
+        vm.prank(owner);
+        oracle.unregisterNode(node2);
+
+        address[] memory afterNodes = oracle.getAllNodes();
+        assertEq(afterNodes.length, 2);
+        // Tail removed; remaining should be owner and node1
+        assertTrue(
+            (afterNodes[0] == owner && afterNodes[1] == node1) ||
+            (afterNodes[0] == node1 && afterNodes[1] == owner)
+        );
+    }
     
     // ============ Proof Submission Tests ============
     
@@ -136,6 +206,33 @@ contract Ed25519OracleTest is Test {
         assertEq(totalVotes, 3);
         assertTrue(isFinalized);
         assertTrue(finalResult); // More valid votes than invalid
+    }
+
+    function testRequiredVotesZeroBranch() public {
+        // Deploy oracle with extremely low threshold so requiredVotes initially computes to 0
+        Ed25519Oracle lowThresholdOracle = new Ed25519Oracle(
+            MINIMUM_STAKE,
+            1, // 0.01% threshold so (2 * 1) / 10000 = 0
+            CONSENSUS_TIMEOUT,
+            MAX_DATA_AGE
+        );
+
+        // Register two staked nodes
+        vm.deal(node1, 10 ether);
+        vm.deal(node2, 10 ether);
+        vm.prank(address(this));
+        lowThresholdOracle.registerNode{value: 2 ether}(node1, 2 ether);
+        vm.prank(address(this));
+        lowThresholdOracle.registerNode{value: 2 ether}(node2, 2 ether);
+
+        // Submit a single vote; requiredVotes will be corrected to 2, so not finalized
+        vm.prank(node1);
+        lowThresholdOracle.submitProof(TEST_PUBLIC_KEY, TEST_MESSAGE_HASH, TEST_SIGNATURE, true);
+
+        bytes32 dataId = keccak256(abi.encodePacked(TEST_PUBLIC_KEY, TEST_MESSAGE_HASH, TEST_SIGNATURE));
+        ( , , uint256 totalVotes, bool isFinalized, , , ) = lowThresholdOracle.getConsensusData(dataId);
+        assertEq(totalVotes, 1);
+        assertFalse(isFinalized);
     }
     
     function testSubmitProofConsensusNotReached() public {
@@ -266,6 +363,23 @@ contract Ed25519OracleTest is Test {
         (bool isActive, , , , ) = oracle.getNodeInfo(node1);
         assertFalse(isActive);
     }
+
+    function testSetNodeActiveReactivate() public {
+        // Register node
+        vm.prank(owner);
+        oracle.registerNode{value: 2 ether}(node1, 2 ether);
+
+        // Deactivate
+        vm.prank(owner);
+        oracle.setNodeActive(node1, false);
+
+        // Reactivate
+        vm.prank(owner);
+        oracle.setNodeActive(node1, true);
+
+        (bool isActive, , , , ) = oracle.getNodeInfo(node1);
+        assertTrue(isActive);
+    }
     
     function testEmergencyFinalize() public {
         // Register nodes
@@ -285,6 +399,27 @@ contract Ed25519OracleTest is Test {
         oracle.emergencyFinalize(dataId, true);
         
         assertTrue(oracle.isVerified(TEST_PUBLIC_KEY, TEST_MESSAGE_HASH, TEST_SIGNATURE));
+    }
+
+    // Cover _checkConsensus timeout branch lines 252..259 and post-timeout flow
+    function testConsensusTimeoutFinalizesFalse() public {
+        vm.prank(owner);
+        oracle.registerNode{value: 2 ether}(node1, 2 ether);
+
+        vm.prank(node1);
+        oracle.submitProof(TEST_PUBLIC_KEY, TEST_MESSAGE_HASH, TEST_SIGNATURE, true);
+
+        // warp beyond timeout
+        vm.warp(block.timestamp + CONSENSUS_TIMEOUT + 5);
+
+        // trigger _checkConsensus via another submit (duplicate vote ignored but timeout processed)
+        vm.prank(node1);
+        oracle.submitProof(TEST_PUBLIC_KEY, TEST_MESSAGE_HASH, TEST_SIGNATURE, true);
+
+        bytes32 dataId = keccak256(abi.encodePacked(TEST_PUBLIC_KEY, TEST_MESSAGE_HASH, TEST_SIGNATURE));
+        (,, , bool isFinalized, bool finalResult,,) = oracle.getConsensusData(dataId);
+        assertTrue(isFinalized);
+        assertFalse(finalResult);
     }
     
     // ============ Edge Case Tests ============
@@ -348,6 +483,29 @@ contract Ed25519OracleTest is Test {
         assertEq(consensusThresh, CONSENSUS_THRESHOLD);
         assertEq(consensusTime, CONSENSUS_TIMEOUT);
         assertEq(maxAge, MAX_DATA_AGE);
+    }
+
+    function testGetAllNodesListUpdates() public {
+        // Initially only owner is registered
+        address[] memory nodesBefore = oracle.getAllNodes();
+        assertEq(nodesBefore.length, 1);
+
+        // Register two nodes
+        vm.prank(owner);
+        oracle.registerNode{value: 2 ether}(node1, 2 ether);
+        vm.prank(owner);
+        oracle.registerNode{value: 3 ether}(node2, 3 ether);
+
+        address[] memory nodesAfter = oracle.getAllNodes();
+        // Owner + node1 + node2
+        assertEq(nodesAfter.length, 3);
+
+        // Unregister node1 and ensure list shrinks
+        vm.prank(owner);
+        oracle.unregisterNode(node1);
+
+        address[] memory nodesFinal = oracle.getAllNodes();
+        assertEq(nodesFinal.length, 2);
     }
     
     // ============ Additional Comprehensive Tests ============
