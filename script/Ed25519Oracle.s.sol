@@ -22,10 +22,10 @@ contract Ed25519OracleScript is Script {
         
         // Deploy oracle with default parameters
         Ed25519Oracle oracle = new Ed25519Oracle(
-            1 ether,    // minimumStake: 1 ETH
+            0.001 ether,    // minimumStake: 1 ETH
             5000,       // consensusThreshold: 50%
             300,        // consensusTimeout: 5 minutes
-            3600        // maxDataAge: 1 hour
+            3600*24        // maxDataAge: 1 day
         );
         
         console.log("Ed25519Oracle deployed at:", address(oracle));
