@@ -10,11 +10,10 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IEd25519Oracle} from "./interfaces/IEd25519Oracle.sol";
 import "./interfaces/IAsset.sol";
 
-
 contract Asset is Ownable, ReentrancyGuard, IAsset {
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable USDT;
+    IERC20 public immutable USDC;
     address[] public signers;
     address public systemAddress;
     address public settlementOperator;
@@ -51,17 +50,13 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
     constructor(
-    address _USDT, 
+    address _USDC, 
     address[] memory _signers,
-    address _systemAddress,
     address _settlementAddress,
     address _withdrawOperator,
     address _ed25519Oracle) Ownable(msg.sender) {
-        if (_USDT == address(0)) revert ZeroAddressNotAllowed();
-        USDT = IERC20(_USDT);
-
-        if (_systemAddress == address(0)) revert ZeroAddressNotAllowed();
-        systemAddress = _systemAddress;
+        if (_USDC == address(0)) revert ZeroAddressNotAllowed();
+        USDC = IERC20(_USDC);
 
         if (_settlementAddress == address(0)) revert ZeroAddressNotAllowed();
         settlementOperator = _settlementAddress;
@@ -121,17 +116,17 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         emit UserWithdraw(clientOrderId, user, amount);
 
         // Store balance before transfer
-        uint256 preBalance = USDT.balanceOf(address(this));
+        uint256 preBalance = USDC.balanceOf(address(this));
         
         // Execute transfer
-        IERC20(USDT).safeTransfer(address(uint160(uint256(user))), amount);
+        IERC20(USDC).safeTransfer(address(uint160(uint256(user))), amount);
         
         // Verify transfer happened correctly 
-        uint256 postBalance = USDT.balanceOf(address(this));
+        uint256 postBalance = USDC.balanceOf(address(this));
         assert(preBalance - postBalance == amount);
     }
 
-    function systemWithdraw(
+    function emergencyWithdraw(
         address token,
         address to, 
         uint256 amount,
@@ -139,16 +134,14 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         address[] memory allSigners,
         bytes[] memory signatures
     ) external nonReentrant validAddress(to) validAmount(amount) {
-        if (token != address(USDT)) revert InvalidToken();
+        if (token != address(USDC)) revert NotAllowedToken(token);
         if (allSigners.length < 2) revert InvalidAllSignersLength();
         if (allSigners.length != signatures.length) revert InvalidSignaturesLength();
         if (allSigners[0] == allSigners[1]) revert SameSigner();
         if (expireTime < block.timestamp) revert ExpiredTransaction();
 
-        if (amount > userBalance[bytes32(uint256(uint160(systemAddress)))]) revert InsufficientSystemBalance(systemAddress, userBalance[bytes32(uint256(uint160(systemAddress)))], amount);
-
         // verify multi signatures
-        bytes32 operationHash = keccak256(abi.encodePacked("SYSTEM_WITHDRAW", token, to, amount, expireTime, address(this), block.chainid));
+        bytes32 operationHash = keccak256(abi.encodePacked("EMERGENCY_WITHDRAW", token, to, amount, expireTime, address(this), block.chainid));
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
 
         for (uint8 index = 0; index < allSigners.length; index++) {
@@ -157,20 +150,17 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
             if (!isAllowedSigner(signer)) revert NotAllowedSigner();
         }
         
-        // Update state before external call to prevent reentrancy
-        userBalance[bytes32(uint256(uint160(systemAddress)))] -= amount;
-        
         // Store balance before transfer
-        uint256 preBalance = USDT.balanceOf(address(this));
+        uint256 preBalance = IERC20(token).balanceOf(address(this));
         
         // Execute transfer
-        IERC20(USDT).safeTransfer(to, amount);
+        IERC20(token).safeTransfer(to, amount);
 
         // Verify transfer happened correctly
-        uint256 postBalance = USDT.balanceOf(address(this));
+        uint256 postBalance = IERC20(token).balanceOf(address(this));
         assert(preBalance - postBalance == amount);
 
-        emit SystemWithdraw(to, amount);
+        emit EmergencyWithdraw(to, amount);
     }
 
     // Interface-required signature
@@ -194,11 +184,6 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
             }
         }
         return false;
-    }
-
-    function setSystemAddress(address _systemAddress) external onlyOwner validAddress(_systemAddress) {
-        systemAddress = _systemAddress;
-        emit SystemAddressUpdated(_systemAddress);
     }
 
     function setSettlementAddress(address _settlementAddress) external onlyOwner validAddress(_settlementAddress) {

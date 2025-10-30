@@ -11,9 +11,10 @@ interface IAsset {
     event BatchUpdated(uint256 batchId, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
     event UpdateUserBalance(uint256 batchId, bytes32 indexed user, uint256 amount);
-    event SystemWithdraw(address indexed to, uint256 amount);
+    event EmergencyWithdraw(address indexed to, uint256 amount);
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
+    event MarginAssetUpdated(address indexed marginAsset);
 
     // Errors
     error InsufficientUserBalance(uint256 available, uint256 required);
@@ -37,6 +38,7 @@ interface IAsset {
     error OnlySettlementOperator();
     error OnlyWithdrawOperator();
     error InvalidBatchId();
+    error NotAllowedToken(address token);
 
     enum SignatureType {
         ECDSA,
@@ -47,7 +49,6 @@ interface IAsset {
     function batchWithdraw(uint256 []memory clientOrderIds,bytes32 []memory users, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external;
     function forceWithdraw(bytes32 user,uint256 amount, SignatureType signatureType, bytes memory signatures) external;
     function setSigners(address[] memory _signers) external;
-    function setSystemAddress(address _systemAddress) external;
     function setSettlementAddress(address _settlementAddress) external;
     function setWithdrawOperator(address _withdrawOperator) external;
     function updateUserBalances(uint256 batchId,bytes32 []memory users, uint256 []memory amounts) external;
