@@ -9,9 +9,22 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IEd25519Oracle} from "./interfaces/IEd25519Oracle.sol";
 import "./interfaces/IAsset.sol";
+import "./margin/MarginAsset.sol";
 
 contract Asset is Ownable, ReentrancyGuard, IAsset {
     using SafeERC20 for IERC20;
+    using MarginAsset for MarginAsset.Asset;
+
+    // User asset update information struct
+    struct UserAssetUpdate {
+        bytes32 user;                           // User address
+        int64 crossCollateralAmount;            // Cross margin collateral amount with precision of collateralCoin.StepSizeScale
+        uint32 coinStepSizeScale;               // Coin step size scale
+        uint256 orderFrozenAmount;              // Order frozen amount with precision of collateralCoin.StepSizeScale + 6
+        MarginAsset.PositionInput[] positions;  // Position list
+        MarginAsset.TradeSetting[] tradeSettings; // Trade settings list
+        MarginAsset.ExchangeInfo[] exchanges;    // Exchange information list
+    }
 
     IERC20 public immutable USDC;
     address[] public signers;
@@ -21,8 +34,10 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     mapping(bytes32 => uint256) public userBalance;
     uint256 public lastBatchId;
     uint256 public lastBatchTime;
+    uint256 public lastAntxChainHeight;
     IEd25519Oracle public ed25519Oracle;
     uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days; 
+    address public marginAsset;
 
     modifier validAddress(address addr) {
         if (addr == address(0)) revert ZeroAddressNotAllowed();
@@ -113,7 +128,6 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
 
         // update user balance
         userBalance[user] -= amount;
-        emit UserWithdraw(clientOrderId, user, amount);
 
         // Store balance before transfer
         uint256 preBalance = USDC.balanceOf(address(this));
@@ -124,6 +138,9 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         // Verify transfer happened correctly 
         uint256 postBalance = USDC.balanceOf(address(this));
         assert(preBalance - postBalance == amount);
+
+        // emit event
+        emit UserWithdraw(clientOrderId, user, amount);
     }
 
     function emergencyWithdraw(
@@ -163,18 +180,48 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         emit EmergencyWithdraw(to, amount);
     }
 
-    // Interface-required signature
-    function updateUserBalances(uint256 batchId,bytes32 []memory users, uint256 []memory amounts) public onlySettlementOperator {
+    /**
+     * @notice Batch update user balances
+     * @dev Constructs user's asset by calling MarginAsset's newAsset, then calculates available balance
+     *      through getCrossTransferOutAvailableAmount, and updates user balances in the asset contract
+     * 
+     * @param batchId Batch ID, must equal lastBatchId + 1
+     * @param antxChainHeight AntX chain height
+     * @param userUpdates Array of user asset update information, each element contains user's asset information
+     */
+    function batchUpdate(
+        uint256 batchId,
+        uint256 antxChainHeight,
+        UserAssetUpdate[] memory userUpdates
+    ) public onlySettlementOperator {
         if (batchId != lastBatchId + 1) revert InvalidBatchId();
-        if (users.length != amounts.length) revert UserAndAmountLengthNotMatch();
-        for (uint256 i = 0; i < users.length; i++) {
-            userBalance[users[i]] = amounts[i];
-            emit UpdateUserBalance(batchId, users[i], amounts[i]);
+        if (marginAsset == address(0)) revert ZeroAddressNotAllowed();
+        
+        // Use MarginAssetCalculator to calculate available balance
+        MarginAssetCalculator calculator = MarginAssetCalculator(marginAsset);
+
+        for (uint256 i = 0; i < userUpdates.length; i++) {
+            UserAssetUpdate memory update = userUpdates[i];
+            
+            // Construct user's asset by calling MarginAsset's newAsset, then calculate available balance
+            uint256 availableAmount = calculator.getCrossTransferOutAvailableAmount(
+                update.crossCollateralAmount,
+                update.coinStepSizeScale,
+                update.orderFrozenAmount,
+                update.positions,
+                update.tradeSettings,
+                update.exchanges
+            );
+            
+            // Update user balance to the calculated available amount
+            userBalance[update.user] = availableAmount;
+            emit UpdateUserBalance(batchId, update.user, availableAmount);
         }
 
         lastBatchId = batchId;
         lastBatchTime = block.timestamp;
-        emit BatchUpdated(batchId,block.timestamp);
+        lastAntxChainHeight = antxChainHeight;
+        emit BatchUpdated(batchId, antxChainHeight, block.timestamp);
     }
 
     function isAllowedSigner(address signer) public view returns (bool) {
@@ -208,5 +255,10 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         }
         signers = _signers;
         emit SignersUpdated(_signers);
+    }
+
+    function setMarginAsset(address _marginAsset) external onlyOwner validAddress(_marginAsset) {
+        marginAsset = _marginAsset;
+        emit MarginAssetUpdated(_marginAsset);
     }
 }

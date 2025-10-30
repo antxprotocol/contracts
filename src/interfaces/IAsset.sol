@@ -8,7 +8,7 @@ interface IAsset {
     event LastBatchTimeUpdated(uint256 time);
     event UserWithdraw(uint256 clientOrderId,bytes32 indexed user, uint256 amount);
     event ForceWithdraw(bytes32 indexed user, uint256 amount);
-    event BatchUpdated(uint256 batchId, uint256 time);
+    event BatchUpdated(uint256 batchId, uint256 antxChainHeight, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
     event UpdateUserBalance(uint256 batchId, bytes32 indexed user, uint256 amount);
     event EmergencyWithdraw(address indexed to, uint256 amount);
@@ -51,5 +51,4 @@ interface IAsset {
     function setSigners(address[] memory _signers) external;
     function setSettlementAddress(address _settlementAddress) external;
     function setWithdrawOperator(address _withdrawOperator) external;
-    function updateUserBalances(uint256 batchId,bytes32 []memory users, uint256 []memory amounts) external;
 }

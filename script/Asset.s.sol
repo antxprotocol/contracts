@@ -20,23 +20,23 @@ contract AssetScript is Script {
         signers[2] = 0x3171E2318402Cea35849CDaed28261A25e25849c;
 
 
-        address systemAddress = 0x4626eb76a7c2896645B0117614Ec0555e6E3a180;
-        console.log("System address at:", address(systemAddress));
-
+       
         address settlementOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2;
         console.log("Settlement address at:", address(settlementOperator));
 
         address withdrawOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2;
         console.log("Withdraw operator address at:", address(withdrawOperator));
 
+        address ed25519Oracle = 0x371fD764e1a267D6aEAA1724E436b9Af1B16e995;
+        console.log("Ed25519 oracle address at:", address(ed25519Oracle));
+
         // Deploy asset
         Asset asset =  new Asset(
             address(usdcAddress),
             signers,
-            systemAddress,
             settlementOperator,
             withdrawOperator,
-            address(0) // ed25519Oracle address (placeholder)
+            ed25519Oracle
         );
         console.log("Asset deployed at:", address(asset));
 

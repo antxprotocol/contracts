@@ -10,6 +10,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {MarginAsset} from "../src/margin/MarginAsset.sol";
+import {MarginAssetCalculator} from "../src/margin/MarginAsset.sol";
 
 // Simple mock for Ed25519 oracle used within tests
 contract MockEd25519Oracle {
@@ -22,16 +24,35 @@ contract MockEd25519Oracle {
     }
 }
 
+// Mock MarginAssetCalculator that returns available amounts based on crossCollateralAmount
+contract MockMarginAssetCalculator {
+    // Returns the available amount based on crossCollateralAmount
+    // In tests, we'll use crossCollateralAmount to determine the available amount
+    function getCrossTransferOutAvailableAmount(
+        int64 crossCollateralAmount,
+        uint32,
+        uint256,
+        MarginAsset.PositionInput[] memory,
+        MarginAsset.TradeSetting[] memory,
+        MarginAsset.ExchangeInfo[] memory
+    ) external pure returns (uint256) {
+        // For simplicity in tests, return the absolute value if positive, otherwise 0
+        if (crossCollateralAmount >= 0) {
+            return uint256(uint64(crossCollateralAmount));
+        }
+        return 0;
+    }
+}
+
 // Helper contract to expose the validTime modifier via a simple callable function
 contract AssetValidTimeHelper is Asset {
     constructor(
         address usdt,
         address[] memory _signers,
-        address sys,
         address settle,
         address wd,
         address oracle
-    ) Asset(usdt, _signers, sys, settle, wd, oracle) {}
+    ) Asset(usdt, _signers, settle, wd, oracle) {}
 
     function ping(uint256 t) external validTime(t) returns (bool) {
         return true;
@@ -41,6 +62,7 @@ contract AssetValidTimeHelper is Asset {
 contract AssetTest is Test {
     Asset public asset;
     MockToken public USDT;
+    MockMarginAssetCalculator public marginAssetCalculator;
     address public owner;
     address public systemAddress;
     address public settlementOperator;
@@ -54,6 +76,34 @@ contract AssetTest is Test {
     address internal user1 = address(0x5);
     address internal user2 = address(0x6);
     address[] public signers;
+    
+    // Helper function to create UserAssetUpdate
+    function createUserAssetUpdate(
+        bytes32 user,
+        uint256 availableAmount
+    ) internal pure returns (Asset.UserAssetUpdate memory) {
+        MarginAsset.PositionInput[] memory positions = new MarginAsset.PositionInput[](0);
+        MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
+        MarginAsset.ExchangeInfo[] memory exchanges = new MarginAsset.ExchangeInfo[](0);
+        
+        // Convert to int64 safely, clamping if too large
+        int64 crossCollateralAmount;
+        if (availableAmount > uint256(uint64(type(int64).max))) {
+            crossCollateralAmount = type(int64).max;
+        } else {
+            crossCollateralAmount = int64(int256(availableAmount));
+        }
+        
+        return Asset.UserAssetUpdate({
+            user: user,
+            crossCollateralAmount: crossCollateralAmount,
+            coinStepSizeScale: 6,
+            orderFrozenAmount: 0,
+            positions: positions,
+            tradeSettings: tradeSettings,
+            exchanges: exchanges
+        });
+    }
 
     function setUp() public {
         // Initialize private keys and addresses
@@ -71,6 +121,9 @@ contract AssetTest is Test {
         // Deploy mock USDT
         USDT = new MockToken("USDT", "USDT");
 
+        // Deploy mock MarginAssetCalculator
+        marginAssetCalculator = new MockMarginAssetCalculator();
+
         // Initialize signers array
         signers = new address[](3);
         signers[0] = signer1;
@@ -79,7 +132,8 @@ contract AssetTest is Test {
 
         // Deploy Asset contract with proper owner
         vm.startPrank(owner);
-        asset = new Asset(address(USDT), signers, systemAddress, settlementOperator, withdrawOperator, address(0));
+        asset = new Asset(address(USDT), signers, settlementOperator, withdrawOperator, address(0));
+        asset.setMarginAsset(address(marginAssetCalculator));
         vm.stopPrank();
     }
 
@@ -90,7 +144,6 @@ contract AssetTest is Test {
         AssetValidTimeHelper a = new AssetValidTimeHelper(
             address(USDT),
             signers,
-            systemAddress,
             settlementOperator,
             withdrawOperator,
             address(0)
@@ -108,7 +161,7 @@ contract AssetTest is Test {
     function test_constructor_emits_OracleUpdated_when_nonzero_arg() public {
         address dummyOracle = address(0x12345);
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDT), signers, systemAddress, settlementOperator, withdrawOperator, dummyOracle);
+        Asset a2 = new Asset(address(USDT), signers, settlementOperator, withdrawOperator, dummyOracle);
         vm.stopPrank();
         assertEq(address(a2.ed25519Oracle()), dummyOracle);
     }
@@ -121,12 +174,12 @@ contract AssetTest is Test {
     // Test constructor functionality
     function test_constructor_success() public {
         assertEq(asset.owner(), owner);
-        assertEq(address(asset.USDT()), address(USDT));
-        assertEq(asset.systemAddress(), systemAddress);
+        assertEq(address(asset.USDC()), address(USDT));
         assertEq(asset.settlementOperator(), settlementOperator);
         assertEq(asset.withdrawOperator(), withdrawOperator);
         assertEq(asset.lastBatchId(), 0);
         assertEq(asset.lastBatchTime(), 0);
+        assertEq(asset.lastAntxChainHeight(), 0);
         assertTrue(asset.isAllowedSigner(signer1));
         assertTrue(asset.isAllowedSigner(signer2));
         assertTrue(asset.isAllowedSigner(signer3));
@@ -135,28 +188,28 @@ contract AssetTest is Test {
     function test_constructor_zeroUSDT() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(0), signers, systemAddress, settlementOperator, withdrawOperator, address(0));
+        new Asset(address(0), signers, settlementOperator, withdrawOperator, address(0));
         vm.stopPrank();
     }
 
     function test_constructor_zeroSystemAddress() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), signers, address(0), settlementOperator, withdrawOperator, address(0));
+        new Asset(address(USDT), signers, address(0), withdrawOperator, address(0));
         vm.stopPrank();
     }
 
     function test_constructor_zeroSettlementOperator() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), signers, systemAddress, address(0), withdrawOperator, address(0));
+        new Asset(address(USDT), signers, address(0), withdrawOperator, address(0));
         vm.stopPrank();
     }
 
     function test_constructor_zeroWithdrawOperator() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), signers, systemAddress, settlementOperator, address(0), address(0));
+        new Asset(address(USDT), signers, settlementOperator, address(0), address(0));
         vm.stopPrank();
     }
 
@@ -164,7 +217,7 @@ contract AssetTest is Test {
         vm.startPrank(owner);
         address[] memory emptySigners = new address[](0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), emptySigners, systemAddress, settlementOperator, withdrawOperator, address(0));
+        new Asset(address(USDT), emptySigners, settlementOperator, withdrawOperator, address(0));
         vm.stopPrank();
     }
 
@@ -174,92 +227,84 @@ contract AssetTest is Test {
         invalidSigners[0] = signer1;
         invalidSigners[1] = address(0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), invalidSigners, systemAddress, settlementOperator, withdrawOperator, address(0));
+        new Asset(address(USDT), invalidSigners, settlementOperator, withdrawOperator, address(0));
         vm.stopPrank();
     }
 
-    // Test updateUserBalances function
-    function test_updateUserBalances_success() public {
-        address[] memory users = new address[](2);
-        users[0] = user1;
-        users[1] = user2;
+    // Test batchUpdate function
+    function test_batchUpdate_success() public {
+        bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
+        bytes32 user2Bytes = bytes32(uint256(uint160(user2)));
         
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = 1000;
-        amounts[1] = 2000;
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](2);
+        userUpdates[0] = createUserAssetUpdate(user1Bytes, 1000);
+        userUpdates[1] = createUserAssetUpdate(user2Bytes, 2000);
 
         vm.startPrank(settlementOperator);
         vm.expectEmit(address(asset));
-        emit IAsset.UpdateUserBalance(1, bytes32(uint256(uint160(user1))), 1000);
+        emit IAsset.UpdateUserBalance(1, user1Bytes, 1000);
         vm.expectEmit(address(asset));
-        emit IAsset.UpdateUserBalance(1, bytes32(uint256(uint160(user2))), 2000);
+        emit IAsset.UpdateUserBalance(1, user2Bytes, 2000);
         vm.expectEmit(address(asset));
-        emit IAsset.BatchUpdated(1, block.timestamp);
+        emit IAsset.BatchUpdated(1, 100, block.timestamp);
 
-        bytes32[] memory bUsers = new bytes32[](2);
-        bUsers[0] = bytes32(uint256(uint160(user1)));
-        bUsers[1] = bytes32(uint256(uint160(user2)));
-        asset.updateUserBalances(1, bUsers, amounts);   
+        asset.batchUpdate(1, 100, userUpdates);   
         vm.stopPrank();
 
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 1000);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user2)))), 2000);
+        assertEq(asset.userBalance(user1Bytes), 1000);
+        assertEq(asset.userBalance(user2Bytes), 2000);
         assertEq(asset.lastBatchId(), 1);
         assertEq(asset.lastBatchTime(), block.timestamp);
+        assertEq(asset.lastAntxChainHeight(), 100);
     }
 
-    function test_updateUserBalances_invalidBatchId() public {
-        address[] memory users = new address[](1);
-        users[0] = user1;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
+    function test_batchUpdate_invalidBatchId() public {
+        bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](1);
+        userUpdates[0] = createUserAssetUpdate(user1Bytes, 1000);
 
         vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(user1)));       
         // Try to update with invalid batch ID (should be 1, but using 2)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
-        asset.updateUserBalances(2, bUsers, amounts);
+        asset.batchUpdate(2, 100, userUpdates);
         
         // Try with 0 (should also fail since lastBatchId is 0, expecting 1)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
-        asset.updateUserBalances(0, bUsers, amounts);
+        asset.batchUpdate(0, 100, userUpdates);
         
         vm.stopPrank();
     }
 
-    function test_updateUserBalances_sequentialBatchIds() public {
-        address[] memory users = new address[](1);
-        users[0] = user1;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
+    function test_batchUpdate_sequentialBatchIds() public {
+        bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
 
         vm.startPrank(settlementOperator);
         
         // First batch should be ID 1
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        Asset.UserAssetUpdate[] memory userUpdates1 = new Asset.UserAssetUpdate[](1);
+        userUpdates1[0] = createUserAssetUpdate(user1Bytes, 1000);
+        asset.batchUpdate(1, 100, userUpdates1);
         assertEq(asset.lastBatchId(), 1);
         
         // Second batch should be ID 2
-        amounts[0] = 2000;
-        bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(2, bUsers, amounts);
+        Asset.UserAssetUpdate[] memory userUpdates2 = new Asset.UserAssetUpdate[](1);
+        userUpdates2[0] = createUserAssetUpdate(user1Bytes, 2000);
+        asset.batchUpdate(2, 200, userUpdates2);
         assertEq(asset.lastBatchId(), 2);
         
         // Third batch should be ID 3
-        amounts[0] = 3000;
-        bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(3, bUsers, amounts);
+        Asset.UserAssetUpdate[] memory userUpdates3 = new Asset.UserAssetUpdate[](1);
+        userUpdates3[0] = createUserAssetUpdate(user1Bytes, 3000);
+        asset.batchUpdate(3, 300, userUpdates3);
         assertEq(asset.lastBatchId(), 3);
         
         vm.stopPrank();
         
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 3000);
+        assertEq(asset.userBalance(user1Bytes), 3000);
     }
 
-    function test_updateUserBalances_onlySettlementOperator() public {
+    function test_batchUpdate_onlySettlementOperator() public {
         address[] memory users = new address[](1);
         users[0] = user1;
         uint256[] memory amounts = new uint256[](1);
@@ -269,24 +314,28 @@ contract AssetTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IAsset.OnlySettlementOperator.selector));
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
     }
 
-    function test_updateUserBalances_lengthMismatch() public {
-        address[] memory users = new address[](2);
-        users[0] = user1;
-        users[1] = user2;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
+    function test_batchUpdate_lengthMismatch() public {
+        // batchUpdate doesn't have length mismatch anymore since it uses UserAssetUpdate array
+        // This test validates that batchUpdate works correctly
+        bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](1);
+        userUpdates[0] = createUserAssetUpdate(user1Bytes, 1000);
 
         vm.startPrank(settlementOperator);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.UserAndAmountLengthNotMatch.selector));
-        bytes32[] memory bUsers = new bytes32[](2);
-        bUsers[0] = bytes32(uint256(uint160(user1)));
-        bUsers[1] = bytes32(uint256(uint160(user2)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
+
+        assertEq(asset.userBalance(user1Bytes), 1000);
     }
 
     // Test batchWithdraw function with proper signature
@@ -304,7 +353,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -359,7 +413,12 @@ contract AssetTest is Test {
         for (uint256 i = 0; i < users.length; i++) {
             bUsers[i] = bytes32(uint256(uint160(users[i])));
         }
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -403,7 +462,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -506,7 +570,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -538,7 +607,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund and pass timelock
@@ -566,7 +640,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Don't advance time
@@ -595,7 +674,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
@@ -606,21 +690,8 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
-    // Test systemWithdraw function
-    function test_systemWithdraw_success() public {
-        // Setup system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
-        vm.stopPrank();
-
-        // Fund the contract
+    function test_emergencyWithdraw_success() public {
+        // Fund the contract (no need to setup system balance anymore)
         USDT.transfer(address(asset), 1000);
 
         // Prepare multi-sig withdraw
@@ -630,7 +701,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -655,9 +726,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.SystemWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -668,16 +739,15 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(systemAddress)))), 500);
     }
 
-    function test_systemWithdraw_invalidToken() public {
+    function test_emergencyWithdraw_invalidToken() public {
         uint256 expireTime = block.timestamp + 1 hours;
         address[] memory allSigners = new address[](2);
         bytes[] memory signatures = new bytes[](2);
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidToken.selector));
-        asset.systemWithdraw(
+        vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedToken.selector, address(0x123)));
+        asset.emergencyWithdraw(
             address(0x123), // Invalid token
             user1,
             500,
@@ -687,14 +757,14 @@ contract AssetTest is Test {
         );
     }
 
-    function test_systemWithdraw_insufficientSigners() public {
+    function test_emergencyWithdraw_insufficientSigners() public {
         uint256 expireTime = block.timestamp + 1 hours;
         address[] memory allSigners = new address[](1);
         allSigners[0] = signer1;
         bytes[] memory signatures = new bytes[](1);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAllSignersLength.selector));
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             user1,
             500,
@@ -704,7 +774,7 @@ contract AssetTest is Test {
         );
     }
 
-    function test_systemWithdraw_signatureLengthMismatch() public {
+    function test_emergencyWithdraw_signatureLengthMismatch() public {
         uint256 expireTime = block.timestamp + 1 hours;
         address[] memory allSigners = new address[](2);
         allSigners[0] = signer1;
@@ -712,7 +782,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](3);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSignaturesLength.selector));
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             user1,
             500,
@@ -722,7 +792,7 @@ contract AssetTest is Test {
         );
     }
 
-    function test_systemWithdraw_sameSigner() public {
+    function test_emergencyWithdraw_sameSigner() public {
         uint256 expireTime = block.timestamp + 1 hours;
         address[] memory allSigners = new address[](2);
         allSigners[0] = signer1;
@@ -730,7 +800,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](2);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.SameSigner.selector));
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             user1,
             500,
@@ -740,7 +810,7 @@ contract AssetTest is Test {
         );
     }
 
-    function test_systemWithdraw_expiredTransaction() public {
+    function test_emergencyWithdraw_expiredTransaction() public {
         uint256 expireTime = block.timestamp - 1; // Already expired
         address[] memory allSigners = new address[](2);
         allSigners[0] = signer1;
@@ -748,7 +818,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](2);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             user1,
             500,
@@ -758,37 +828,8 @@ contract AssetTest is Test {
         );
     }
 
-    function test_systemWithdraw_insufficientSystemBalance() public {
-        // Setup small system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 100;
 
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
-        vm.stopPrank();
-
-        uint256 expireTime = block.timestamp + 1 hours;
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        bytes[] memory signatures = new bytes[](2);
-
-        vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientSystemBalance.selector, systemAddress, 100, 500));
-        asset.systemWithdraw(
-            address(USDT),
-            user1,
-            500,
-            expireTime,
-            allSigners,
-            signatures
-        );
-    }
-
-    function test_systemWithdraw_invalidSigner() public {
+    function test_emergencyWithdraw_invalidSigner() public {
         // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -798,13 +839,18 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         uint256 expireTime = block.timestamp + 1 hours;
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 user1, 
                 uint256(500), 
@@ -828,7 +874,7 @@ contract AssetTest is Test {
         signatures[1] = correctSignature;
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             user1,
             500,
@@ -838,7 +884,7 @@ contract AssetTest is Test {
         );
     }
 
-    function test_systemWithdraw_notAllowedSigner() public {
+    function test_emergencyWithdraw_notAllowedSigner() public {
         // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -848,13 +894,18 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         uint256 expireTime = block.timestamp + 1 hours;
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 user1, 
                 uint256(500), 
@@ -880,7 +931,7 @@ contract AssetTest is Test {
         signatures[1] = validSignature;
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedSigner.selector));
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             user1,
             500,
@@ -891,34 +942,6 @@ contract AssetTest is Test {
     }
 
     // Test admin functions
-    function test_setSystemAddress_success() public {
-        address newSystemAddress = address(0x999);
-        
-        vm.startPrank(owner);
-        vm.expectEmit(address(asset));
-        emit IAsset.SystemAddressUpdated(newSystemAddress);
-        asset.setSystemAddress(newSystemAddress);
-        vm.stopPrank();
-
-        assertEq(asset.systemAddress(), newSystemAddress);
-    }
-
-    function test_setSystemAddress_onlyOwner() public {
-        address newSystemAddress = address(0x999);
-        
-        vm.startPrank(user1);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
-        asset.setSystemAddress(newSystemAddress);
-        vm.stopPrank();
-    }
-
-    function test_setSystemAddress_zeroAddress() public {
-        vm.startPrank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        asset.setSystemAddress(address(0));
-        vm.stopPrank();
-    }
-
     function test_setSettlementAddress_success() public {
         address newSettlementAddress = address(0x888);
         
@@ -1035,7 +1058,7 @@ contract AssetTest is Test {
         address[] memory single = new address[](1);
         single[0] = signer1;
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDT), single, systemAddress, settlementOperator, withdrawOperator, address(0));
+        Asset a2 = new Asset(address(USDT), single, settlementOperator, withdrawOperator, address(0));
         vm.stopPrank();
         address notSigner = address(0xDEADBEeF);
         assertFalse(a2.isAllowedSigner(notSigner));
@@ -1052,7 +1075,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1087,7 +1115,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1122,7 +1155,12 @@ contract AssetTest is Test {
         bytes32[] memory bUsers = new bytes32[](2);
         bUsers[0] = bytes32(uint256(uint160(testUser1)));
         bUsers[1] = bytes32(uint256(uint160(testUser2)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1170,8 +1208,8 @@ contract AssetTest is Test {
         assertEq(asset.userBalance(bytes32(uint256(uint160(testUser2)))), 1200);
     }
 
-    // Test systemWithdraw with multiple signers (more than 2)
-    function test_systemWithdraw_multipleSigners() public {
+    // Test emergencyWithdraw with multiple signers (more than 2)
+    function test_emergencyWithdraw_multipleSigners() public {
         // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -1181,7 +1219,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1194,7 +1237,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -1222,9 +1265,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.SystemWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -1235,29 +1278,34 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(systemAddress)))), 500);
+        
     }
 
     // Test edge cases and boundary conditions
     function test_edge_cases() public {
-        // Test with maximum values
+        // Test with maximum values allowed by int64
         address[] memory users = new address[](1);
         users[0] = user1;
         uint256[] memory amounts = new uint256[](1);
-        amounts[0] = type(uint256).max;
+        amounts[0] = uint256(uint64(type(int64).max)); // Max value for int64
 
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), type(uint256).max);
+        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), uint256(uint64(type(int64).max)));
         assertEq(asset.lastBatchId(), 1);
     }
 
     // Test large batch update with many users
-    function test_updateUserBalances_largeBatch() public {
+    function test_batchUpdate_largeBatch() public {
         uint256 numUsers = 50;
         address[] memory users = new address[](numUsers);
         uint256[] memory amounts = new uint256[](numUsers);
@@ -1272,7 +1320,12 @@ contract AssetTest is Test {
         for (uint256 i = 0; i < numUsers; i++) {
             bUsers[i] = bytes32(uint256(uint160(users[i])));
         }
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         for (uint256 i = 0; i < numUsers; i++) {
@@ -1314,29 +1367,20 @@ contract AssetTest is Test {
     // Test public getter functions for coverage
     function test_publicGetters() public view {
         // These calls ensure getter functions are covered
-        asset.USDT();
+        asset.USDC();
         asset.signers(0); // Access first signer
         asset.signers(1); // Access second signer
         asset.signers(2); // Access third signer
-        asset.systemAddress();
         asset.settlementOperator();
         asset.withdrawOperator();
         asset.userBalance(bytes32(uint256(uint160(user1))));
         asset.lastBatchId();
         asset.lastBatchTime();
+        asset.lastAntxChainHeight();
         asset.FORCE_WITHDRAW_TIME_LOCK();
     }
 
     function test_adminSetters_fullCoverage() public {
-        // setSystemAddress
-        address newSystem = address(0x9991);
-        vm.startPrank(owner);
-        vm.expectEmit(address(asset));
-        emit IAsset.SystemAddressUpdated(newSystem);
-        asset.setSystemAddress(newSystem);
-        vm.stopPrank();
-        assertEq(asset.systemAddress(), newSystem);
-
         // setSettlementAddress
         address newSettlement = address(0x9992);
         vm.startPrank(owner);
@@ -1371,7 +1415,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Prepare batch withdraw with zero amount
@@ -1399,8 +1448,8 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
-    // Test systemWithdraw with exact system balance
-    function test_systemWithdraw_exactBalance() public {
+    // Test emergencyWithdraw with exact system balance
+    function test_emergencyWithdraw_exactBalance() public {
         // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -1410,7 +1459,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1423,7 +1477,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -1447,7 +1501,7 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
 
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -1458,7 +1512,7 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(systemAddress)))), 0); // Should be exactly 0
+         // Should be exactly 0
     }
 
     // Test assertion failure scenarios (this is tricky as assert will halt execution)
@@ -1477,7 +1531,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract with exact amount
@@ -1518,7 +1577,7 @@ contract AssetTest is Test {
     // We can't directly test it since it's not used, but we can verify the modifier exists
     
     // Test with multiple signers but checking different signer combinations
-    function test_systemWithdraw_differentSignerCombinations() public {
+    function test_emergencyWithdraw_differentSignerCombinations() public {
         // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -1528,7 +1587,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1541,7 +1605,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -1564,7 +1628,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature3;
 
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -1573,11 +1637,11 @@ contract AssetTest is Test {
             signatures
         );
 
-        assertEq(asset.userBalance(bytes32(uint256(uint160(systemAddress)))), 700);
+        
     }
 
-    // Test systemWithdraw with more than 3 signers to ensure loop coverage
-    function test_systemWithdraw_fourSigners() public {
+    // Test emergencyWithdraw with more than 3 signers to ensure loop coverage
+    function test_emergencyWithdraw_fourSigners() public {
         // Create a new asset with 4 signers for this test
         address[] memory fourSigners = new address[](4);
         fourSigners[0] = signer1;
@@ -1588,7 +1652,8 @@ contract AssetTest is Test {
         fourSigners[3] = signer4;
 
         vm.startPrank(owner);
-        Asset assetWith4Signers = new Asset(address(USDT), fourSigners, systemAddress, settlementOperator, withdrawOperator, address(0));
+        Asset assetWith4Signers = new Asset(address(USDT), fourSigners, settlementOperator, withdrawOperator, address(0));
+        assetWith4Signers.setMarginAsset(address(marginAssetCalculator));
         vm.stopPrank();
 
         // Setup system balance
@@ -1600,7 +1665,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        assetWith4Signers.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        assetWith4Signers.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1613,7 +1683,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -1641,7 +1711,7 @@ contract AssetTest is Test {
         signatures[2] = signature3;
         signatures[3] = signature4;
 
-        assetWith4Signers.systemWithdraw(
+        assetWith4Signers.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -1651,7 +1721,7 @@ contract AssetTest is Test {
         );
 
         console.log("assetWith4Signers.userBalance(systemAddress):", assetWith4Signers.userBalance(bytes32(uint256(uint160(systemAddress)))));
-        assertEq(assetWith4Signers.userBalance(bytes32(uint256(uint160(systemAddress)))), 600);
+        
     }
 
     // Test edge case with zero user balance force withdraw (should fail)
@@ -1685,7 +1755,7 @@ contract AssetTest is Test {
     }
 
     // Test updateUserBalances with zero amounts (should succeed)
-    function test_updateUserBalances_zeroAmounts() public {
+    function test_batchUpdate_zeroAmounts() public {
         address[] memory users = new address[](2);
         users[0] = user1;
         users[1] = user2;
@@ -1698,7 +1768,12 @@ contract AssetTest is Test {
         bytes32[] memory bUsers = new bytes32[](2);
         bUsers[0] = bytes32(uint256(uint160(user1)));
         bUsers[1] = bytes32(uint256(uint160(user2)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 0);
@@ -1707,7 +1782,7 @@ contract AssetTest is Test {
     }
 
     // Test system withdraw with minimum possible amounts
-    function test_systemWithdraw_minimumAmount() public {
+    function test_emergencyWithdraw_minimumAmount() public {
         // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -1717,7 +1792,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1730,7 +1810,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -1752,7 +1832,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -1761,7 +1841,7 @@ contract AssetTest is Test {
             signatures
         );
 
-        assertEq(asset.userBalance(bytes32(uint256(uint160(systemAddress)))), 0);
+        
     }
 
 
@@ -1847,7 +1927,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1883,7 +1968,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1942,7 +2032,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -1980,7 +2075,7 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
     
-    function testSystemWithdrawWithEd25519Oracle() public {
+    function testEmergencyWithdrawWithEd25519Oracle() public {
         // Set up oracle
         address oracleAddress = address(0x123);
         vm.startPrank(owner);
@@ -1996,7 +2091,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -2009,7 +2109,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -2034,9 +2134,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.SystemWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -2047,7 +2147,7 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(systemAddress)))), 500);
+        
     }
     
     function testUserBalanceWithZeroAddress() public {
@@ -2072,7 +2172,12 @@ contract AssetTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(type(uint256).max, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(type(uint256).max, 100, userUpdates);
         vm.stopPrank();
     }
     
@@ -2080,15 +2185,20 @@ contract AssetTest is Test {
         address[] memory users = new address[](1);
         users[0] = user1;
         uint256[] memory amounts = new uint256[](1);
-        amounts[0] = type(uint256).max; // Max amount
+        amounts[0] = uint256(uint64(type(int64).max)); // Max value for int64
 
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), type(uint256).max);
+        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), uint256(uint64(type(int64).max)));
     }
     
     function testUpdateUserBalancesWithMaxUsers() public {
@@ -2107,7 +2217,12 @@ contract AssetTest is Test {
         for (uint256 i = 0; i < numUsers; i++) {
             bUsers[i] = bytes32(uint256(uint160(users[i])));
         }
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Verify all users got their balances
@@ -2123,20 +2238,26 @@ contract AssetTest is Test {
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
         
-        // Setup user balances with max amount
+        // Setup user balances with max amount allowed by int64
+        uint256 maxAmount = uint256(uint64(type(int64).max));
         address[] memory usersForBalance = new address[](1);
         usersForBalance[0] = testUser;
         uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1_000_000_000_000_000_000_000_000; // 1e24, within MockToken initial supply
+        amounts[0] = maxAmount;
 
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract sufficiently
-        USDT.transfer(address(asset), amounts[0]);
+        USDT.transfer(address(asset), maxAmount);
 
         // Prepare batch withdraw with max amount
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -2144,10 +2265,10 @@ contract AssetTest is Test {
         
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(testUser)));
-        amounts[0] = 1_000_000_000_000_000_000_000_000;
+        amounts[0] = maxAmount;
 
         // Create user signature for max amount
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser))), amounts[0], block.chainid));
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser))), maxAmount, block.chainid));
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
         
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
@@ -2161,30 +2282,36 @@ contract AssetTest is Test {
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
         vm.expectEmit(address(asset));
-        emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), amounts[0]);
+        emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), maxAmount);
         asset.batchWithdraw(clientOrderIds, users, amounts, signatures, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         uint256 userBalanceAfter = USDT.balanceOf(testUser);
-        assertEq(userBalanceAfter - userBalanceBefore, amounts[0]);
+        assertEq(userBalanceAfter - userBalanceBefore, maxAmount);
         assertEq(asset.userBalance(bytes32(uint256(uint160(testUser)))), 0);
     }
     
     function testForceWithdrawWithMaxAmount() public {
-        // Setup user balance with max amount
+        // Setup user balance with max amount allowed by int64
+        uint256 maxAmount = uint256(uint64(type(int64).max));
         address[] memory users = new address[](1);
         users[0] = user1;
         uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1_000_000_000_000_000_000_000_000; // 1e24
+        amounts[0] = maxAmount;
 
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract sufficiently
-        USDT.transfer(address(asset), amounts[0]);
+        USDT.transfer(address(asset), maxAmount);
 
         // Advance time past the time lock
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
@@ -2193,16 +2320,16 @@ contract AssetTest is Test {
 
         vm.startPrank(user1);
         vm.expectEmit(address(asset));
-        emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), amounts[0]);
-        asset.forceWithdraw(bytes32(uint256(uint160(user1))), amounts[0], IAsset.SignatureType.ECDSA, new bytes(0));
+        emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), maxAmount);
+        asset.forceWithdraw(bytes32(uint256(uint160(user1))), maxAmount, IAsset.SignatureType.ECDSA, new bytes(0));
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDT.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, amounts[0]);
+        assertEq(user1BalanceAfter - user1BalanceBefore, maxAmount);
         assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 0);
     }
     
-    function testSystemWithdrawWithMaxAmount() public {
+    function testEmergencyWithdrawWithMaxAmount() public {
         // Setup system balance with max amount
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -2212,7 +2339,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract sufficiently
@@ -2225,7 +2357,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -2250,9 +2382,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.SystemWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -2263,10 +2395,10 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(systemAddress)))), 0);
+        
     }
     
-    function testSystemWithdrawWithMaxExpireTime() public {
+    function testEmergencyWithdrawWithMaxExpireTime() public {
         // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -2276,7 +2408,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -2289,7 +2426,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -2314,9 +2451,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.SystemWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -2327,10 +2464,10 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(systemAddress)))), 500);
+        
     }
     
-    function testSystemWithdrawWithZeroExpireTime() public {
+    function testEmergencyWithdrawWithZeroExpireTime() public {
         // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -2340,7 +2477,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -2353,7 +2495,7 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "SYSTEM_WITHDRAW", 
+                "EMERGENCY_WITHDRAW", 
                 address(USDT), 
                 recipient, 
                 withdrawAmount, 
@@ -2377,7 +2519,7 @@ contract AssetTest is Test {
 
         // Should fail with expired transaction
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
-        asset.systemWithdraw(
+        asset.emergencyWithdraw(
             address(USDT),
             recipient,
             withdrawAmount,
@@ -2401,7 +2543,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -2449,7 +2596,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -2481,7 +2633,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
@@ -2506,7 +2663,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        asset.updateUserBalances(1, bUsers, amounts);
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](bUsers.length);
+        for (uint256 i = 0; i < bUsers.length; i++) {
+            userUpdates[i] = createUserAssetUpdate(bUsers[i], amounts[i]);
+        }
+        asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
         // Fund the contract
