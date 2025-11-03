@@ -47,13 +47,8 @@ contract MockMarginAssetCalculator {
 // Helper contract to expose the validTime modifier via a simple callable function
 contract AssetValidTimeHelper is Asset {
     constructor(
-        address usdt,
-        address[] memory _signers,
-        address settle,
-        address wd,
-        address oracle,
-        address marginAsset
-    ) Asset(usdt, _signers, settle, wd, oracle, marginAsset) {}
+        address usdt
+    ) Asset(usdt) {}
 
     function ping(uint256 t) external validTime(t) returns (bool) {
         return true;
@@ -85,7 +80,6 @@ contract AssetTest is Test {
     ) internal pure returns (Asset.UserAssetUpdate memory) {
         MarginAsset.PositionInput[] memory positions = new MarginAsset.PositionInput[](0);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
-        MarginAsset.ExchangeInfo[] memory exchanges = new MarginAsset.ExchangeInfo[](0);
         
         // Convert to int64 safely, clamping if too large
         int64 crossCollateralAmount;
@@ -95,14 +89,22 @@ contract AssetTest is Test {
             crossCollateralAmount = int64(int256(availableAmount));
         }
         
-        return Asset.UserAssetUpdate({
-            user: user,
+        Asset.UserAssetInfo memory userAssetInfo = Asset.UserAssetInfo({
             crossCollateralAmount: crossCollateralAmount,
-            coinStepSizeScale: 6,
             orderFrozenAmount: 0,
-            positions: positions,
             tradeSettings: tradeSettings,
-            exchanges: exchanges
+            positions: positions
+        });
+        
+        // Use a simple subAccountId based on user address
+        uint64 subAccountId = uint64(uint256(user) % type(uint64).max);
+        if (subAccountId == 0) subAccountId = 1; // Ensure non-zero
+        
+        return Asset.UserAssetUpdate({
+            subAccountId: subAccountId,
+            user: user,
+            coinStepSizeScale: 6,
+            userAssetInfo: userAssetInfo
         });
     }
 
@@ -133,7 +135,13 @@ contract AssetTest is Test {
 
         // Deploy Asset contract with proper owner
         vm.startPrank(owner);
-        asset = new Asset(address(USDT), signers, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
+        asset = new Asset(address(USDT));
+        asset.setSigners(signers);
+        asset.setSettlementAddress(settlementOperator);
+        asset.setWithdrawOperator(withdrawOperator);
+        asset.setMarginAsset(address(marginAssetCalculator));
+        // Set globalCoinStepSizeScale for availableAmount calculation
+        asset.setGlobalCoinStepSizeScale(6);
         vm.stopPrank();
     }
 
@@ -141,14 +149,7 @@ contract AssetTest is Test {
 
     function test_validTime_pass_and_revert() public {
         vm.startPrank(owner);
-        AssetValidTimeHelper a = new AssetValidTimeHelper(
-            address(USDT),
-            signers,
-            settlementOperator,
-            withdrawOperator,
-            address(0),
-            address(marginAssetCalculator)
-        );
+        AssetValidTimeHelper a = new AssetValidTimeHelper(address(USDT));
         vm.stopPrank();
 
         // pass
@@ -162,7 +163,8 @@ contract AssetTest is Test {
     function test_constructor_emits_OracleUpdated_when_nonzero_arg() public {
         address dummyOracle = address(0x12345);
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDT), signers, settlementOperator, withdrawOperator, dummyOracle, address(marginAssetCalculator));
+        Asset a2 = new Asset(address(USDT));
+        a2.setEd25519Oracle(dummyOracle);
         vm.stopPrank();
         assertEq(address(a2.ed25519Oracle()), dummyOracle);
     }
@@ -189,46 +191,51 @@ contract AssetTest is Test {
     function test_constructor_zeroUSDT() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(0), signers, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
+        new Asset(address(0));
         vm.stopPrank();
     }
 
     function test_constructor_zeroSystemAddress() public {
         vm.startPrank(owner);
+        Asset a = new Asset(address(USDT));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), signers, address(0), withdrawOperator, address(0), address(marginAssetCalculator));
+        a.setSettlementAddress(address(0));
         vm.stopPrank();
     }
 
     function test_constructor_zeroSettlementOperator() public {
         vm.startPrank(owner);
+        Asset a = new Asset(address(USDT));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), signers, address(0), withdrawOperator, address(0), address(marginAssetCalculator));
+        a.setSettlementAddress(address(0));
         vm.stopPrank();
     }
 
     function test_constructor_zeroWithdrawOperator() public {
         vm.startPrank(owner);
+        Asset a = new Asset(address(USDT));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), signers, settlementOperator, address(0), address(0), address(marginAssetCalculator));
+        a.setWithdrawOperator(address(0));
         vm.stopPrank();
     }
 
     function test_constructor_emptySigners() public {
         vm.startPrank(owner);
+        Asset a = new Asset(address(USDT));
         address[] memory emptySigners = new address[](0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), emptySigners, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
+        a.setSigners(emptySigners);
         vm.stopPrank();
     }
 
     function test_constructor_zeroAddressInSigners() public {
         vm.startPrank(owner);
+        Asset a = new Asset(address(USDT));
         address[] memory invalidSigners = new address[](2);
         invalidSigners[0] = signer1;
         invalidSigners[1] = address(0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), invalidSigners, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
+        a.setSigners(invalidSigners);
         vm.stopPrank();
     }
 
@@ -243,17 +250,13 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         vm.expectEmit(address(asset));
-        emit IAsset.UpdateUserBalance(1, user1Bytes, 1000);
-        vm.expectEmit(address(asset));
-        emit IAsset.UpdateUserBalance(1, user2Bytes, 2000);
-        vm.expectEmit(address(asset));
         emit IAsset.BatchUpdated(1, 100, block.timestamp);
 
         asset.batchUpdate(1, 100, userUpdates);   
         vm.stopPrank();
 
-        assertEq(asset.userBalance(user1Bytes), 1000);
-        assertEq(asset.userBalance(user2Bytes), 2000);
+        assertEq(asset.availableAmount(user1Bytes), 1000);
+        assertEq(asset.availableAmount(user2Bytes), 2000);
         assertEq(asset.lastBatchId(), 1);
         assertEq(asset.lastBatchTime(), block.timestamp);
         assertEq(asset.lastAntxChainHeight(), 100);
@@ -273,6 +276,30 @@ contract AssetTest is Test {
         // Try with 0 (should also fail since lastBatchId is 0, expecting 1)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
         asset.batchUpdate(0, 100, userUpdates);
+        
+        vm.stopPrank();
+    }
+
+    function test_batchUpdate_invalidAntxChainHeight() public {
+        bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
+        
+        Asset.UserAssetUpdate[] memory userUpdates = new Asset.UserAssetUpdate[](1);
+        userUpdates[0] = createUserAssetUpdate(user1Bytes, 1000);
+
+        vm.startPrank(settlementOperator);
+        // First update should succeed
+        asset.batchUpdate(1, 100, userUpdates);
+        
+        // Try with same antxChainHeight (should fail)
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
+        asset.batchUpdate(2, 100, userUpdates);
+        
+        // Try with lower antxChainHeight (should fail)
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
+        asset.batchUpdate(2, 50, userUpdates);
+        
+        // Try with valid higher antxChainHeight (should succeed)
+        asset.batchUpdate(2, 200, userUpdates);
         
         vm.stopPrank();
     }
@@ -302,7 +329,7 @@ contract AssetTest is Test {
         
         vm.stopPrank();
         
-        assertEq(asset.userBalance(user1Bytes), 3000);
+        assertEq(asset.availableAmount(user1Bytes), 3000);
     }
 
     function test_batchUpdate_onlySettlementOperator() public {
@@ -336,7 +363,7 @@ contract AssetTest is Test {
         asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
-        assertEq(asset.userBalance(user1Bytes), 1000);
+        assertEq(asset.availableAmount(user1Bytes), 1000);
     }
 
     // Test batchWithdraw function with proper signature
@@ -394,7 +421,8 @@ contract AssetTest is Test {
         
         uint256 userBalanceAfter = USDT.balanceOf(testUser);
         assertEq(userBalanceAfter - userBalanceBefore, 500);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(testUser)))), 500);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
     }
 
     // Test batchWithdraw with invalid signature
@@ -595,7 +623,8 @@ contract AssetTest is Test {
 
         uint256 user1BalanceAfter = USDT.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 500);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
 
     function test_forceWithdraw_success_ed25519_flag_path() public {
@@ -628,7 +657,8 @@ contract AssetTest is Test {
 
         uint256 afterBal = USDT.balanceOf(user1);
         assertEq(afterBal - beforeBal, 200);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 400);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 600);
     }
 
     function test_forceWithdraw_timeLockNotPassed() public {
@@ -1059,7 +1089,8 @@ contract AssetTest is Test {
         address[] memory single = new address[](1);
         single[0] = signer1;
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDT), single, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
+        Asset a2 = new Asset(address(USDT));
+        a2.setSigners(single);
         vm.stopPrank();
         address notSigner = address(0xDEADBEeF);
         assertFalse(a2.isAllowedSigner(notSigner));
@@ -1133,7 +1164,8 @@ contract AssetTest is Test {
         asset.forceWithdraw(bytes32(uint256(uint160(user1))), 500, IAsset.SignatureType.ECDSA, new bytes(0));
         vm.stopPrank();
         
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 500);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
 
     // Test multiple users batch withdraw
@@ -1205,8 +1237,9 @@ contract AssetTest is Test {
         
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
         assertEq(user2BalanceAfter - user2BalanceBefore, 800);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(testUser1)))), 500);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(testUser2)))), 1200);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser1)))), 1000);
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser2)))), 2000);
     }
 
     // Test emergencyWithdraw with multiple signers (more than 2)
@@ -1301,7 +1334,7 @@ contract AssetTest is Test {
         asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), uint256(uint64(type(int64).max)));
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), uint256(uint64(type(int64).max)));
         assertEq(asset.lastBatchId(), 1);
     }
 
@@ -1330,7 +1363,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         for (uint256 i = 0; i < numUsers; i++) {
-            assertEq(asset.userBalance(bytes32(uint256(uint160(users[i])))), amounts[i]);
+            assertEq(asset.availableAmount(bytes32(uint256(uint160(users[i])))), amounts[i]);
         }
         assertEq(asset.lastBatchId(), 1);
     }
@@ -1374,7 +1407,7 @@ contract AssetTest is Test {
         asset.signers(2); // Access third signer
         asset.settlementOperator();
         asset.withdrawOperator();
-        asset.userBalance(bytes32(uint256(uint160(user1))));
+        asset.availableAmount(bytes32(uint256(uint160(user1))));
         asset.lastBatchId();
         asset.lastBatchTime();
         asset.lastAntxChainHeight();
@@ -1653,7 +1686,12 @@ contract AssetTest is Test {
         fourSigners[3] = signer4;
 
         vm.startPrank(owner);
-        Asset assetWith4Signers = new Asset(address(USDT), fourSigners, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
+        Asset assetWith4Signers = new Asset(address(USDT));
+        assetWith4Signers.setSigners(fourSigners);
+        assetWith4Signers.setSettlementAddress(settlementOperator);
+        assetWith4Signers.setWithdrawOperator(withdrawOperator);
+        assetWith4Signers.setMarginAsset(address(marginAssetCalculator));
+        assetWith4Signers.setGlobalCoinStepSizeScale(6);
         vm.stopPrank();
 
         // Setup system balance
@@ -1720,7 +1758,7 @@ contract AssetTest is Test {
             signatures
         );
 
-        console.log("assetWith4Signers.userBalance(systemAddress):", assetWith4Signers.userBalance(bytes32(uint256(uint160(systemAddress)))));
+        console.log("assetWith4Signers.availableAmount(systemAddress):", assetWith4Signers.availableAmount(bytes32(uint256(uint160(systemAddress)))));
         
     }
 
@@ -1776,8 +1814,8 @@ contract AssetTest is Test {
         asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 0);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user2)))), 0);
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 0);
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user2)))), 0);
         assertEq(asset.lastBatchId(), 1);
     }
 
@@ -1951,7 +1989,8 @@ contract AssetTest is Test {
 
         uint256 user1BalanceAfter = USDT.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 500);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
     
     function testBatchWithdrawWithEd25519Signature() public {
@@ -2015,7 +2054,8 @@ contract AssetTest is Test {
         
         uint256 userBalanceAfter = USDT.balanceOf(testUser);
         assertEq(userBalanceAfter - userBalanceBefore, 500);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(testUser)))), 500);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
     }
     
     function testBatchWithdrawInvalidSignatureType() public {
@@ -2152,13 +2192,13 @@ contract AssetTest is Test {
     
     function testUserBalanceWithZeroAddress() public {
         // Test userBalance with zero address
-        assertEq(asset.userBalance(bytes32(0)), 0);
+        assertEq(asset.availableAmount(bytes32(0)), 0);
     }
     
     function testUserBalanceWithMaxAddress() public {
         // Test userBalance with max address
         bytes32 maxAddress = bytes32(type(uint256).max);
-        assertEq(asset.userBalance(maxAddress), 0);
+        assertEq(asset.availableAmount(maxAddress), 0);
     }
     
     function testUpdateUserBalancesWithMaxBatchId() public {
@@ -2198,7 +2238,7 @@ contract AssetTest is Test {
         asset.batchUpdate(1, 100, userUpdates);
         vm.stopPrank();
 
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), uint256(uint64(type(int64).max)));
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), uint256(uint64(type(int64).max)));
     }
     
     function testUpdateUserBalancesWithMaxUsers() public {
@@ -2227,7 +2267,7 @@ contract AssetTest is Test {
 
         // Verify all users got their balances
         for (uint256 i = 0; i < numUsers; i++) {
-            assertEq(asset.userBalance(bytes32(uint256(uint160(users[i])))), amounts[i]);
+            assertEq(asset.availableAmount(bytes32(uint256(uint160(users[i])))), amounts[i]);
         }
         
         assertEq(asset.lastBatchId(), 1);
@@ -2288,7 +2328,8 @@ contract AssetTest is Test {
         
         uint256 userBalanceAfter = USDT.balanceOf(testUser);
         assertEq(userBalanceAfter - userBalanceBefore, maxAmount);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(testUser)))), 0);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), maxAmount);
     }
     
     function testForceWithdrawWithMaxAmount() public {
@@ -2326,7 +2367,8 @@ contract AssetTest is Test {
 
         uint256 user1BalanceAfter = USDT.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, maxAmount);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 0);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), maxAmount);
     }
     
     function testEmergencyWithdrawWithMaxAmount() public {
@@ -2583,7 +2625,8 @@ contract AssetTest is Test {
         
         uint256 userBalanceAfter = USDT.balanceOf(testUser);
         assertEq(userBalanceAfter - userBalanceBefore, 500);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(testUser)))), 500);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
     }
     
     function testForceWithdrawWithMaxTimeLock() public {
@@ -2620,7 +2663,8 @@ contract AssetTest is Test {
 
         uint256 user1BalanceAfter = USDT.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 500);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
     
     function testForceWithdrawWithExactTimeLock() public {
@@ -2687,6 +2731,7 @@ contract AssetTest is Test {
 
         uint256 user1BalanceAfter = USDT.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
-        assertEq(asset.userBalance(bytes32(uint256(uint160(user1)))), 500);
+        // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
+        assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
 }

@@ -18,8 +18,6 @@ contract AssetScript is Script {
         signers[0] = 0x4626eb76a7c2896645B0117614Ec0555e6E3a180;
         signers[1] = 0x6c7459c4B3B84E24734E59D4a6749EB02Ea26406;
         signers[2] = 0x3171E2318402Cea35849CDaed28261A25e25849c;
-
-
        
         address settlementOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2;
         console.log("Settlement address at:", address(settlementOperator));
@@ -34,15 +32,26 @@ contract AssetScript is Script {
         console.log("Margin asset address at:", address(marginAsset));
 
         // Deploy asset
-        Asset asset =  new Asset(
-            address(usdcAddress),
-            signers,
-            settlementOperator,
-            withdrawOperator,
-            ed25519Oracle,
-            marginAsset
-        );
+        Asset asset =  new Asset(address(usdcAddress));
         console.log("Asset deployed at:", address(asset));
+
+        // set signers
+        asset.setSigners(signers);
+
+        // set settlement operator
+        asset.setSettlementAddress(settlementOperator);
+
+        // set withdraw operator
+        asset.setWithdrawOperator(withdrawOperator);
+
+        // set ed25519 oracle
+        asset.setEd25519Oracle(ed25519Oracle);
+
+        // set margin asset
+        asset.setMarginAsset(marginAsset);
+
+        // set global coin step size scale
+        asset.setGlobalCoinStepSizeScale(6);
 
         vm.stopBroadcast();
     }

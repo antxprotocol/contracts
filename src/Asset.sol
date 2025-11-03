@@ -17,13 +17,17 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
 
     // User asset update information struct
     struct UserAssetUpdate {
+        uint64 subAccountId;                    // Sub account ID
         bytes32 user;                           // User address
-        int64 crossCollateralAmount;            // Cross margin collateral amount with precision of collateralCoin.StepSizeScale
         uint32 coinStepSizeScale;               // Coin step size scale
+        UserAssetInfo userAssetInfo;            // User asset info
+    }
+
+    struct UserAssetInfo {
+        int64 crossCollateralAmount;            // Cross margin collateral amount with precision of collateralCoin.StepSizeScale
         uint256 orderFrozenAmount;              // Order frozen amount with precision of collateralCoin.StepSizeScale + 6
-        MarginAsset.PositionInput[] positions;  // Position list
         MarginAsset.TradeSetting[] tradeSettings; // Trade settings list
-        MarginAsset.ExchangeInfo[] exchanges;    // Exchange information list
+        MarginAsset.PositionInput[] positions;  // Position list
     }
 
     IERC20 public immutable USDC;
@@ -31,13 +35,18 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     address public systemAddress;
     address public settlementOperator;
     address public withdrawOperator;
-    mapping(bytes32 => uint256) public userBalance;
+    mapping(bytes32 => UserAssetInfo) public userInfos;
+    mapping(uint64 => bytes32) public userSubAccountIdToAddress;
     uint256 public lastBatchId;
     uint256 public lastBatchTime;
     uint256 public lastAntxChainHeight;
     IEd25519Oracle public ed25519Oracle;
     uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days; 
+
+    // MarginAsset calculator info
     address public marginAsset;
+    uint32 public globalCoinStepSizeScale;
+    mapping(uint64 => MarginAsset.ExchangeInfo) public globalExchangeInfos;
 
     modifier validAddress(address addr) {
         if (addr == address(0)) revert ZeroAddressNotAllowed();
@@ -64,39 +73,8 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         _;
     }
 
-    constructor(
-    address _USDC, 
-    address[] memory _signers,
-    address _settlementAddress,
-    address _withdrawOperator,
-    address _ed25519Oracle,
-    address _marginAsset) Ownable(msg.sender) {
-        if (_USDC == address(0)) revert ZeroAddressNotAllowed();
+    constructor(address _USDC) validAddress(_USDC) Ownable(msg.sender) {
         USDC = IERC20(_USDC);
-
-        if (_settlementAddress == address(0)) revert ZeroAddressNotAllowed();
-        settlementOperator = _settlementAddress;
-
-        if (_withdrawOperator == address(0)) revert ZeroAddressNotAllowed();
-        withdrawOperator = _withdrawOperator;
-
-        // Check signers
-        if (_signers.length == 0) revert ZeroAddressNotAllowed();
-        for (uint256 i = 0; i < _signers.length; i++) {
-            if (_signers[i] == address(0)) revert ZeroAddressNotAllowed();
-        }
-        signers = _signers;
-        emit SignersUpdated(_signers);
-
-        if (_ed25519Oracle != address(0)) {
-            ed25519Oracle = IEd25519Oracle(_ed25519Oracle);
-            emit Ed25519OracleUpdated(_ed25519Oracle);
-        }
-
-        if (_marginAsset != address(0)) {
-            marginAsset = _marginAsset;
-            emit MarginAssetUpdated(_marginAsset);
-        }
     }
 
     function batchWithdraw(uint256 []memory clientOrderIds,bytes32 []memory users, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
@@ -129,11 +107,9 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
             }
         }
 
-        // check user balance
-        if (userBalance[user] < amount) revert InsufficientUserBalance(userBalance[user], amount);
-
-        // update user balance
-        userBalance[user] -= amount;
+        // check user available amount
+        uint256 userAvailableAmount = availableAmount(user);
+        if (userAvailableAmount < amount) revert InsufficientUserBalance(userAvailableAmount, amount);
 
         // Store balance before transfer
         uint256 preBalance = USDC.balanceOf(address(this));
@@ -147,6 +123,37 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
 
         // emit event
         emit UserWithdraw(clientOrderId, user, amount);
+    }
+
+    function _calculateAvailableAmount(bytes32 user) internal view returns (uint256) {
+        UserAssetInfo memory userAssetInfo = userInfos[user];
+        if (userAssetInfo.crossCollateralAmount <= 0) return 0;
+        if (userAssetInfo.positions.length == 0) return uint256(uint64(userAssetInfo.crossCollateralAmount));
+
+        MarginAsset.ExchangeInfo[] memory userExchangeInfo = new MarginAsset.ExchangeInfo[](userAssetInfo.tradeSettings.length);
+        for (uint256 i = 0; i < userAssetInfo.tradeSettings.length; i++) {
+            userExchangeInfo[i] = globalExchangeInfos[userAssetInfo.tradeSettings[i].exchangeId];
+        }
+
+        MarginAssetCalculator calculator = MarginAssetCalculator(marginAsset);
+        return calculator.getCrossTransferOutAvailableAmount(
+            userAssetInfo.crossCollateralAmount,
+            globalCoinStepSizeScale,
+            userAssetInfo.orderFrozenAmount,
+            userAssetInfo.positions,
+            userAssetInfo.tradeSettings,
+            userExchangeInfo
+        );
+    }
+
+    function availableAmount(bytes32 user) public view returns (uint256) {
+        return _calculateAvailableAmount(user);
+    }
+
+    function availableAmountBySubAccountId(uint64 subAccountId) public view returns (uint256) {
+        bytes32 user = userSubAccountIdToAddress[subAccountId];
+        if (user == bytes32(0)) revert UserNotFound();
+        return _calculateAvailableAmount(user);
     }
 
     function emergencyWithdraw(
@@ -187,10 +194,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
     /**
-     * @notice Batch update user balances
-     * @dev Constructs user's asset by calling MarginAsset's newAsset, then calculates available balance
-     *      through getCrossTransferOutAvailableAmount, and updates user balances in the asset contract
-     * 
+     * @notice Batch update user asset info
      * @param batchId Batch ID, must equal lastBatchId + 1
      * @param antxChainHeight AntX chain height
      * @param userUpdates Array of user asset update information, each element contains user's asset information
@@ -201,27 +205,21 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         UserAssetUpdate[] memory userUpdates
     ) public onlySettlementOperator {
         if (batchId != lastBatchId + 1) revert InvalidBatchId();
+        if (antxChainHeight <= lastAntxChainHeight) revert InvalidAntxChainHeight();
         if (marginAsset == address(0)) revert ZeroAddressNotAllowed();
         
-        // Use MarginAssetCalculator to calculate available balance
-        MarginAssetCalculator calculator = MarginAssetCalculator(marginAsset);
 
         for (uint256 i = 0; i < userUpdates.length; i++) {
             UserAssetUpdate memory update = userUpdates[i];
-            
-            // Construct user's asset by calling MarginAsset's newAsset, then calculate available balance
-            uint256 availableAmount = calculator.getCrossTransferOutAvailableAmount(
-                update.crossCollateralAmount,
-                update.coinStepSizeScale,
-                update.orderFrozenAmount,
-                update.positions,
-                update.tradeSettings,
-                update.exchanges
-            );
-            
-            // Update user balance to the calculated available amount
-            userBalance[update.user] = availableAmount;
-            emit UpdateUserBalance(batchId, update.user, availableAmount);
+
+            bytes32 user = userSubAccountIdToAddress[update.subAccountId];
+            if (user == bytes32(0)) {
+                // set user and sub account id to mapping
+                userSubAccountIdToAddress[update.subAccountId] = update.user;
+            } 
+
+            // create or update user asset info
+            userInfos[update.user] = update.userAssetInfo;
         }
 
         lastBatchId = batchId;
@@ -264,7 +262,27 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
     function setMarginAsset(address _marginAsset) external onlyOwner validAddress(_marginAsset) {
+        if (_marginAsset == address(0)) revert ZeroAddressNotAllowed();
         marginAsset = _marginAsset;
         emit MarginAssetUpdated(_marginAsset);
+    }
+
+    function setGlobalCoinStepSizeScale(uint32 coinStepSizeScale) external onlyOwner {
+        if (coinStepSizeScale == 0) revert ZeroAmountNotAllowed();
+        globalCoinStepSizeScale = coinStepSizeScale;
+        emit GlobalCoinStepSizeScaleUpdated(coinStepSizeScale);
+    }
+
+    function setExchangeInfo(uint64 exchangeId, uint32 stepSizeScale, uint32 tickSizeScale, uint256 oraclePrice, uint256 fundingIndex, MarginAsset.RiskTier[] memory riskTiers) external onlySettlementOperator {
+        globalExchangeInfos[exchangeId] = MarginAsset.ExchangeInfo({
+            exchangeId: exchangeId,
+            stepSizeScale: stepSizeScale,
+            tickSizeScale: tickSizeScale,
+            oraclePrice: oraclePrice,
+            fundingIndex: fundingIndex,
+            riskTiers: riskTiers
+        });
+
+        emit GlobalExchangeInfoUpdated(exchangeId, stepSizeScale, tickSizeScale, oraclePrice, fundingIndex, riskTiers);
     }
 }

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import "../margin/MarginAsset.sol";
+
 
 interface IAsset {
     // Events
@@ -15,6 +17,8 @@ interface IAsset {
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
     event MarginAssetUpdated(address indexed marginAsset);
+    event GlobalCoinStepSizeScaleUpdated(uint32 coinStepSizeScale);
+    event GlobalExchangeInfoUpdated(uint64 exchangeId, uint32 stepSizeScale, uint32 tickSizeScale, uint256 oraclePrice, uint256 fundingIndex, MarginAsset.RiskTier[] riskTiers);
 
     // Errors
     error InsufficientUserBalance(uint256 available, uint256 required);
@@ -39,6 +43,8 @@ interface IAsset {
     error OnlyWithdrawOperator();
     error InvalidBatchId();
     error NotAllowedToken(address token);
+    error UserNotFound();
+    error InvalidAntxChainHeight();
 
     enum SignatureType {
         ECDSA,
@@ -51,4 +57,14 @@ interface IAsset {
     function setSigners(address[] memory _signers) external;
     function setSettlementAddress(address _settlementAddress) external;
     function setWithdrawOperator(address _withdrawOperator) external;
+    function availableAmount(bytes32 user) external view returns (uint256);
+    function availableAmountBySubAccountId(uint64 subAccountId) external view returns (uint256);
+    function emergencyWithdraw(
+        address token,
+        address to, 
+        uint256 amount,
+        uint256 expireTime, 
+        address[] memory allSigners,
+        bytes[] memory signatures
+    ) external;
 }
