@@ -69,7 +69,8 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     address[] memory _signers,
     address _settlementAddress,
     address _withdrawOperator,
-    address _ed25519Oracle) Ownable(msg.sender) {
+    address _ed25519Oracle,
+    address _marginAsset) Ownable(msg.sender) {
         if (_USDC == address(0)) revert ZeroAddressNotAllowed();
         USDC = IERC20(_USDC);
 
@@ -90,6 +91,11 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         if (_ed25519Oracle != address(0)) {
             ed25519Oracle = IEd25519Oracle(_ed25519Oracle);
             emit Ed25519OracleUpdated(_ed25519Oracle);
+        }
+
+        if (_marginAsset != address(0)) {
+            marginAsset = _marginAsset;
+            emit MarginAssetUpdated(_marginAsset);
         }
     }
 

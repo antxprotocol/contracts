@@ -51,8 +51,9 @@ contract AssetValidTimeHelper is Asset {
         address[] memory _signers,
         address settle,
         address wd,
-        address oracle
-    ) Asset(usdt, _signers, settle, wd, oracle) {}
+        address oracle,
+        address marginAsset
+    ) Asset(usdt, _signers, settle, wd, oracle, marginAsset) {}
 
     function ping(uint256 t) external validTime(t) returns (bool) {
         return true;
@@ -132,8 +133,7 @@ contract AssetTest is Test {
 
         // Deploy Asset contract with proper owner
         vm.startPrank(owner);
-        asset = new Asset(address(USDT), signers, settlementOperator, withdrawOperator, address(0));
-        asset.setMarginAsset(address(marginAssetCalculator));
+        asset = new Asset(address(USDT), signers, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
         vm.stopPrank();
     }
 
@@ -146,7 +146,8 @@ contract AssetTest is Test {
             signers,
             settlementOperator,
             withdrawOperator,
-            address(0)
+            address(0),
+            address(marginAssetCalculator)
         );
         vm.stopPrank();
 
@@ -161,7 +162,7 @@ contract AssetTest is Test {
     function test_constructor_emits_OracleUpdated_when_nonzero_arg() public {
         address dummyOracle = address(0x12345);
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDT), signers, settlementOperator, withdrawOperator, dummyOracle);
+        Asset a2 = new Asset(address(USDT), signers, settlementOperator, withdrawOperator, dummyOracle, address(marginAssetCalculator));
         vm.stopPrank();
         assertEq(address(a2.ed25519Oracle()), dummyOracle);
     }
@@ -188,28 +189,28 @@ contract AssetTest is Test {
     function test_constructor_zeroUSDT() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(0), signers, settlementOperator, withdrawOperator, address(0));
+        new Asset(address(0), signers, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
         vm.stopPrank();
     }
 
     function test_constructor_zeroSystemAddress() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), signers, address(0), withdrawOperator, address(0));
+        new Asset(address(USDT), signers, address(0), withdrawOperator, address(0), address(marginAssetCalculator));
         vm.stopPrank();
     }
 
     function test_constructor_zeroSettlementOperator() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), signers, address(0), withdrawOperator, address(0));
+        new Asset(address(USDT), signers, address(0), withdrawOperator, address(0), address(marginAssetCalculator));
         vm.stopPrank();
     }
 
     function test_constructor_zeroWithdrawOperator() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), signers, settlementOperator, address(0), address(0));
+        new Asset(address(USDT), signers, settlementOperator, address(0), address(0), address(marginAssetCalculator));
         vm.stopPrank();
     }
 
@@ -217,7 +218,7 @@ contract AssetTest is Test {
         vm.startPrank(owner);
         address[] memory emptySigners = new address[](0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), emptySigners, settlementOperator, withdrawOperator, address(0));
+        new Asset(address(USDT), emptySigners, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
         vm.stopPrank();
     }
 
@@ -227,7 +228,7 @@ contract AssetTest is Test {
         invalidSigners[0] = signer1;
         invalidSigners[1] = address(0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(USDT), invalidSigners, settlementOperator, withdrawOperator, address(0));
+        new Asset(address(USDT), invalidSigners, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
         vm.stopPrank();
     }
 
@@ -1058,7 +1059,7 @@ contract AssetTest is Test {
         address[] memory single = new address[](1);
         single[0] = signer1;
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDT), single, settlementOperator, withdrawOperator, address(0));
+        Asset a2 = new Asset(address(USDT), single, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
         vm.stopPrank();
         address notSigner = address(0xDEADBEeF);
         assertFalse(a2.isAllowedSigner(notSigner));
@@ -1652,8 +1653,7 @@ contract AssetTest is Test {
         fourSigners[3] = signer4;
 
         vm.startPrank(owner);
-        Asset assetWith4Signers = new Asset(address(USDT), fourSigners, settlementOperator, withdrawOperator, address(0));
-        assetWith4Signers.setMarginAsset(address(marginAssetCalculator));
+        Asset assetWith4Signers = new Asset(address(USDT), fourSigners, settlementOperator, withdrawOperator, address(0), address(marginAssetCalculator));
         vm.stopPrank();
 
         // Setup system balance

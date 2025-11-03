@@ -30,13 +30,17 @@ contract AssetScript is Script {
         address ed25519Oracle = 0x371fD764e1a267D6aEAA1724E436b9Af1B16e995;
         console.log("Ed25519 oracle address at:", address(ed25519Oracle));
 
+        address marginAsset = 0x4626eb76a7c2896645B0117614Ec0555e6E3a180;
+        console.log("Margin asset address at:", address(marginAsset));
+
         // Deploy asset
         Asset asset =  new Asset(
             address(usdcAddress),
             signers,
             settlementOperator,
             withdrawOperator,
-            ed25519Oracle
+            ed25519Oracle,
+            marginAsset
         );
         console.log("Asset deployed at:", address(asset));
 
