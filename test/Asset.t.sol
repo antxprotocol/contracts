@@ -47,8 +47,8 @@ contract MockMarginAssetCalculator {
 // Helper contract to expose the validTime modifier via a simple callable function
 contract AssetValidTimeHelper is Asset {
     constructor(
-        address usdt
-    ) Asset(usdt) {}
+        address usdc
+    ) Asset(usdc) {}
 
     function ping(uint256 t) external validTime(t) returns (bool) {
         return true;
@@ -57,7 +57,7 @@ contract AssetValidTimeHelper is Asset {
 
 contract AssetTest is Test {
     Asset public asset;
-    MockToken public USDT;
+    MockToken public USDC;
     MockMarginAssetCalculator public marginAssetCalculator;
     address public owner;
     address public systemAddress;
@@ -103,7 +103,6 @@ contract AssetTest is Test {
         return Asset.UserAssetUpdate({
             subAccountId: subAccountId,
             user: user,
-            coinStepSizeScale: 6,
             userAssetInfo: userAssetInfo
         });
     }
@@ -121,8 +120,8 @@ contract AssetTest is Test {
         settlementOperator = vm.addr(777);
         withdrawOperator = vm.addr(666);
 
-        // Deploy mock USDT
-        USDT = new MockToken("USDT", "USDT");
+        // Deploy mock USDC
+        USDC = new MockToken("USDC", "USDC");
 
         // Deploy mock MarginAssetCalculator
         marginAssetCalculator = new MockMarginAssetCalculator();
@@ -135,7 +134,7 @@ contract AssetTest is Test {
 
         // Deploy Asset contract with proper owner
         vm.startPrank(owner);
-        asset = new Asset(address(USDT));
+        asset = new Asset(address(USDC));
         asset.setSigners(signers);
         asset.setSettlementAddress(settlementOperator);
         asset.setWithdrawOperator(withdrawOperator);
@@ -149,7 +148,7 @@ contract AssetTest is Test {
 
     function test_validTime_pass_and_revert() public {
         vm.startPrank(owner);
-        AssetValidTimeHelper a = new AssetValidTimeHelper(address(USDT));
+        AssetValidTimeHelper a = new AssetValidTimeHelper(address(USDC));
         vm.stopPrank();
 
         // pass
@@ -163,7 +162,7 @@ contract AssetTest is Test {
     function test_constructor_emits_OracleUpdated_when_nonzero_arg() public {
         address dummyOracle = address(0x12345);
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDT));
+        Asset a2 = new Asset(address(USDC));
         a2.setEd25519Oracle(dummyOracle);
         vm.stopPrank();
         assertEq(address(a2.ed25519Oracle()), dummyOracle);
@@ -177,7 +176,7 @@ contract AssetTest is Test {
     // Test constructor functionality
     function test_constructor_success() public {
         assertEq(asset.owner(), owner);
-        assertEq(address(asset.USDC()), address(USDT));
+        assertEq(address(asset.USDC()), address(USDC));
         assertEq(asset.settlementOperator(), settlementOperator);
         assertEq(asset.withdrawOperator(), withdrawOperator);
         assertEq(asset.lastBatchId(), 0);
@@ -188,7 +187,7 @@ contract AssetTest is Test {
         assertTrue(asset.isAllowedSigner(signer3));
     }
 
-    function test_constructor_zeroUSDT() public {
+    function test_constructor_zeroUSDC() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         new Asset(address(0));
@@ -197,7 +196,7 @@ contract AssetTest is Test {
 
     function test_constructor_zeroSystemAddress() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDT));
+        Asset a = new Asset(address(USDC));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         a.setSettlementAddress(address(0));
         vm.stopPrank();
@@ -205,7 +204,7 @@ contract AssetTest is Test {
 
     function test_constructor_zeroSettlementOperator() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDT));
+        Asset a = new Asset(address(USDC));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         a.setSettlementAddress(address(0));
         vm.stopPrank();
@@ -213,7 +212,7 @@ contract AssetTest is Test {
 
     function test_constructor_zeroWithdrawOperator() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDT));
+        Asset a = new Asset(address(USDC));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         a.setWithdrawOperator(address(0));
         vm.stopPrank();
@@ -221,7 +220,7 @@ contract AssetTest is Test {
 
     function test_constructor_emptySigners() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDT));
+        Asset a = new Asset(address(USDC));
         address[] memory emptySigners = new address[](0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         a.setSigners(emptySigners);
@@ -230,7 +229,7 @@ contract AssetTest is Test {
 
     function test_constructor_zeroAddressInSigners() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDT));
+        Asset a = new Asset(address(USDC));
         address[] memory invalidSigners = new address[](2);
         invalidSigners[0] = signer1;
         invalidSigners[1] = address(0);
@@ -390,7 +389,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare batch withdraw
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -410,7 +409,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
 
-        uint256 userBalanceBefore = USDT.balanceOf(testUser);
+        uint256 userBalanceBefore = USDC.balanceOf(testUser);
         
         // Execute batch withdraw - should now work with correct signature
         vm.startPrank(withdrawOperator);
@@ -419,7 +418,7 @@ contract AssetTest is Test {
         asset.batchWithdraw(clientOrderIds, users, amounts, signatures, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
-        uint256 userBalanceAfter = USDT.balanceOf(testUser);
+        uint256 userBalanceAfter = USDC.balanceOf(testUser);
         assertEq(userBalanceAfter - userBalanceBefore, 500);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
@@ -451,7 +450,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare batch withdraw
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -500,7 +499,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare batch withdraw for more than user has
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -608,12 +607,12 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Advance time past the time lock
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
-        uint256 user1BalanceBefore = USDT.balanceOf(user1);
+        uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
         vm.expectEmit(address(asset));
@@ -621,7 +620,7 @@ contract AssetTest is Test {
         asset.forceWithdraw(bytes32(uint256(uint160(user1))), 500, IAsset.SignatureType.ECDSA, new bytes(0));
         vm.stopPrank();
 
-        uint256 user1BalanceAfter = USDT.balanceOf(user1);
+        uint256 user1BalanceAfter = USDC.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
@@ -646,16 +645,16 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund and pass timelock
-        USDT.transfer(address(asset), 600);
+        USDC.transfer(address(asset), 600);
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
-        uint256 beforeBal = USDT.balanceOf(user1);
+        uint256 beforeBal = USDC.balanceOf(user1);
         vm.startPrank(user1);
         // Use ED25519 enum to cover that path (isForce skips signature logic)
         asset.forceWithdraw(bytes32(uint256(uint160(user1))), 200, IAsset.SignatureType.ED25519, new bytes(0));
         vm.stopPrank();
 
-        uint256 afterBal = USDT.balanceOf(user1);
+        uint256 afterBal = USDC.balanceOf(user1);
         assertEq(afterBal - beforeBal, 200);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 600);
@@ -723,7 +722,7 @@ contract AssetTest is Test {
 
     function test_emergencyWithdraw_success() public {
         // Fund the contract (no need to setup system balance anymore)
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare multi-sig withdraw
         uint256 expireTime = block.timestamp + 1 hours;
@@ -733,7 +732,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -754,13 +753,13 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
+        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -768,7 +767,7 @@ contract AssetTest is Test {
             signatures
         );
 
-        uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
+        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
     }
 
@@ -796,7 +795,7 @@ contract AssetTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAllSignersLength.selector));
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             user1,
             500,
             expireTime,
@@ -814,7 +813,7 @@ contract AssetTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSignaturesLength.selector));
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             user1,
             500,
             expireTime,
@@ -832,7 +831,7 @@ contract AssetTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.SameSigner.selector));
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             user1,
             500,
             expireTime,
@@ -850,7 +849,7 @@ contract AssetTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             user1,
             500,
             expireTime,
@@ -882,7 +881,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 user1, 
                 uint256(500), 
                 expireTime, 
@@ -906,7 +905,7 @@ contract AssetTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             user1,
             500,
             expireTime,
@@ -937,7 +936,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 user1, 
                 uint256(500), 
                 expireTime, 
@@ -963,7 +962,7 @@ contract AssetTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedSigner.selector));
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             user1,
             500,
             expireTime,
@@ -1089,7 +1088,7 @@ contract AssetTest is Test {
         address[] memory single = new address[](1);
         single[0] = signer1;
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDT));
+        Asset a2 = new Asset(address(USDC));
         a2.setSigners(single);
         vm.stopPrank();
         address notSigner = address(0xDEADBEeF);
@@ -1116,10 +1115,10 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
-        // Set USDT to fail transfers
-        USDT.setFailTransfers(true);
+        // Set USDC to fail transfers
+        USDC.setFailTransfers(true);
 
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
@@ -1129,7 +1128,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Reset transfer behavior
-        USDT.setFailTransfers(false);
+        USDC.setFailTransfers(false);
     }
 
     // Test reentrancy protection
@@ -1156,7 +1155,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
         // Normal withdrawal should work
@@ -1197,7 +1196,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 3000);
+        USDC.transfer(address(asset), 3000);
 
         // Prepare batch withdraw for both users
         uint256[] memory clientOrderIds = new uint256[](2);
@@ -1224,16 +1223,16 @@ contract AssetTest is Test {
         signatures[0] = abi.encodePacked(r1, s1, v1);
         signatures[1] = abi.encodePacked(r2, s2, v2);
 
-        uint256 user1BalanceBefore = USDT.balanceOf(testUser1);
-        uint256 user2BalanceBefore = USDT.balanceOf(testUser2);
+        uint256 user1BalanceBefore = USDC.balanceOf(testUser1);
+        uint256 user2BalanceBefore = USDC.balanceOf(testUser2);
         
         // Execute batch withdraw for both users
         vm.startPrank(withdrawOperator);
         asset.batchWithdraw(clientOrderIds, users, amounts, signatures, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
-        uint256 user1BalanceAfter = USDT.balanceOf(testUser1);
-        uint256 user2BalanceAfter = USDT.balanceOf(testUser2);
+        uint256 user1BalanceAfter = USDC.balanceOf(testUser1);
+        uint256 user2BalanceAfter = USDC.balanceOf(testUser2);
         
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
         assertEq(user2BalanceAfter - user2BalanceBefore, 800);
@@ -1262,7 +1261,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare multi-sig withdraw with all 3 signers
         uint256 expireTime = block.timestamp + 1 hours;
@@ -1272,7 +1271,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -1296,13 +1295,13 @@ contract AssetTest is Test {
         signatures[1] = signature2;
         signatures[2] = signature3;
 
-        uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
+        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -1310,7 +1309,7 @@ contract AssetTest is Test {
             signatures
         );
 
-        uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
+        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
         
     }
@@ -1502,7 +1501,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare multi-sig withdraw for exact balance
         uint256 expireTime = block.timestamp + 1 hours;
@@ -1512,7 +1511,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -1533,10 +1532,10 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
+        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -1544,7 +1543,7 @@ contract AssetTest is Test {
             signatures
         );
 
-        uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
+        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
          // Should be exactly 0
     }
@@ -1574,10 +1573,10 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract with exact amount
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Get contract balance before
-        uint256 contractBalanceBefore = USDT.balanceOf(address(asset));
+        uint256 contractBalanceBefore = USDC.balanceOf(address(asset));
         
         // Prepare batch withdraw
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -1603,7 +1602,7 @@ contract AssetTest is Test {
         vm.stopPrank();
         
         // Verify balance change is exactly what was expected
-        uint256 contractBalanceAfter = USDT.balanceOf(address(asset));
+        uint256 contractBalanceAfter = USDC.balanceOf(address(asset));
         assertEq(contractBalanceBefore - contractBalanceAfter, 500);
     }
 
@@ -1630,7 +1629,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Test different signer combinations
         uint256 expireTime = block.timestamp + 1 hours;
@@ -1640,7 +1639,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -1663,7 +1662,7 @@ contract AssetTest is Test {
         signatures[1] = signature3;
 
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -1686,7 +1685,7 @@ contract AssetTest is Test {
         fourSigners[3] = signer4;
 
         vm.startPrank(owner);
-        Asset assetWith4Signers = new Asset(address(USDT));
+        Asset assetWith4Signers = new Asset(address(USDC));
         assetWith4Signers.setSigners(fourSigners);
         assetWith4Signers.setSettlementAddress(settlementOperator);
         assetWith4Signers.setWithdrawOperator(withdrawOperator);
@@ -1712,7 +1711,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(assetWith4Signers), 1000);
+        USDC.transfer(address(assetWith4Signers), 1000);
 
         // Test with 4 signers
         uint256 expireTime = block.timestamp + 1 hours;
@@ -1722,7 +1721,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -1750,7 +1749,7 @@ contract AssetTest is Test {
         signatures[3] = signature4;
 
         assetWith4Signers.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -1839,7 +1838,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1);
+        USDC.transfer(address(asset), 1);
 
         // Prepare multi-sig withdraw for minimum amount
         uint256 expireTime = block.timestamp + 1 hours;
@@ -1849,7 +1848,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -1871,7 +1870,7 @@ contract AssetTest is Test {
         signatures[1] = signature2;
 
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -1974,12 +1973,12 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Advance time past the time lock
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
-        uint256 user1BalanceBefore = USDT.balanceOf(user1);
+        uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
         vm.expectEmit(address(asset));
@@ -1987,7 +1986,7 @@ contract AssetTest is Test {
         asset.forceWithdraw(bytes32(uint256(uint160(user1))), 500, IAsset.SignatureType.ECDSA, new bytes(0));
         vm.stopPrank();
 
-        uint256 user1BalanceAfter = USDT.balanceOf(user1);
+        uint256 user1BalanceAfter = USDC.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
@@ -2016,7 +2015,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare batch withdraw
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -2036,7 +2035,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
 
-        uint256 userBalanceBefore = USDT.balanceOf(testUser);
+        uint256 userBalanceBefore = USDC.balanceOf(testUser);
         
         // Configure mock Ed25519 oracle to approve
         MockEd25519Oracle mock = new MockEd25519Oracle();
@@ -2052,7 +2051,7 @@ contract AssetTest is Test {
         asset.batchWithdraw(clientOrderIds, users, amounts, signatures, IAsset.SignatureType.ED25519);
         vm.stopPrank();
         
-        uint256 userBalanceAfter = USDT.balanceOf(testUser);
+        uint256 userBalanceAfter = USDC.balanceOf(testUser);
         assertEq(userBalanceAfter - userBalanceBefore, 500);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
@@ -2081,7 +2080,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare batch withdraw
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -2140,7 +2139,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare multi-sig withdraw
         uint256 expireTime = block.timestamp + 1 hours;
@@ -2150,7 +2149,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -2171,13 +2170,13 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
+        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -2185,7 +2184,7 @@ contract AssetTest is Test {
             signatures
         );
 
-        uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
+        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
         
     }
@@ -2297,7 +2296,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract sufficiently
-        USDT.transfer(address(asset), maxAmount);
+        USDC.transfer(address(asset), maxAmount);
 
         // Prepare batch withdraw with max amount
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -2317,7 +2316,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
 
-        uint256 userBalanceBefore = USDT.balanceOf(testUser);
+        uint256 userBalanceBefore = USDC.balanceOf(testUser);
         
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
@@ -2326,7 +2325,7 @@ contract AssetTest is Test {
         asset.batchWithdraw(clientOrderIds, users, amounts, signatures, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
-        uint256 userBalanceAfter = USDT.balanceOf(testUser);
+        uint256 userBalanceAfter = USDC.balanceOf(testUser);
         assertEq(userBalanceAfter - userBalanceBefore, maxAmount);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), maxAmount);
@@ -2352,12 +2351,12 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract sufficiently
-        USDT.transfer(address(asset), maxAmount);
+        USDC.transfer(address(asset), maxAmount);
 
         // Advance time past the time lock
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
-        uint256 user1BalanceBefore = USDT.balanceOf(user1);
+        uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
         vm.expectEmit(address(asset));
@@ -2365,7 +2364,7 @@ contract AssetTest is Test {
         asset.forceWithdraw(bytes32(uint256(uint160(user1))), maxAmount, IAsset.SignatureType.ECDSA, new bytes(0));
         vm.stopPrank();
 
-        uint256 user1BalanceAfter = USDT.balanceOf(user1);
+        uint256 user1BalanceAfter = USDC.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, maxAmount);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), maxAmount);
@@ -2390,7 +2389,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract sufficiently
-        USDT.transfer(address(asset), amounts[0]);
+        USDC.transfer(address(asset), amounts[0]);
 
         // Prepare multi-sig withdraw with max amount
         uint256 expireTime = block.timestamp + 1 hours;
@@ -2400,7 +2399,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -2421,13 +2420,13 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
+        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -2435,7 +2434,7 @@ contract AssetTest is Test {
             signatures
         );
 
-        uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
+        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
         
     }
@@ -2459,7 +2458,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare multi-sig withdraw with max expire time
         uint256 expireTime = block.timestamp + 1 hours;
@@ -2469,7 +2468,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -2490,13 +2489,13 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDT.balanceOf(recipient);
+        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
         
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -2504,7 +2503,7 @@ contract AssetTest is Test {
             signatures
         );
 
-        uint256 recipientBalanceAfter = USDT.balanceOf(recipient);
+        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
         
     }
@@ -2528,7 +2527,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare multi-sig withdraw with zero expire time
         uint256 expireTime = 0;
@@ -2538,7 +2537,7 @@ contract AssetTest is Test {
         bytes32 operationHash = keccak256(
             abi.encodePacked(
                 "EMERGENCY_WITHDRAW", 
-                address(USDT), 
+                address(USDC), 
                 recipient, 
                 withdrawAmount, 
                 expireTime, 
@@ -2562,7 +2561,7 @@ contract AssetTest is Test {
         // Should fail with expired transaction
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
         asset.emergencyWithdraw(
-            address(USDT),
+            address(USDC),
             recipient,
             withdrawAmount,
             expireTime,
@@ -2594,7 +2593,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Prepare batch withdraw with max client order ID
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -2614,7 +2613,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
 
-        uint256 userBalanceBefore = USDT.balanceOf(testUser);
+        uint256 userBalanceBefore = USDC.balanceOf(testUser);
         
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
@@ -2623,7 +2622,7 @@ contract AssetTest is Test {
         asset.batchWithdraw(clientOrderIds, users, amounts, signatures, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
-        uint256 userBalanceAfter = USDT.balanceOf(testUser);
+        uint256 userBalanceAfter = USDC.balanceOf(testUser);
         assertEq(userBalanceAfter - userBalanceBefore, 500);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
@@ -2648,12 +2647,12 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Advance time past the time lock
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
-        uint256 user1BalanceBefore = USDT.balanceOf(user1);
+        uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
         vm.expectEmit(address(asset));
@@ -2661,7 +2660,7 @@ contract AssetTest is Test {
         asset.forceWithdraw(bytes32(uint256(uint160(user1))), 500, IAsset.SignatureType.ECDSA, new bytes(0));
         vm.stopPrank();
 
-        uint256 user1BalanceAfter = USDT.balanceOf(user1);
+        uint256 user1BalanceAfter = USDC.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
@@ -2686,7 +2685,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Advance time to just before the time lock
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() - 1);
@@ -2716,12 +2715,12 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDT.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), 1000);
 
         // Advance time to one second after time lock
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
-        uint256 user1BalanceBefore = USDT.balanceOf(user1);
+        uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
         vm.expectEmit(address(asset));
@@ -2729,7 +2728,7 @@ contract AssetTest is Test {
         asset.forceWithdraw(bytes32(uint256(uint160(user1))), 500, IAsset.SignatureType.ECDSA, new bytes(0));
         vm.stopPrank();
 
-        uint256 user1BalanceAfter = USDT.balanceOf(user1);
+        uint256 user1BalanceAfter = USDC.balanceOf(user1);
         assertEq(user1BalanceAfter - user1BalanceBefore, 500);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);

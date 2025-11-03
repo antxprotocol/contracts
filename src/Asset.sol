@@ -19,7 +19,6 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     struct UserAssetUpdate {
         uint64 subAccountId;                    // Sub account ID
         bytes32 user;                           // User address
-        uint32 coinStepSizeScale;               // Coin step size scale
         UserAssetInfo userAssetInfo;            // User asset info
     }
 
