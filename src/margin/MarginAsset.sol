@@ -649,7 +649,6 @@ contract MarginAssetCalculator {
      * @param fundingIndices 资金费率指数列表
      * @param subaccount 子账号信息
      * @param perpetualAsset 永续合约资产信息
-     * @param orderFrozenAmount 订单冻结金额，精度为 collateralCoin.StepSizeScale + 6
      * @return availableAmount 可用金额，精度为 collateralCoin.StepSizeScale
      */
     function getCrossTransferOutAvailableAmount(
@@ -658,8 +657,7 @@ contract MarginAssetCalculator {
         MarginAsset.OraclePrice[] memory oraclePrices,
         MarginAsset.FundingIndex[] memory fundingIndices,
         MarginAsset.Subaccount memory subaccount,
-        MarginAsset.PerpetualAsset memory perpetualAsset,
-        uint256 orderFrozenAmount
+        MarginAsset.PerpetualAsset memory perpetualAsset
     ) external pure returns (uint256 availableAmount) {
         MarginAsset.Asset memory asset = MarginAsset.newAsset(
             collateralCoin,
@@ -670,6 +668,9 @@ contract MarginAssetCalculator {
             perpetualAsset
         );
 
+        uint256 orderFrozenAmount = 0;
+        // orderFrozenAmount 应该从未成交订单中计算，如果当前没有订单信息，则设为0
+        // TODO: 如果将来需要支持订单冻结金额计算，需要传入订单信息
         
         return MarginAsset.getCrossTransferOutAvailableAmount(
             asset.crossGroup.tv,

@@ -186,8 +186,6 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
             tradeSettings: subaccount.tradeSettings
         });
 
-        // orderFrozenAmount暂时设为0，需要从其他地方获取
-        uint256 orderFrozenAmount = 0;
 
         MarginAssetCalculator calculator = MarginAssetCalculator(marginAsset);
         return calculator.getCrossTransferOutAvailableAmount(
@@ -196,8 +194,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
             oraclePriceArray,
             fundingIndexArray,
             subaccountForCalc,
-            perpetualAsset,
-            orderFrozenAmount
+            perpetualAsset
         );
     }
 
