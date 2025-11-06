@@ -17,6 +17,10 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
 
     // User asset update information struct
     struct BatchUpdateData {
+        MarginAsset.Coin[] coinUpdates;
+        MarginAsset.Exchange[] exchangeUpdates;
+        MarginAsset.FundingIndex[] fundingIndexUpdates;
+        MarginAsset.OraclePrice[] oraclePriceUpdates;
         MarginAsset.Subaccount []subaccountUpdates;
         MarginAsset.PerpetualAsset []perpetualAssetUpdates;
     }
@@ -27,6 +31,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     address public settlementOperator;
     address public withdrawOperator;
     uint256 public lastBatchId;
+    mapping(uint256 => mapping(int32 => bool)) public batchSeqIds;
     uint256 public lastBatchTime;
     uint256 public lastAntxChainHeight;
     IEd25519Oracle public ed25519Oracle;
@@ -41,7 +46,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     mapping(uint64 => MarginAsset.OraclePrice) public oraclePrices;
     mapping(uint64 => MarginAsset.Subaccount) public subaccounts;
     mapping(uint64 => mapping(uint64 => MarginAsset.PerpetualAsset)) public perpetualAssets;
-    mapping(bytes32 => uint64) public addressToSubAccountId; // user => subaccountId (reverse mapping)
+    mapping(bytes32 => uint64) public addressToSubaccountId; // user => subaccountId (reverse mapping)
 
     modifier validAddress(address addr) {
         if (addr == address(0)) revert ZeroAddressNotAllowed();
@@ -122,9 +127,9 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         emit UserWithdraw(clientOrderId, user, amount);
     }
 
-    function _calculateAvailableAmount(bytes32 user) internal view returns (uint256) {
+    function _calculateAvailableAmount(bytes32 user) internal view returns (int256) {
         // 直接通过反向映射查找subaccountId
-        uint64 subaccountId = addressToSubAccountId[user];
+        uint64 subaccountId = addressToSubaccountId[user];
         if (subaccountId == 0) return 0;
         
         MarginAsset.Subaccount memory subaccount = subaccounts[subaccountId];
@@ -147,7 +152,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         
         if (!foundPerpetualAsset) return 0;
         if (perpetualAsset.crossCollateralAmount <= 0) return 0;
-        if (perpetualAsset.positions.length == 0) return uint256(uint64(perpetualAsset.crossCollateralAmount));
+        if (perpetualAsset.positions.length == 0) return int256(int64(perpetualAsset.crossCollateralAmount));
 
         // 获取抵押品币种信息
         MarginAsset.Coin memory collateralCoin = coins[collateralCoinId];
@@ -182,7 +187,6 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
             id: subaccountId,
             chainAddress: user,
             clientAccountId: subaccount.clientAccountId,
-            isSystemAccount: subaccount.isSystemAccount,
             tradeSettings: subaccount.tradeSettings
         });
 
@@ -199,13 +203,17 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
     function availableAmount(bytes32 user) public view returns (uint256) {
-        return _calculateAvailableAmount(user);
+        int256 userAvailableAmount = _calculateAvailableAmount(user);
+        if (userAvailableAmount < 0) return 0;
+        return uint256(userAvailableAmount);
     }
 
     function availableAmountBySubAccountId(uint64 subAccountId) public view returns (uint256) {
         MarginAsset.Subaccount memory subaccount = subaccounts[subAccountId];
         if (subaccount.id == 0) revert UserNotFound();
-        return _calculateAvailableAmount(subaccount.chainAddress);
+        int256 subaccountAvailableAmount = _calculateAvailableAmount(subaccount.chainAddress);
+        if (subaccountAvailableAmount < 0) return 0;
+        return uint256(subaccountAvailableAmount);
     }
 
     function emergencyWithdraw(
@@ -253,39 +261,67 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
      */
     function batchUpdate(
         uint256 batchId,
+        int32 seqInBatch,
         uint256 antxChainHeight,
         BatchUpdateData memory batchUpdateData
     ) public onlySettlementOperator {
-        if (batchId != lastBatchId + 1) revert InvalidBatchId();
+        if (batchId != lastBatchId +1 || 
+        (batchId == lastBatchId && batchSeqIds[batchId][seqInBatch])) revert InvalidBatchId();
         if (antxChainHeight <= lastAntxChainHeight) revert InvalidAntxChainHeight();
         if (marginAsset == address(0)) revert ZeroAddressNotAllowed();
+
+        if (batchUpdateData.coinUpdates.length > 0) {
+            for (uint256 i = 0; i < batchUpdateData.coinUpdates.length; i++) {  
+                coins[batchUpdateData.coinUpdates[i].id] = batchUpdateData.coinUpdates[i];
+                emit CoinInfoUpdated(batchUpdateData.coinUpdates[i].id, batchUpdateData.coinUpdates[i].symbol, batchUpdateData.coinUpdates[i].stepSizeScale);
+
+                // ensure coin id 
+                bool existCoin = false;
+                for (uint256 j = 0; j < coinIds.length; j++) {
+                    if (coinIds[j] == batchUpdateData.coinUpdates[i].id) {
+                        existCoin = true;
+                        break;
+                    }
+                }
+                if (!existCoin) coinIds.push(batchUpdateData.coinUpdates[i].id);
+            }
+        }
+        if (batchUpdateData.exchangeUpdates.length > 0) {
+            for (uint256 i = 0; i < batchUpdateData.exchangeUpdates.length; i++) {
+                exchanges[batchUpdateData.exchangeUpdates[i].exchangeId] = batchUpdateData.exchangeUpdates[i];
+                emit ExchangeInfoUpdated(batchUpdateData.exchangeUpdates[i].exchangeId, batchUpdateData.exchangeUpdates[i].stepSizeScale, batchUpdateData.exchangeUpdates[i].tickSizeScale, 0, 0, batchUpdateData.exchangeUpdates[i].riskTiers);
+            }
+        }
+        if (batchUpdateData.fundingIndexUpdates.length > 0) {
+            for (uint256 i = 0; i < batchUpdateData.fundingIndexUpdates.length; i++) {
+                fundingIndexes[batchUpdateData.fundingIndexUpdates[i].exchangeId] = batchUpdateData.fundingIndexUpdates[i];
+                emit FundingIndexUpdated(batchUpdateData.fundingIndexUpdates[i].exchangeId, batchUpdateData.fundingIndexUpdates[i].fundingIndex);
+            }
+        }
+        if (batchUpdateData.oraclePriceUpdates.length > 0) {
+            for (uint256 i = 0; i < batchUpdateData.oraclePriceUpdates.length; i++) {
+                oraclePrices[batchUpdateData.oraclePriceUpdates[i].exchangeId] = batchUpdateData.oraclePriceUpdates[i];
+                emit OraclePriceUpdated(batchUpdateData.oraclePriceUpdates[i].exchangeId, batchUpdateData.oraclePriceUpdates[i].oraclePrice, batchUpdateData.oraclePriceUpdates[i].oracleTime);
+            }
+        }
         
         if (batchUpdateData.subaccountUpdates.length > 0) {
             for (uint256 i = 0; i < batchUpdateData.subaccountUpdates.length; i++) {
-                addressToSubAccountId[batchUpdateData.subaccountUpdates[i].chainAddress] = batchUpdateData.subaccountUpdates[i].id;
+                addressToSubaccountId[batchUpdateData.subaccountUpdates[i].chainAddress] = batchUpdateData.subaccountUpdates[i].id;
                 subaccounts[batchUpdateData.subaccountUpdates[i].id] = batchUpdateData.subaccountUpdates[i];
+                emit SubaccountUpdated(batchUpdateData.subaccountUpdates[i].id, batchUpdateData.subaccountUpdates[i].chainAddress, batchUpdateData.subaccountUpdates[i].clientAccountId, batchUpdateData.subaccountUpdates[i].tradeSettings);
             }
         }
         if (batchUpdateData.perpetualAssetUpdates.length > 0) {
             for (uint256 i = 0; i < batchUpdateData.perpetualAssetUpdates.length; i++) {
                 uint64 collateralCoinId = batchUpdateData.perpetualAssetUpdates[i].collateralCoinId;
                 perpetualAssets[batchUpdateData.perpetualAssetUpdates[i].subaccountId][collateralCoinId] = batchUpdateData.perpetualAssetUpdates[i];
-                
-                // Ensure coin exists in coinIds array
-                bool coinExists = false;
-                for (uint256 j = 0; j < coinIds.length; j++) {
-                    if (coinIds[j] == collateralCoinId) {
-                        coinExists = true;
-                        break;
-                    }
-                }
-                if (!coinExists && collateralCoinId > 0) {
-                    coinIds.push(collateralCoinId);
-                }
+                emit PerpetualAssetUpdated(batchUpdateData.perpetualAssetUpdates[i].subaccountId, collateralCoinId, batchUpdateData.perpetualAssetUpdates[i].crossCollateralAmount, batchUpdateData.perpetualAssetUpdates[i].positions);
             }
         }
 
         lastBatchId = batchId;
+        batchSeqIds[batchId][seqInBatch] = true;
         lastBatchTime = block.timestamp;
         lastAntxChainHeight = antxChainHeight;
         emit BatchUpdated(batchId, antxChainHeight, block.timestamp);
@@ -329,52 +365,5 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         marginAsset = _marginAsset;
         emit MarginAssetAddressUpdated(_marginAsset);
     }
-
-
-    function setExchangeInfo(uint64 exchangeId, string memory symbol, int32 stepSizeScale, int32 tickSizeScale, MarginAsset.RiskTier[] memory riskTiers) external onlySettlementOperator {
-        exchanges[exchangeId] = MarginAsset.Exchange({
-            exchangeId: exchangeId,
-            symbol: symbol,
-            stepSizeScale: stepSizeScale,
-            tickSizeScale: tickSizeScale,
-            riskTiers: riskTiers
-        });
-
-        emit ExchangeInfoUpdated(exchangeId, uint32(uint256(int256(stepSizeScale))), uint32(uint256(int256(tickSizeScale))), 0, 0, riskTiers);
-    }
-
-    function setOraclePrice(uint64 exchangeId, uint256 oraclePrice, uint64 oracleTime) external onlySettlementOperator {
-        oraclePrices[exchangeId] = MarginAsset.OraclePrice({
-            exchangeId: exchangeId,
-            oraclePrice: oraclePrice,
-            oracleTime: oracleTime
-        });
-        emit OraclePriceUpdated(exchangeId, oraclePrice, oracleTime);
-    }
-
-    function setFundingIndex(uint64 exchangeId, int256 fundingIndex) external onlySettlementOperator {
-        fundingIndexes[exchangeId] = MarginAsset.FundingIndex({
-            exchangeId: exchangeId,
-            fundingIndex: fundingIndex
-        });
-        emit FundingIndexUpdated(exchangeId, fundingIndex);
-    }
-
-    function setCoin(uint64 coinId, string memory symbol, int32 stepSizeScale) external onlySettlementOperator {
-        bool existCoin = false;
-        for (uint256 i = 0; i < coinIds.length; i++) {
-            if (coinIds[i] == coinId) {
-                existCoin = true;
-                break;
-            }
-        }
-        if (!existCoin) coinIds.push(coinId);
-
-        coins[coinId] = MarginAsset.Coin({
-            id: coinId,
-            symbol: symbol,
-            stepSizeScale: stepSizeScale
-        });
-        emit CoinInfoUpdated(coinId, symbol, stepSizeScale);
-    }
+   
 }

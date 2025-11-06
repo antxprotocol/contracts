@@ -18,9 +18,11 @@ interface IAsset {
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
     event MarginAssetAddressUpdated(address indexed marginAsset);
     event ExchangeInfoUpdated(uint64 exchangeId, uint32 stepSizeScale, uint32 tickSizeScale, uint256 oraclePrice, uint256 fundingIndex, MarginAsset.RiskTier[] riskTiers);
-    event CoinInfoUpdated(uint64 coinId, string symbol, int32 stepSizeScale);
+    event CoinInfoUpdated(uint64 coinId, string symbol, uint32 stepSizeScale);
     event FundingIndexUpdated(uint64 exchangeId, int256 fundingIndex);
     event OraclePriceUpdated(uint64 exchangeId, uint256 oraclePrice, uint64 oracleTime);
+    event SubaccountUpdated(uint64 subaccountId, bytes32 chainAddress, string clientAccountId, MarginAsset.TradeSetting[] tradeSettings);
+    event PerpetualAssetUpdated(uint64 subaccountId, uint64 collateralCoinId, int64 crossCollateralAmount, MarginAsset.Position[] positions);
     
     // Errors
     error InsufficientUserBalance(uint256 available, uint256 required);

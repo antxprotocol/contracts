@@ -163,11 +163,11 @@ contract MarginAssetTest is Test {
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](2);
         fundingIndices[0] = MarginAsset.FundingIndex({
             exchangeId: 200001,
-            fundingIndex: fundingIndexMap[200001]
+            fundingIndex: fundingIndexMap[200001], fundingIndexTime: 0
         });
         fundingIndices[1] = MarginAsset.FundingIndex({
             exchangeId: 200002,
-            fundingIndex: fundingIndexMap[200002]
+            fundingIndex: fundingIndexMap[200002], fundingIndexTime: 0
         });
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](2);
@@ -186,7 +186,6 @@ contract MarginAssetTest is Test {
             id: 123,
             chainAddress: bytes32(0),
             clientAccountId: "test",
-            isSystemAccount: false,
             tradeSettings: tradeSettings
         });
 
@@ -241,11 +240,11 @@ contract MarginAssetTest is Test {
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](2);
         fundingIndices[0] = MarginAsset.FundingIndex({
             exchangeId: 200001,
-            fundingIndex: fundingIndexMap[200001]
+            fundingIndex: fundingIndexMap[200001], fundingIndexTime: 0
         });
         fundingIndices[1] = MarginAsset.FundingIndex({
             exchangeId: 200002,
-            fundingIndex: fundingIndexMap[200002]
+            fundingIndex: fundingIndexMap[200002], fundingIndexTime: 0
         });
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](2);
@@ -264,7 +263,6 @@ contract MarginAssetTest is Test {
             id: 123,
             chainAddress: bytes32(0),
             clientAccountId: "test",
-            isSystemAccount: false,
             tradeSettings: tradeSettings
         });
 
@@ -316,7 +314,8 @@ contract MarginAssetTest is Test {
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
         fundingIndices[0] = MarginAsset.FundingIndex({
             exchangeId: 200001,
-            fundingIndex: 0 // 初始资金费率指数为0
+            fundingIndex: 0, // 初始资金费率指数为0
+            fundingIndexTime: 0
         });
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
@@ -330,7 +329,6 @@ contract MarginAssetTest is Test {
             id: 123,
             chainAddress: bytes32(0),
             clientAccountId: "test",
-            isSystemAccount: false,
             tradeSettings: tradeSettings
         });
 
@@ -415,11 +413,21 @@ contract MarginAssetTest is Test {
         int256 tv = 993999500000000;
         uint256 imr = 500000000000000;
         uint256 orderFrozenAmount = 0;
+        
+        // Create a minimal CrossGroup for testing
+        MarginAsset.CrossGroup memory crossGroup = MarginAsset.CrossGroup({
+            collateralAmount: 0,
+            positions: new MarginAsset.AssetPosition[](0),
+            imr: imr,
+            mmr: 0,
+            tv: tv
+        });
 
-        uint256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
+        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
             tv,
             imr,
-            orderFrozenAmount
+            orderFrozenAmount,
+            crossGroup
         );
 
         // availableAmount = (TV - IMR - orderFrozenAmount) / PRECISION_SCALE
@@ -427,7 +435,7 @@ contract MarginAssetTest is Test {
         // = 493999500000000 / 1000000
         // = 493999500
         // 但根据精度，应该是 493.9995，即 493999500 (精度6)
-        assertEq(availableAmount, 493999500);
+        assertEq(uint256(availableAmount), 493999500);
     }
 
     /**
@@ -437,11 +445,21 @@ contract MarginAssetTest is Test {
         int256 tv = -1000000000000; // -1 USDT (精度12)
         uint256 imr = 500000000000000;
         uint256 orderFrozenAmount = 0;
+        
+        // Create a minimal CrossGroup for testing
+        MarginAsset.CrossGroup memory crossGroup = MarginAsset.CrossGroup({
+            collateralAmount: 0,
+            positions: new MarginAsset.AssetPosition[](0),
+            imr: imr,
+            mmr: 0,
+            tv: tv
+        });
 
-        uint256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
+        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
             tv,
             imr,
-            orderFrozenAmount
+            orderFrozenAmount,
+            crossGroup
         );
 
         // TV < IMR + orderFrozenAmount，应该返回0
@@ -466,7 +484,7 @@ contract MarginAssetTest is Test {
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
         fundingIndices[0] = MarginAsset.FundingIndex({
             exchangeId: 200001,
-            fundingIndex: 0
+            fundingIndex: 0, fundingIndexTime: 0
         });
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
@@ -480,7 +498,6 @@ contract MarginAssetTest is Test {
             id: 123,
             chainAddress: bytes32(0),
             clientAccountId: "test",
-            isSystemAccount: false,
             tradeSettings: tradeSettings
         });
 
@@ -539,7 +556,7 @@ contract MarginAssetTest is Test {
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
         fundingIndices[0] = MarginAsset.FundingIndex({
             exchangeId: 200001,
-            fundingIndex: fundingIndexMap[200001] // -1000000
+            fundingIndex: fundingIndexMap[200001], fundingIndexTime: 0 // -1000000
         });
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
@@ -553,7 +570,6 @@ contract MarginAssetTest is Test {
             id: 123,
             chainAddress: bytes32(0),
             clientAccountId: "test",
-            isSystemAccount: false,
             tradeSettings: tradeSettings
         });
 
@@ -607,7 +623,7 @@ contract MarginAssetTest is Test {
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
         fundingIndices[0] = MarginAsset.FundingIndex({
             exchangeId: 200001,
-            fundingIndex: 0
+            fundingIndex: 0, fundingIndexTime: 0
         });
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
@@ -621,7 +637,6 @@ contract MarginAssetTest is Test {
             id: 123,
             chainAddress: bytes32(0),
             clientAccountId: "test",
-            isSystemAccount: false,
             tradeSettings: tradeSettings
         });
 

@@ -8,13 +8,13 @@ pragma solidity ^0.8.28;
  */
 library MarginAsset {
     // 精度常量：1000000 (6位小数)
-    uint256 private constant PRECISION_SCALE = 1000000;
+    uint256 private constant PPM_SCALE = 1e6;
 
     // 币种信息
     struct Coin {
         uint64 id;
         string symbol;
-        int32 stepSizeScale;
+        uint32 stepSizeScale;
     }
 
     // 子账号信息结构体
@@ -22,7 +22,6 @@ library MarginAsset {
         uint64 id; // 子账号id，必须大于0
         bytes32 chainAddress; // 子账号链地址
         string clientAccountId; // 客户自定义id，用于幂等校验，最大长度为64
-        bool isSystemAccount; // 是否为系统账号
         TradeSetting[] tradeSettings; // 交易设置
     }
 
@@ -61,8 +60,8 @@ library MarginAsset {
     struct Exchange {
         uint64 exchangeId;              // 交易所ID
         string symbol;                  // 币种符号
-        int32 stepSizeScale;            // 步长精度
-        int32 tickSizeScale;            // 价格精度
+        uint32 stepSizeScale;            // 步长精度
+        uint32 tickSizeScale;            // 价格精度
         RiskTier[] riskTiers;           // 风险档位列表
     }
 
@@ -70,6 +69,7 @@ library MarginAsset {
     struct FundingIndex {
         uint64 exchangeId;              // 交易所ID
         int256 fundingIndex;           // 资金费率指数，精度为 collateralCoin.StepSizeScale + 6
+        uint64 fundingIndexTime;       // 资金费率指数时间
     }
 
     // Oracle价格信息结构体
@@ -79,21 +79,18 @@ library MarginAsset {
         uint64 oracleTime;              // Oracle时间
     }
 
-
     // Asset结构体
     struct Asset {
         uint64 subaccountId;                    // 子账号ID
         uint64 collateralCoinId;                // 抵押品币种ID
         CrossGroup crossGroup;                  // 全仓组
         IsolatedGroup[] isolatedGroups;         // 逐仓组数组
-        uint64[] isolatedGroupExchangeIds;      // 逐仓组对应的交易所ID数组（与isolatedGroups一一对应）
     }
 
     // CrossGroup结构体（全仓组）
     struct CrossGroup {
         int256 collateralAmount;                // 抵押品数量（可为负数），精度 = collateralCoin.StepSizeScale
         AssetPosition[] positions;              // 仓位数组（全仓模式的仓位）
-        uint64[] positionsExchangeIds;          // 仓位对应的交易所ID数组（与positions一一对应）
         uint256 imr;                            // 初始保证金需求，精度 = collateralCoin.StepSizeScale + 6
         uint256 mmr;                            // 维持保证金需求，精度 = collateralCoin.StepSizeScale + 6
         int256 tv;                              // 总价值（可为负数），精度 = collateralCoin.StepSizeScale + 6
@@ -108,6 +105,7 @@ library MarginAsset {
 
     // AssetPosition结构体（资产仓位）
     struct AssetPosition {
+        uint64 exchangeId;                      // 交易所ID
         int256 openSize;                        // 开仓大小，精度 = exchange.StepSizeScale
         int256 openValue;                       // 开仓价值，精度 = collateralCoin.StepSizeScale
         uint256 imr;                            // 初始保证金需求，精度 = collateralCoin.StepSizeScale + 6
@@ -115,10 +113,9 @@ library MarginAsset {
         int256 pv;                              // 仓位价值（带符号），精度 = collateralCoin.StepSizeScale + 6
     }
 
-
     /**
      * @notice 计算跨仓转出可用金额
-     * @dev 计算公式: availableAmount = (TV - IMR - orderFrozenAmount) / PRECISION_SCALE
+     * @dev 计算公式: availableAmount = (TV - IMR - orderFrozenAmount) / PPM_SCALE
      *      如果计算结果小于0，返回0
      *      
      * @param tv 总价值 (Total Value，可为负数)，精度为 collateralCoin.StepSizeScale + 6
@@ -129,8 +126,9 @@ library MarginAsset {
     function getCrossTransferOutAvailableAmount(
         int256 tv,
         uint256 imr,
-        uint256 orderFrozenAmount
-    ) internal pure returns (uint256 availableAmount) {
+        uint256 orderFrozenAmount,
+        CrossGroup memory crossGroup
+    ) internal pure returns (int256 availableAmount) {
         // 检查是否会下溢: 如果 TV < IMR + orderFrozenAmount，返回0
         // 先检查imr + orderFrozenAmount是否溢出，如果溢出则直接返回0
         if (imr > type(uint256).max - orderFrozenAmount) {
@@ -145,15 +143,20 @@ library MarginAsset {
             return 0;
         }
         
-        // 计算: (TV - IMR - orderFrozenAmount) / PRECISION_SCALE
-        int256 result = (tv - requiredAmount) / int256(PRECISION_SCALE);
+        // 计算: (TV - IMR - orderFrozenAmount) / PPM_SCALE
+        int256 result = (tv - requiredAmount) / int256(PPM_SCALE);
         
-        // 如果结果小于0，返回0
+        int256 tmpValue = crossGroup.collateralAmount;
+        for (uint256 i = 0; i < crossGroup.positions.length; i++) {
+            tmpValue = tmpValue + crossGroup.positions[i].openValue;
+        }
+        if (result < tmpValue) {
+            return 0;
+        }
         if (result < 0) {
             return 0;
         }
-        
-        return uint256(result);
+        return result;
     }
 
     /**
@@ -165,7 +168,7 @@ library MarginAsset {
         uint32 leverage
     ) internal pure returns (uint32 initialMarginRatioPpm) {
         require(leverage > 0, "leverage must be greater than 0");
-        return uint32(PRECISION_SCALE / uint256(leverage));
+        return uint32(PPM_SCALE / uint256(leverage));
     }
 
     /**
@@ -394,7 +397,7 @@ library MarginAsset {
         // TV = new(big.Int).Mul(new(big.Int).SetInt64(perpetualAsset.CrossCollateralAmount), big.NewInt(1000000))
         int64 crossCollateralAmount = perpetualAsset.crossCollateralAmount;
         asset.crossGroup.collateralAmount = int256(crossCollateralAmount);
-        asset.crossGroup.tv = int256(crossCollateralAmount) * int256(PRECISION_SCALE);
+        asset.crossGroup.tv = int256(crossCollateralAmount) * int256(PPM_SCALE);
         asset.crossGroup.imr = 0;
         asset.crossGroup.mmr = 0;
         
@@ -487,18 +490,18 @@ library MarginAsset {
                 int256(positionInput.openSize),
                 cacheFundingIndex,
                 fundingIndex,
-                uint32(uint256(int256(exchange.stepSizeScale))),
-                uint32(uint256(int256(exchange.tickSizeScale))),
-                uint32(uint256(int256(collateralCoin.stepSizeScale)))
+                exchange.stepSizeScale,
+                exchange.tickSizeScale,
+                collateralCoin.stepSizeScale
             );
 
             // 计算仓位价值：positionValue = (openSize * oraclePrice) / (10^(stepSizeScale + tickSizeScale - coinStepSizeScale))
             int256 positionValue = calculatePositionValue(
                 int256(positionInput.openSize),
                 oraclePrice,
-                uint32(uint256(int256(exchange.stepSizeScale))),
-                uint32(uint256(int256(exchange.tickSizeScale))),
-                uint32(uint256(int256(collateralCoin.stepSizeScale)))
+                exchange.stepSizeScale,
+                exchange.tickSizeScale,
+                collateralCoin.stepSizeScale
             );
             
             uint256 positionValueAbs = absInt(positionValue);
@@ -516,12 +519,13 @@ library MarginAsset {
             uint256 positionIMR = calculatePositionIMR(positionValueAbs, initialMarginRatioPpm);
             uint256 positionMMR = calculatePositionMMR(positionValueAbs, riskTier.maintenanceMarginRatioPpm);
             
-            // 计算PV：PV = positionValue * PRECISION_SCALE（带符号）
+            // 计算PV：PV = positionValue * PPM_SCALE（带符号）
             // Go代码：PV: new(big.Int).Mul(positionValue, big.NewInt(1000000))
-            int256 positionPV = positionValue * int256(PRECISION_SCALE);
+            int256 positionPV = positionValue * int256(PPM_SCALE);
 
             // 创建AssetPosition对象
             AssetPosition memory marginPosition = AssetPosition({
+                exchangeId: positionInput.exchangeId,
                 openSize: int256(positionInput.openSize),
                 openValue: int256(positionInput.openValue),
                 imr: positionIMR,
@@ -555,13 +559,13 @@ library MarginAsset {
                 // big.Int.Div 对于负数也是向下取整
                 int256 fundingAmountNormalized;
                 if (fundingAmount >= 0) {
-                    fundingAmountNormalized = fundingAmount / int256(PRECISION_SCALE);
+                    fundingAmountNormalized = fundingAmount / int256(PPM_SCALE);
                 } else {
                     // 负数向下取整：对于负数，big.Int.Div是向下取整
                     uint256 absFunding = absInt(fundingAmount);
-                    uint256 quotient = absFunding / PRECISION_SCALE;
+                    uint256 quotient = absFunding / PPM_SCALE;
                     // 如果有余数，需要加1（向下取整）
-                    if (absFunding % PRECISION_SCALE != 0) {
+                    if (absFunding % PPM_SCALE != 0) {
                         quotient += 1;
                     }
                     fundingAmountNormalized = -int256(quotient);
@@ -573,7 +577,7 @@ library MarginAsset {
                 
                 // 创建IsolatedGroup
                 // Go代码：TV: new(big.Int).Add(new(big.Int).Mul(collateralAmount, big.NewInt(1000000)), marginPosition.PV)
-                int256 isolatedTV = collateralAmount * int256(PRECISION_SCALE) + positionPV;
+                int256 isolatedTV = collateralAmount * int256(PPM_SCALE) + positionPV;
                 isolatedGroups[isolatedGroupCount] = IsolatedGroup({
                     collateralAmount: collateralAmount,
                     position: marginPosition,
@@ -594,12 +598,12 @@ library MarginAsset {
         if (crossFundingAmount != 0) {
             int256 tmpAmount;
             if (crossFundingAmount >= 0) {
-                tmpAmount = crossFundingAmount / int256(PRECISION_SCALE);
+                tmpAmount = crossFundingAmount / int256(PPM_SCALE);
             } else {
                 // 负数向下取整
                 uint256 absFunding = absInt(crossFundingAmount);
-                uint256 quotient = absFunding / PRECISION_SCALE;
-                if (absFunding % PRECISION_SCALE != 0) {
+                uint256 quotient = absFunding / PPM_SCALE;
+                if (absFunding % PPM_SCALE != 0) {
                     quotient += 1;
                 }
                 tmpAmount = -int256(quotient);
@@ -610,7 +614,7 @@ library MarginAsset {
             // crossGroup.CollateralAmount = new(big.Int).Add(crossGroup.CollateralAmount, tmpAmount)
             // crossGroup.TV = new(big.Int).Add(crossGroup.TV, new(big.Int).Mul(tmpAmount, big.NewInt(1000000)))
             asset.crossGroup.collateralAmount += tmpAmount;
-            asset.crossGroup.tv += tmpAmount * int256(PRECISION_SCALE);
+            asset.crossGroup.tv += tmpAmount * int256(PPM_SCALE);
         }
 
         // 调整CrossGroup的positions数组大小为实际使用的大小
@@ -621,7 +625,6 @@ library MarginAsset {
             finalCrossPositionsExchangeIds[i] = crossPositionsExchangeIds[i];
         }
         asset.crossGroup.positions = finalCrossPositions;
-        asset.crossGroup.positionsExchangeIds = finalCrossPositionsExchangeIds;
 
         // 调整IsolatedGroup数组大小为实际使用的大小
         IsolatedGroup[] memory finalIsolatedGroups = new IsolatedGroup[](isolatedGroupCount);
@@ -632,7 +635,6 @@ library MarginAsset {
         }
         
         asset.isolatedGroups = finalIsolatedGroups;
-        asset.isolatedGroupExchangeIds = finalIsolatedGroupExchangeIds;
     }
 }
 
@@ -658,7 +660,7 @@ contract MarginAssetCalculator {
         MarginAsset.FundingIndex[] memory fundingIndices,
         MarginAsset.Subaccount memory subaccount,
         MarginAsset.PerpetualAsset memory perpetualAsset
-    ) external pure returns (uint256 availableAmount) {
+    ) external pure returns (int256 availableAmount) {
         MarginAsset.Asset memory asset = MarginAsset.newAsset(
             collateralCoin,
             exchanges,
@@ -675,7 +677,8 @@ contract MarginAssetCalculator {
         return MarginAsset.getCrossTransferOutAvailableAmount(
             asset.crossGroup.tv,
             asset.crossGroup.imr,
-            orderFrozenAmount
+            orderFrozenAmount,
+            asset.crossGroup
         );
     }
 
