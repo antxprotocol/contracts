@@ -50,9 +50,6 @@ contract AssetScript is Script {
         // set margin asset
         asset.setMarginAsset(marginAsset);
 
-        // set global coin step size scale
-        asset.setGlobalCoinStepSizeScale(6);
-
         vm.stopBroadcast();
     }
 }

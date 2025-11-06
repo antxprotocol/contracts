@@ -16,17 +16,9 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     using MarginAsset for MarginAsset.Asset;
 
     // User asset update information struct
-    struct UserAssetUpdate {
-        uint64 subAccountId;                    // Sub account ID
-        bytes32 user;                           // User address
-        UserAssetInfo userAssetInfo;            // User asset info
-    }
-
-    struct UserAssetInfo {
-        int64 crossCollateralAmount;            // Cross margin collateral amount with precision of collateralCoin.StepSizeScale
-        uint256 orderFrozenAmount;              // Order frozen amount with precision of collateralCoin.StepSizeScale + 6
-        MarginAsset.TradeSetting[] tradeSettings; // Trade settings list
-        MarginAsset.PositionInput[] positions;  // Position list
+    struct BatchUpdateData {
+        MarginAsset.Subaccount []subaccountUpdates;
+        MarginAsset.PerpetualAsset []perpetualAssetUpdates;
     }
 
     IERC20 public immutable USDC;
@@ -34,18 +26,22 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     address public systemAddress;
     address public settlementOperator;
     address public withdrawOperator;
-    mapping(bytes32 => UserAssetInfo) public userInfos;
-    mapping(uint64 => bytes32) public userSubAccountIdToAddress;
     uint256 public lastBatchId;
     uint256 public lastBatchTime;
     uint256 public lastAntxChainHeight;
     IEd25519Oracle public ed25519Oracle;
     uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days; 
 
-    // MarginAsset calculator info
+    // MarginAsset storage info
     address public marginAsset;
-    uint32 public globalCoinStepSizeScale;
-    mapping(uint64 => MarginAsset.ExchangeInfo) public globalExchangeInfos;
+    mapping(uint64 => MarginAsset.Coin) public coins;
+    uint64[] public coinIds;
+    mapping(uint64 => MarginAsset.Exchange) public exchanges;
+    mapping(uint64 => MarginAsset.FundingIndex) public fundingIndexes;
+    mapping(uint64 => MarginAsset.OraclePrice) public oraclePrices;
+    mapping(uint64 => MarginAsset.Subaccount) public subaccounts;
+    mapping(uint64 => mapping(uint64 => MarginAsset.PerpetualAsset)) public perpetualAssets;
+    mapping(bytes32 => uint64) public addressToSubAccountId; // user => subaccountId (reverse mapping)
 
     modifier validAddress(address addr) {
         if (addr == address(0)) revert ZeroAddressNotAllowed();
@@ -76,20 +72,22 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         USDC = IERC20(_USDC);
     }
 
-    function batchWithdraw(uint256 []memory clientOrderIds,bytes32 []memory users, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
-        if (users.length != amounts.length) revert UserAndAmountLengthNotMatch();
-        if (users.length != signatures.length) revert UserAndSignatureLengthNotMatch();
+    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
+        if (subaccountIds.length != amounts.length) revert UserAndAmountLengthNotMatch();
+        if (subaccountIds.length != signatures.length) revert UserAndSignatureLengthNotMatch();
 
-        for (uint256 i = 0; i < users.length; i++) {
-            _userWithdraw(clientOrderIds[i],users[i],amounts[i],signatures[i],false,signatureType);
-            emit UserWithdraw(clientOrderIds[i],users[i],amounts[i]);
+        for (uint64 i = 0; i < subaccountIds.length; i++) {
+            bytes32 user = subaccounts[subaccountIds[i]].chainAddress;
+            _userWithdraw(clientOrderIds[i],user,amounts[i],signatures[i],false,signatureType);
+            emit UserWithdraw(clientOrderIds[i],user,amounts[i]);
         }
     }
 
-    function forceWithdraw(bytes32 user,uint256 amount,SignatureType signatureType,bytes memory signatures) external nonReentrant validAmount(amount) {
+    function forceWithdraw(uint64 subaccountId,uint256 amount,SignatureType signatureType,bytes memory signatures) external nonReentrant validAmount(amount) {
         // check time lock
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
         // force withdraw
+        bytes32 user = subaccounts[subaccountId].chainAddress;
         _userWithdraw(0, user, amount, signatures, true, signatureType);
         emit ForceWithdraw(user, amount);
     }
@@ -125,23 +123,81 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
     function _calculateAvailableAmount(bytes32 user) internal view returns (uint256) {
-        UserAssetInfo memory userAssetInfo = userInfos[user];
-        if (userAssetInfo.crossCollateralAmount <= 0) return 0;
-        if (userAssetInfo.positions.length == 0) return uint256(uint64(userAssetInfo.crossCollateralAmount));
+        // 直接通过反向映射查找subaccountId
+        uint64 subaccountId = addressToSubAccountId[user];
+        if (subaccountId == 0) return 0;
+        
+        MarginAsset.Subaccount memory subaccount = subaccounts[subaccountId];
+        if (subaccount.id == 0) return 0;
 
-        MarginAsset.ExchangeInfo[] memory userExchangeInfo = new MarginAsset.ExchangeInfo[](userAssetInfo.tradeSettings.length);
-        for (uint256 i = 0; i < userAssetInfo.tradeSettings.length; i++) {
-            userExchangeInfo[i] = globalExchangeInfos[userAssetInfo.tradeSettings[i].exchangeId];
+        // 查找对应的PerpetualAsset（遍历所有可能的collateralCoinId）
+        MarginAsset.PerpetualAsset memory perpetualAsset;
+        uint64 collateralCoinId = 0;
+        bool foundPerpetualAsset = false;
+        for (uint256 i = 0; i < coinIds.length; i++) {
+            uint64 coinId = coinIds[i];
+            MarginAsset.PerpetualAsset memory pa = perpetualAssets[subaccountId][coinId];
+            if (pa.subaccountId == subaccountId && pa.collateralCoinId > 0) {
+                perpetualAsset = pa;
+                collateralCoinId = pa.collateralCoinId;
+                foundPerpetualAsset = true;
+                break;
+            }
         }
+        
+        if (!foundPerpetualAsset) return 0;
+        if (perpetualAsset.crossCollateralAmount <= 0) return 0;
+        if (perpetualAsset.positions.length == 0) return uint256(uint64(perpetualAsset.crossCollateralAmount));
+
+        // 获取抵押品币种信息
+        MarginAsset.Coin memory collateralCoin = coins[collateralCoinId];
+        if (collateralCoin.id == 0) {
+            // Coin未设置，无法计算可用金额
+            revert("Coin not found");
+        }
+
+        // 构建Exchange数组
+        MarginAsset.Exchange[] memory exchangeArray = new MarginAsset.Exchange[](subaccount.tradeSettings.length);
+        for (uint256 i = 0; i < subaccount.tradeSettings.length; i++) {
+            uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
+            exchangeArray[i] = exchanges[exchangeId];
+        }
+
+        // 构建OraclePrice数组
+        MarginAsset.OraclePrice[] memory oraclePriceArray = new MarginAsset.OraclePrice[](subaccount.tradeSettings.length);
+        for (uint256 i = 0; i < subaccount.tradeSettings.length; i++) {
+            uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
+            oraclePriceArray[i] = oraclePrices[exchangeId];
+        }
+
+        // 构建FundingIndex数组
+        MarginAsset.FundingIndex[] memory fundingIndexArray = new MarginAsset.FundingIndex[](subaccount.tradeSettings.length);
+        for (uint256 i = 0; i < subaccount.tradeSettings.length; i++) {
+            uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
+            fundingIndexArray[i] = fundingIndexes[exchangeId];
+        }
+
+        // 构建Subaccount（使用存储中的subaccount，但更新chainAddress）
+        MarginAsset.Subaccount memory subaccountForCalc = MarginAsset.Subaccount({
+            id: subaccountId,
+            chainAddress: user,
+            clientAccountId: subaccount.clientAccountId,
+            isSystemAccount: subaccount.isSystemAccount,
+            tradeSettings: subaccount.tradeSettings
+        });
+
+        // orderFrozenAmount暂时设为0，需要从其他地方获取
+        uint256 orderFrozenAmount = 0;
 
         MarginAssetCalculator calculator = MarginAssetCalculator(marginAsset);
         return calculator.getCrossTransferOutAvailableAmount(
-            userAssetInfo.crossCollateralAmount,
-            globalCoinStepSizeScale,
-            userAssetInfo.orderFrozenAmount,
-            userAssetInfo.positions,
-            userAssetInfo.tradeSettings,
-            userExchangeInfo
+            collateralCoin,
+            exchangeArray,
+            oraclePriceArray,
+            fundingIndexArray,
+            subaccountForCalc,
+            perpetualAsset,
+            orderFrozenAmount
         );
     }
 
@@ -150,9 +206,9 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
     function availableAmountBySubAccountId(uint64 subAccountId) public view returns (uint256) {
-        bytes32 user = userSubAccountIdToAddress[subAccountId];
-        if (user == bytes32(0)) revert UserNotFound();
-        return _calculateAvailableAmount(user);
+        MarginAsset.Subaccount memory subaccount = subaccounts[subAccountId];
+        if (subaccount.id == 0) revert UserNotFound();
+        return _calculateAvailableAmount(subaccount.chainAddress);
     }
 
     function emergencyWithdraw(
@@ -196,29 +252,40 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
      * @notice Batch update user asset info
      * @param batchId Batch ID, must equal lastBatchId + 1
      * @param antxChainHeight AntX chain height
-     * @param userUpdates Array of user asset update information, each element contains user's asset information
+     * @param batchUpdateData Batch update data
      */
     function batchUpdate(
         uint256 batchId,
         uint256 antxChainHeight,
-        UserAssetUpdate[] memory userUpdates
+        BatchUpdateData memory batchUpdateData
     ) public onlySettlementOperator {
         if (batchId != lastBatchId + 1) revert InvalidBatchId();
         if (antxChainHeight <= lastAntxChainHeight) revert InvalidAntxChainHeight();
         if (marginAsset == address(0)) revert ZeroAddressNotAllowed();
         
-
-        for (uint256 i = 0; i < userUpdates.length; i++) {
-            UserAssetUpdate memory update = userUpdates[i];
-
-            bytes32 user = userSubAccountIdToAddress[update.subAccountId];
-            if (user == bytes32(0)) {
-                // set user and sub account id to mapping
-                userSubAccountIdToAddress[update.subAccountId] = update.user;
-            } 
-
-            // create or update user asset info
-            userInfos[update.user] = update.userAssetInfo;
+        if (batchUpdateData.subaccountUpdates.length > 0) {
+            for (uint256 i = 0; i < batchUpdateData.subaccountUpdates.length; i++) {
+                addressToSubAccountId[batchUpdateData.subaccountUpdates[i].chainAddress] = batchUpdateData.subaccountUpdates[i].id;
+                subaccounts[batchUpdateData.subaccountUpdates[i].id] = batchUpdateData.subaccountUpdates[i];
+            }
+        }
+        if (batchUpdateData.perpetualAssetUpdates.length > 0) {
+            for (uint256 i = 0; i < batchUpdateData.perpetualAssetUpdates.length; i++) {
+                uint64 collateralCoinId = batchUpdateData.perpetualAssetUpdates[i].collateralCoinId;
+                perpetualAssets[batchUpdateData.perpetualAssetUpdates[i].subaccountId][collateralCoinId] = batchUpdateData.perpetualAssetUpdates[i];
+                
+                // Ensure coin exists in coinIds array
+                bool coinExists = false;
+                for (uint256 j = 0; j < coinIds.length; j++) {
+                    if (coinIds[j] == collateralCoinId) {
+                        coinExists = true;
+                        break;
+                    }
+                }
+                if (!coinExists && collateralCoinId > 0) {
+                    coinIds.push(collateralCoinId);
+                }
+            }
         }
 
         lastBatchId = batchId;
@@ -263,25 +330,54 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     function setMarginAsset(address _marginAsset) external onlyOwner validAddress(_marginAsset) {
         if (_marginAsset == address(0)) revert ZeroAddressNotAllowed();
         marginAsset = _marginAsset;
-        emit MarginAssetUpdated(_marginAsset);
+        emit MarginAssetAddressUpdated(_marginAsset);
     }
 
-    function setGlobalCoinStepSizeScale(uint32 coinStepSizeScale) external onlyOwner {
-        if (coinStepSizeScale == 0) revert ZeroAmountNotAllowed();
-        globalCoinStepSizeScale = coinStepSizeScale;
-        emit GlobalCoinStepSizeScaleUpdated(coinStepSizeScale);
-    }
 
-    function setExchangeInfo(uint64 exchangeId, uint32 stepSizeScale, uint32 tickSizeScale, uint256 oraclePrice, uint256 fundingIndex, MarginAsset.RiskTier[] memory riskTiers) external onlySettlementOperator {
-        globalExchangeInfos[exchangeId] = MarginAsset.ExchangeInfo({
+    function setExchangeInfo(uint64 exchangeId, string memory symbol, int32 stepSizeScale, int32 tickSizeScale, MarginAsset.RiskTier[] memory riskTiers) external onlySettlementOperator {
+        exchanges[exchangeId] = MarginAsset.Exchange({
             exchangeId: exchangeId,
+            symbol: symbol,
             stepSizeScale: stepSizeScale,
             tickSizeScale: tickSizeScale,
-            oraclePrice: oraclePrice,
-            fundingIndex: fundingIndex,
             riskTiers: riskTiers
         });
 
-        emit GlobalExchangeInfoUpdated(exchangeId, stepSizeScale, tickSizeScale, oraclePrice, fundingIndex, riskTiers);
+        emit ExchangeInfoUpdated(exchangeId, uint32(uint256(int256(stepSizeScale))), uint32(uint256(int256(tickSizeScale))), 0, 0, riskTiers);
+    }
+
+    function setOraclePrice(uint64 exchangeId, uint256 oraclePrice, uint64 oracleTime) external onlySettlementOperator {
+        oraclePrices[exchangeId] = MarginAsset.OraclePrice({
+            exchangeId: exchangeId,
+            oraclePrice: oraclePrice,
+            oracleTime: oracleTime
+        });
+        emit OraclePriceUpdated(exchangeId, oraclePrice, oracleTime);
+    }
+
+    function setFundingIndex(uint64 exchangeId, int256 fundingIndex) external onlySettlementOperator {
+        fundingIndexes[exchangeId] = MarginAsset.FundingIndex({
+            exchangeId: exchangeId,
+            fundingIndex: fundingIndex
+        });
+        emit FundingIndexUpdated(exchangeId, fundingIndex);
+    }
+
+    function setCoin(uint64 coinId, string memory symbol, int32 stepSizeScale) external onlySettlementOperator {
+        bool existCoin = false;
+        for (uint256 i = 0; i < coinIds.length; i++) {
+            if (coinIds[i] == coinId) {
+                existCoin = true;
+                break;
+            }
+        }
+        if (!existCoin) coinIds.push(coinId);
+
+        coins[coinId] = MarginAsset.Coin({
+            id: coinId,
+            symbol: symbol,
+            stepSizeScale: stepSizeScale
+        });
+        emit CoinInfoUpdated(coinId, symbol, stepSizeScale);
     }
 }

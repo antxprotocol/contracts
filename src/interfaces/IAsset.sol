@@ -16,10 +16,12 @@ interface IAsset {
     event EmergencyWithdraw(address indexed to, uint256 amount);
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
-    event MarginAssetUpdated(address indexed marginAsset);
-    event GlobalCoinStepSizeScaleUpdated(uint32 coinStepSizeScale);
-    event GlobalExchangeInfoUpdated(uint64 exchangeId, uint32 stepSizeScale, uint32 tickSizeScale, uint256 oraclePrice, uint256 fundingIndex, MarginAsset.RiskTier[] riskTiers);
-
+    event MarginAssetAddressUpdated(address indexed marginAsset);
+    event ExchangeInfoUpdated(uint64 exchangeId, uint32 stepSizeScale, uint32 tickSizeScale, uint256 oraclePrice, uint256 fundingIndex, MarginAsset.RiskTier[] riskTiers);
+    event CoinInfoUpdated(uint64 coinId, string symbol, int32 stepSizeScale);
+    event FundingIndexUpdated(uint64 exchangeId, int256 fundingIndex);
+    event OraclePriceUpdated(uint64 exchangeId, uint256 oraclePrice, uint64 oracleTime);
+    
     // Errors
     error InsufficientUserBalance(uint256 available, uint256 required);
     error InsufficientSystemBalance(address systemAddress, uint256 available, uint256 required);
@@ -52,8 +54,8 @@ interface IAsset {
     }
     
     // State-changing functions
-    function batchWithdraw(uint256 []memory clientOrderIds,bytes32 []memory users, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external;
-    function forceWithdraw(bytes32 user,uint256 amount, SignatureType signatureType, bytes memory signatures) external;
+    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external;
+    function forceWithdraw(uint64 subaccountId,uint256 amount, SignatureType signatureType, bytes memory signatures) external;
     function setSigners(address[] memory _signers) external;
     function setSettlementAddress(address _settlementAddress) external;
     function setWithdrawOperator(address _withdrawOperator) external;
