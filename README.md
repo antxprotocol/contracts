@@ -219,3 +219,13 @@ curl -X 'GET' \
 
 Check overall transaction status, name=DELIVERED message=Executor transaction confirmed
 Check source, status=SUCCESS + from + payload(toAddress+Amount)
+
+
+
+### stragate info
+
+```
+https://stargateprotocol.gitbook.io/stargate/developers/contract-addresses/testnet-faucet
+
+https://stargateprotocol.gitbook.io/stargate/developers/contract-addresses/testnet
+```

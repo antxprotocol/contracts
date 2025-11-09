@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
-import {Ed25519Oracle} from "../src/oracle/oracle.sol";
+import {Ed25519Oracle} from "../src/oracle/Ed25519Oracle.sol";
 
 /**
  * @title Ed25519OracleScript

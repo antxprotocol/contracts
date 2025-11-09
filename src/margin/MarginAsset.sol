@@ -698,8 +698,7 @@ contract MarginAssetCalculator {
         MarginAsset.OraclePrice[] memory oraclePrices,
         MarginAsset.FundingIndex[] memory fundingIndices,
         MarginAsset.Subaccount memory subaccount,
-        MarginAsset.PerpetualAsset memory perpetualAsset,
-        uint256 orderFrozenAmount
+        MarginAsset.PerpetualAsset memory perpetualAsset
     ) external pure returns (MarginAsset.Asset memory asset) {
         return MarginAsset.newAsset(
             collateralCoin,
