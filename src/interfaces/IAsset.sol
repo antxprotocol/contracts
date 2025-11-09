@@ -6,13 +6,10 @@ import "../margin/MarginAsset.sol";
 interface IAsset {
     // Events
     event SignersUpdated(address[] signers);
-    event SystemAddressUpdated(address indexed systemAddress);
-    event LastBatchTimeUpdated(uint256 time);
     event UserWithdraw(uint256 clientOrderId,bytes32 indexed user, uint256 amount);
     event ForceWithdraw(bytes32 indexed user, uint256 amount);
     event BatchUpdated(uint256 batchId, uint256 antxChainHeight, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
-    event UpdateUserBalance(uint256 batchId, bytes32 indexed user, uint256 amount);
     event EmergencyWithdraw(address indexed to, uint256 amount);
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
@@ -26,17 +23,13 @@ interface IAsset {
     
     // Errors
     error InsufficientUserBalance(uint256 available, uint256 required);
-    error InsufficientSystemBalance(address systemAddress, uint256 available, uint256 required);
     error ZeroAddressNotAllowed();
     error ZeroAmountNotAllowed();
-    error FeeExceedsLimit(uint256 current, uint256 toAdd, uint256 limit);
-    error TransferFailed();
     error TimeLockNotPassed();
     error InvalidTime(uint256 time);
     error UserAndAmountLengthNotMatch();
     error UserAndSignatureLengthNotMatch();
     error InvalidUserSignature();
-    error InvalidToken();
     error InvalidAllSignersLength();
     error InvalidSignaturesLength();
     error SameSigner();

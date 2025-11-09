@@ -27,7 +27,6 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
 
     IERC20 public immutable USDC;
     address[] public signers;
-    address public systemAddress;
     address public settlementOperator;
     address public withdrawOperator;
     uint256 public lastBatchId;

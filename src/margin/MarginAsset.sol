@@ -306,62 +306,6 @@ library MarginAsset {
     }
 
     /**
-     * @notice 计算委托单开仓部分冻结金额
-     * @dev 根据Go代码中的CalculateOpenOrderFrozenAmount实现
-     *      计算公式：orderOpenSize x orderPrice x (initialMarginRatio + feeRate)
-     *      精度：coin.StepSizeScale + 6
-     * @param orderSize 订单大小，精度 = exchange.StepSizeScale
-     * @param orderPrice 订单价格，精度 = exchange.TickSizeScale
-     * @param orderLeverage 订单杠杆倍数
-     * @param orderFeeRatePpm 订单手续费率（单位：百万分之一）
-     * @param stepSizeScale 步长精度
-     * @param tickSizeScale 价格精度
-     * @param coinStepSizeScale 币种步长精度
-     * @return orderFrozenAmount 订单冻结金额，精度 = coinStepSizeScale + 6
-     */
-    function calculateOrderFrozenAmount(
-        uint256 orderSize,
-        uint256 orderPrice,
-        uint32 orderLeverage,
-        uint32 orderFeeRatePpm,
-        uint32 stepSizeScale,
-        uint32 tickSizeScale,
-        uint32 coinStepSizeScale) public pure returns (uint256 orderFrozenAmount) {
-        require(orderSize > 0, "order size must be greater than 0");
-        require(orderPrice > 0, "order price must be greater than 0");
-        require(orderLeverage > 0, "order leverage must be greater than 0");
-        
-        // 计算初始保证金率（单位：百万分之一）
-        // Go代码：initialMarginRatioPpm, err := LeverageToInitialMarginRatioPpm(orderLeverage)
-        uint32 initialMarginRatioPpm = leverageToInitialMarginRatioPpm(orderLeverage);
-        
-        // 计算订单价值：orderValue = orderSize * orderPrice
-        // Go代码：orderValue := new(big.Int).Mul(orderSize, orderPrice)
-        uint256 orderValue = orderSize * orderPrice;
-        
-        // 将订单价值做精度转换：从 (stepSizeScale + tickSizeScale) 转换为 coinStepSizeScale
-        // Go代码：orderValueNormalized, err := numutil.NormalizeScale(new(big.Int), orderValue, exchange.StepSizeScale+exchange.TickSizeScale, coin.StepSizeScale)
-        uint256 orderValueNormalized;
-        uint32 sourceScale = stepSizeScale + tickSizeScale;
-        if (sourceScale > coinStepSizeScale) {
-            uint32 divisor = sourceScale - coinStepSizeScale;
-            orderValueNormalized = orderValue / (10 ** divisor);
-        } else if (sourceScale < coinStepSizeScale) {
-            uint32 multiplier = coinStepSizeScale - sourceScale;
-            orderValueNormalized = orderValue * (10 ** multiplier);
-        } else {
-            orderValueNormalized = orderValue;
-        }
-        
-        // 计算订单冻结金额：orderFrozenAmount = orderValueNormalized * (initialMarginRatioPpm + orderFeeRatePpm)
-        // Go代码：return x.Mul(orderValueNormalized, new(big.Int).Add(big.NewInt(int64(initialMarginRatioPpm)), big.NewInt(int64(orderFeeRatePpm))))
-        uint256 marginAndFeeRate = uint256(initialMarginRatioPpm) + uint256(orderFeeRatePpm);
-        orderFrozenAmount = orderValueNormalized * marginAndFeeRate;
-        
-        return orderFrozenAmount;
-    }
-
-    /**
      * @notice 新建Asset对象（从原始数据计算）
      * @dev 根据Go代码中的NewAsset函数实现，完全一致的输入输出参数和算法逻辑
      * @param collateralCoin 抵押品币种信息

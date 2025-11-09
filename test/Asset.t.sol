@@ -187,12 +187,13 @@ contract AssetTest is Test {
     }
 
     // Helper function to create UserAssetUpdate (deprecated, use createBatchUpdateData instead)
-    function createUserAssetUpdate(
-        bytes32 user,
-        uint256 availableAmount
-    ) internal pure returns (Asset.BatchUpdateData memory) {
-        return createBatchUpdateData(user, availableAmount);
-    }
+    // This function is kept for backward compatibility but is no longer used
+    // function createUserAssetUpdate(
+    //     bytes32 user,
+    //     uint256 availableAmount
+    // ) internal pure returns (Asset.BatchUpdateData memory) {
+    //     return createBatchUpdateData(user, availableAmount);
+    // }
 
     function setUp() public {
         // Initialize private keys and addresses
