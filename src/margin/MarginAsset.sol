@@ -3,125 +3,125 @@ pragma solidity ^0.8.28;
 
 /**
  * @title MarginAsset
- * @notice 实现保证金资产相关计算，包括跨仓转出可用金额计算
- * @dev 完整实现了NewAsset的逻辑，能够从原始数据构造Asset对象并计算可用金额
+ * @notice Implements margin asset related calculations, including cross-margin transfer out available amount calculation
+ * @dev Fully implements the NewAsset logic, able to construct Asset objects from raw data and calculate available amounts
  */
 library MarginAsset {
-    // 精度常量：1000000 (6位小数)
+    // Precision constant: 1000000 (6 decimal places)
     uint256 private constant PPM_SCALE = 1e6;
 
-    // 币种信息
+    // Coin information
     struct Coin {
         uint64 id;
         string symbol;
         uint32 stepSizeScale;
     }
 
-    // 子账号信息结构体
+    // Subaccount information struct
     struct Subaccount {
-        uint64 id; // 子账号id，必须大于0
-        bytes32 chainAddress; // 子账号链地址
-        string clientAccountId; // 客户自定义id，用于幂等校验，最大长度为64
-        TradeSetting[] tradeSettings; // 交易设置
+        uint64 id; // Subaccount ID, must be greater than 0
+        bytes32 chainAddress; // Subaccount chain address
+        string clientAccountId; // Client-defined ID for idempotency check, maximum length 64
+        TradeSetting[] tradeSettings; // Trading settings
     }
 
-    // 仓位信息结构体
+    // Position information struct
     struct Position {
-        uint64 exchangeId; // 交易所ID
-        int64 openSize;   // 开仓仓位大小，多仓为正数，空仓为负数
-        int64 openValue;  // 开仓价值，多仓为正数，空仓为负数
-        int64 isolatedCollateralAmount;  // 逐仓抵押品数量（仅逐仓模式有效）
-        int256 cacheFundingIndex;  // 缓存的资金费率指数（可为负数），精度为 collateralCoin.StepSizeScale + 6
+        uint64 exchangeId; // Exchange ID
+        int64 openSize;   // Open position size, long positions are positive, short positions are negative
+        int64 openValue;  // Open value, long positions are positive, short positions are negative
+        int64 isolatedCollateralAmount;  // Isolated margin collateral amount (only valid for isolated margin mode)
+        int256 cacheFundingIndex;  // Cached funding rate index (can be negative), precision = collateralCoin.StepSizeScale + 6
     }
 
-    // 永续合约资产结构体
+    // Perpetual asset struct
     struct PerpetualAsset {
-        uint64 subaccountId; // 子账号ID
-        uint64 collateralCoinId; // 抵押品币种ID
-        int64 crossCollateralAmount; // 全仓抵押品数量
-        Position[] positions; // 仓位列表
+        uint64 subaccountId; // Subaccount ID
+        uint64 collateralCoinId; // Collateral coin ID
+        int64 crossCollateralAmount; // Cross-margin collateral amount
+        Position[] positions; // Position list
     }
 
-    // 风险档位结构体
+    // Risk tier struct
     struct RiskTier {
-        uint32 maxLeverage;                  // 最大杠杆
-        uint32 maintenanceMarginRatioPpm;    // 维持保证金率，单位：百万分之一
-        uint64 positionValueUpperBound;      // 最大持仓价值
+        uint32 maxLeverage;                  // Maximum leverage
+        uint32 maintenanceMarginRatioPpm;    // Maintenance margin ratio, unit: parts per million
+        uint64 positionValueUpperBound;      // Maximum position value
     }
 
-    // 交易设置结构体
+    // Trading settings struct
     struct TradeSetting {
-        uint64 exchangeId;  // 交易所ID
-        uint32 leverage;   // 杠杆倍数
-        uint8 marginMode;  // 保证金模式：1=全仓，2=逐仓
+        uint64 exchangeId;  // Exchange ID
+        uint32 leverage;   // Leverage multiplier
+        uint8 marginMode;  // Margin mode: 1=cross-margin, 2=isolated-margin
     }
 
-    // 交易所信息结构体
+    // Exchange information struct
     struct Exchange {
-        uint64 exchangeId;              // 交易所ID
-        string symbol;                  // 币种符号
-        uint32 stepSizeScale;            // 步长精度
-        uint32 tickSizeScale;            // 价格精度
-        RiskTier[] riskTiers;           // 风险档位列表
+        uint64 exchangeId;              // Exchange ID
+        string symbol;                  // Coin symbol
+        uint32 stepSizeScale;            // Step size precision
+        uint32 tickSizeScale;            // Price precision
+        RiskTier[] riskTiers;           // Risk tier list
     }
 
-    // 资金费率指数信息结构体
+    // Funding rate index information struct
     struct FundingIndex {
-        uint64 exchangeId;              // 交易所ID
-        int256 fundingIndex;           // 资金费率指数，精度为 collateralCoin.StepSizeScale + 6
-        uint64 fundingIndexTime;       // 资金费率指数时间
+        uint64 exchangeId;              // Exchange ID
+        int256 fundingIndex;           // Funding rate index, precision = collateralCoin.StepSizeScale + 6
+        uint64 fundingIndexTime;       // Funding rate index time
     }
 
-    // Oracle价格信息结构体
+    // Oracle price information struct
     struct OraclePrice {
-        uint64 exchangeId;              // 交易所ID
-        uint256 oraclePrice;            // Oracle价格
-        uint64 oracleTime;              // Oracle时间
+        uint64 exchangeId;              // Exchange ID
+        uint256 oraclePrice;            // Oracle price
+        uint64 oracleTime;              // Oracle time
     }
 
-    // Asset结构体
+    // Asset struct
     struct Asset {
-        uint64 subaccountId;                    // 子账号ID
-        uint64 collateralCoinId;                // 抵押品币种ID
-        CrossGroup crossGroup;                  // 全仓组
-        IsolatedGroup[] isolatedGroups;         // 逐仓组数组
+        uint64 subaccountId;                    // Subaccount ID
+        uint64 collateralCoinId;                // Collateral coin ID
+        CrossGroup crossGroup;                  // Cross-margin group
+        IsolatedGroup[] isolatedGroups;         // Isolated-margin group array
     }
 
-    // CrossGroup结构体（全仓组）
+    // CrossGroup struct (cross-margin group)
     struct CrossGroup {
-        int256 collateralAmount;                // 抵押品数量（可为负数），精度 = collateralCoin.StepSizeScale
-        AssetPosition[] positions;              // 仓位数组（全仓模式的仓位）
-        uint256 imr;                            // 初始保证金需求，精度 = collateralCoin.StepSizeScale + 6
-        uint256 mmr;                            // 维持保证金需求，精度 = collateralCoin.StepSizeScale + 6
-        int256 tv;                              // 总价值（可为负数），精度 = collateralCoin.StepSizeScale + 6
+        int256 collateralAmount;                // Collateral amount (can be negative), precision = collateralCoin.StepSizeScale
+        AssetPosition[] positions;              // Position array (positions in cross-margin mode)
+        uint256 imr;                            // Initial margin requirement, precision = collateralCoin.StepSizeScale + 6
+        uint256 mmr;                            // Maintenance margin requirement, precision = collateralCoin.StepSizeScale + 6
+        int256 tv;                              // Total value (can be negative), precision = collateralCoin.StepSizeScale + 6
     }
 
-    // IsolatedGroup结构体（逐仓组）
+    // IsolatedGroup struct (isolated-margin group)
     struct IsolatedGroup {
-        int256 collateralAmount;                // 抵押品数量（可为负数），精度 = collateralCoin.StepSizeScale
-        AssetPosition position;                 // 仓位（逐仓模式每个组只有一个仓位）
-        int256 tv;                              // 总价值（可为负数），精度 = collateralCoin.StepSizeScale + 6
+        int256 collateralAmount;                // Collateral amount (can be negative), precision = collateralCoin.StepSizeScale
+        AssetPosition position;                 // Position (each group in isolated-margin mode has only one position)
+        int256 tv;                              // Total value (can be negative), precision = collateralCoin.StepSizeScale + 6
     }
 
-    // AssetPosition结构体（资产仓位）
+    // AssetPosition struct (asset position)
     struct AssetPosition {
-        uint64 exchangeId;                      // 交易所ID
-        int256 openSize;                        // 开仓大小，精度 = exchange.StepSizeScale
-        int256 openValue;                       // 开仓价值，精度 = collateralCoin.StepSizeScale
-        uint256 imr;                            // 初始保证金需求，精度 = collateralCoin.StepSizeScale + 6
-        uint256 mmr;                            // 维持保证金需求，精度 = collateralCoin.StepSizeScale + 6
-        int256 pv;                              // 仓位价值（带符号），精度 = collateralCoin.StepSizeScale + 6
+        uint64 exchangeId;                      // Exchange ID
+        int256 openSize;                        // Open size, precision = exchange.StepSizeScale
+        int256 openValue;                       // Open value, precision = collateralCoin.StepSizeScale
+        uint256 imr;                            // Initial margin requirement, precision = collateralCoin.StepSizeScale + 6
+        uint256 mmr;                            // Maintenance margin requirement, precision = collateralCoin.StepSizeScale + 6
+        int256 pv;                              // Position value (signed), precision = collateralCoin.StepSizeScale + 6
     }
 
     /**
-     * @notice 计算跨仓转出可用金额
-     * @dev 计算公式: availableAmount = (TV - IMR - orderFrozenAmount) / PPM_SCALE
-     *      如果计算结果小于0，返回0
+     * @notice Calculate cross-margin transfer out available amount
+     * @dev Calculation formula: availableAmount = (TV - IMR - orderFrozenAmount) / PPM_SCALE
+     *      If the result is less than 0, return 0
      *      
-     * @param tv 总价值 (Total Value，可为负数)，精度为 collateralCoin.StepSizeScale + 6
-     * @param imr 初始保证金需求 (Initial Margin Requirement)，精度为 collateralCoin.StepSizeScale + 6
-     * @param orderFrozenAmount 订单冻结金额，精度为 collateralCoin.StepSizeScale + 6
-     * @return availableAmount 可用金额，精度为 collateralCoin.StepSizeScale
+     * @param tv Total value (can be negative), precision = collateralCoin.StepSizeScale + 6
+     * @param imr Initial margin requirement, precision = collateralCoin.StepSizeScale + 6
+     * @param orderFrozenAmount Order frozen amount, precision = collateralCoin.StepSizeScale + 6
+     * @return availableAmount Available amount, precision = collateralCoin.StepSizeScale
      */
     function getCrossTransferOutAvailableAmount(
         int256 tv,
@@ -129,21 +129,21 @@ library MarginAsset {
         uint256 orderFrozenAmount,
         CrossGroup memory crossGroup
     ) internal pure returns (int256 availableAmount) {
-        // 检查是否会下溢: 如果 TV < IMR + orderFrozenAmount，返回0
-        // 先检查imr + orderFrozenAmount是否溢出，如果溢出则直接返回0
+        // Check for underflow: if TV < IMR + orderFrozenAmount, return 0
+        // First check if imr + orderFrozenAmount overflows, if so return 0 directly
         if (imr > type(uint256).max - orderFrozenAmount) {
             return 0;
         }
         
-        // 将imr和orderFrozenAmount转换为int256进行比较
+        // Convert imr and orderFrozenAmount to int256 for comparison
         int256 requiredAmount = int256(imr) + int256(orderFrozenAmount);
         
-        // 检查是否会下溢: 如果 TV < IMR + orderFrozenAmount，返回0
+        // Check for underflow: if TV < IMR + orderFrozenAmount, return 0
         if (tv < requiredAmount) {
             return 0;
         }
         
-        // 计算: (TV - IMR - orderFrozenAmount) / PPM_SCALE
+        // Calculate: (TV - IMR - orderFrozenAmount) / PPM_SCALE
         int256 result = (tv - requiredAmount) / int256(PPM_SCALE);
         
         int256 tmpValue = crossGroup.collateralAmount;
@@ -160,9 +160,9 @@ library MarginAsset {
     }
 
     /**
-     * @notice 从杠杆倍数计算初始保证金率（单位：百万分之一）
-     * @param leverage 杠杆倍数
-     * @return initialMarginRatioPpm 初始保证金率（单位：百万分之一）
+     * @notice Calculate initial margin ratio from leverage (unit: parts per million)
+     * @param leverage Leverage multiplier
+     * @return initialMarginRatioPpm Initial margin ratio (unit: parts per million)
      */
     function leverageToInitialMarginRatioPpm(
         uint32 leverage
@@ -172,14 +172,14 @@ library MarginAsset {
     }
 
     /**
-     * @notice 计算仓位价值
-     * @dev 计算公式: positionValue = (openSize * oraclePrice) / (10^(stepSizeScale + tickSizeScale - coinStepSizeScale))
-     * @param openSize 开仓大小（带符号）
-     * @param oraclePrice Oracle价格
-     * @param stepSizeScale 步长精度
-     * @param tickSizeScale 价格精度
-     * @param coinStepSizeScale 币种步长精度
-     * @return positionValue 仓位价值（带符号），精度为 coinStepSizeScale
+     * @notice Calculate position value
+     * @dev Calculation formula: positionValue = (openSize * oraclePrice) / (10^(stepSizeScale + tickSizeScale - coinStepSizeScale))
+     * @param openSize Open size (signed)
+     * @param oraclePrice Oracle price
+     * @param stepSizeScale Step size precision
+     * @param tickSizeScale Price precision
+     * @param coinStepSizeScale Coin step size precision
+     * @return positionValue Position value (signed), precision = coinStepSizeScale
      */
     function calculatePositionValue(
         int256 openSize,
@@ -188,7 +188,7 @@ library MarginAsset {
         uint32 tickSizeScale,
         uint32 coinStepSizeScale
     ) internal pure returns (int256 positionValue) {
-        // 计算 (openSize * oraclePrice) / 10^(stepSizeScale + tickSizeScale - coinStepSizeScale)
+        // Calculate (openSize * oraclePrice) / 10^(stepSizeScale + tickSizeScale - coinStepSizeScale)
         uint256 absOpenSize = absInt(openSize);
         uint256 value = absOpenSize * oraclePrice;
         
@@ -205,17 +205,17 @@ library MarginAsset {
     }
 
     /**
-     * @notice 计算仓位绝对价值
+     * @notice Calculate absolute value of position
      */
     function absInt(int256 x) private pure returns (uint256) {
         return x < 0 ? uint256(-x) : uint256(x);
     }
 
     /**
-     * @notice 计算仓位初始保证金额
-     * @param positionValueAbs 仓位绝对价值，精度为 collateralCoin.StepSizeScale
-     * @param initialMarginRatioPpm 初始保证金率（单位：百万分之一）
-     * @return imr 初始保证金额，精度为 collateralCoin.StepSizeScale + 6
+     * @notice Calculate position initial margin amount
+     * @param positionValueAbs Position absolute value, precision = collateralCoin.StepSizeScale
+     * @param initialMarginRatioPpm Initial margin ratio (unit: parts per million)
+     * @return imr Initial margin amount, precision = collateralCoin.StepSizeScale + 6
      */
     function calculatePositionIMR(
         uint256 positionValueAbs,
@@ -225,10 +225,10 @@ library MarginAsset {
     }
 
     /**
-     * @notice 计算仓位维持保证金额
-     * @param positionValueAbs 仓位绝对价值，精度为 collateralCoin.StepSizeScale
-     * @param maintenanceMarginRatioPpm 维持保证金率（单位：百万分之一）
-     * @return mmr 维持保证金额，精度为 collateralCoin.StepSizeScale + 6
+     * @notice Calculate position maintenance margin amount
+     * @param positionValueAbs Position absolute value, precision = collateralCoin.StepSizeScale
+     * @param maintenanceMarginRatioPpm Maintenance margin ratio (unit: parts per million)
+     * @return mmr Maintenance margin amount, precision = collateralCoin.StepSizeScale + 6
      */
     function calculatePositionMMR(
         uint256 positionValueAbs,
@@ -238,10 +238,10 @@ library MarginAsset {
     }
 
     /**
-     * @notice 根据仓位价值查找对应的风险档位
-     * @param riskTiers 风险档位列表（必须按照positionValueUpperBound从小到大排列）
-     * @param positionValueAbs 仓位绝对价值
-     * @return riskTierIndex 找到的风险档位索引，如果没找到返回最后一个档位
+     * @notice Find corresponding risk tier based on position value
+     * @param riskTiers Risk tier list (must be sorted by positionValueUpperBound from small to large)
+     * @param positionValueAbs Position absolute value
+     * @return riskTierIndex Found risk tier index, if not found return the last tier
      */
     function findPositionRiskTier(
         RiskTier[] memory riskTiers,
@@ -249,7 +249,7 @@ library MarginAsset {
     ) internal pure returns (uint256 riskTierIndex) {
         require(riskTiers.length > 0, "risk tiers is empty");
         
-        // 遍历查找匹配的风险档位
+        // Iterate to find matching risk tier
         for (uint256 i = 0; i < riskTiers.length; i++) {
             uint256 upperBound = uint256(riskTiers[i].positionValueUpperBound);
             if (positionValueAbs <= upperBound) {
@@ -257,21 +257,21 @@ library MarginAsset {
             }
         }
         
-        // 没找到，返回最后一个档位（兜底）
+        // Not found, return the last tier (fallback)
         return riskTiers.length - 1;
     }
 
     /**
-     * @notice 计算最小值的辅助函数
+     * @notice Helper function to calculate minimum value
      */
     function min(uint32 a, uint32 b) private pure returns (uint32) {
         return a < b ? a : b;
     }
 
     /**
-     * @notice 计算资金费用
+     * @notice Calculate funding fee
      * @dev fundingAmount = openSize * (cacheFundingIndex - fundingIndex)
-     *      然后需要做精度转换从 (stepSizeScale + tickSizeScale + 6) 到 (coinStepSizeScale + 6)
+     *      Then need to convert precision from (stepSizeScale + tickSizeScale + 6) to (coinStepSizeScale + 6)
      */
     function calculateFundingAmount(
         int256 openSize,
@@ -281,11 +281,11 @@ library MarginAsset {
         uint32 tickSizeScale,
         uint32 coinStepSizeScale
     ) internal pure returns (int256 fundingAmount) {
-        // 计算资金费率差值
+        // Calculate funding rate difference
         int256 fundingDiff = cacheFundingIndex - fundingIndex;
         
         // fundingAmount = openSize * fundingDiff
-        // 精度转换从 (stepSizeScale + tickSizeScale + 6) 到 (coinStepSizeScale + 6)
+        // Convert precision from (stepSizeScale + tickSizeScale + 6) to (coinStepSizeScale + 6)
         uint256 absOpenSize = absInt(openSize);
         uint256 absFundingDiff = absInt(fundingDiff);
         
@@ -306,15 +306,15 @@ library MarginAsset {
     }
 
     /**
-     * @notice 新建Asset对象（从原始数据计算）
-     * @dev 根据Go代码中的NewAsset函数实现，完全一致的输入输出参数和算法逻辑
-     * @param collateralCoin 抵押品币种信息
-     * @param exchanges 交易所信息列表
-     * @param oraclePrices Oracle价格列表（通过exchangeId查找）
-     * @param fundingIndices 资金费率指数列表（通过exchangeId查找）
-     * @param subaccount 子账号信息
-     * @param perpetualAsset 永续合约资产信息
-     * @return asset 完整的Asset对象，包含CrossGroup和IsolatedGroup数组
+     * @notice Create new Asset object (calculated from raw data)
+     * @dev Implemented according to the NewAsset function in Go code, with identical input/output parameters and algorithm logic
+     * @param collateralCoin Collateral coin information
+     * @param exchanges Exchange information list
+     * @param oraclePrices Oracle price list (lookup by exchangeId)
+     * @param fundingIndices Funding rate index list (lookup by exchangeId)
+     * @param subaccount Subaccount information
+     * @param perpetualAsset Perpetual asset information
+     * @return asset Complete Asset object, including CrossGroup and IsolatedGroup arrays
      */
     function newAsset(
         Coin memory collateralCoin,
@@ -324,19 +324,19 @@ library MarginAsset {
         Subaccount memory subaccount,
         PerpetualAsset memory perpetualAsset
     ) internal pure returns (Asset memory asset) {
-        // 参数验证（与Go代码一致）
+        // Parameter validation (consistent with Go code)
         require(collateralCoin.id > 0, "collateralCoin is invalid");
         require(exchanges.length > 0, "exchanges is empty");
         require(subaccount.id > 0, "subaccount is invalid");
         require(perpetualAsset.subaccountId == subaccount.id, "perpetualAsset not valid: subaccountId mismatch");
         require(perpetualAsset.collateralCoinId == collateralCoin.id, "perpetualAsset not valid: collateralCoinId mismatch");
 
-        // 构建 exchangeId 到 TradeSetting 的映射（与Go代码一致）
-        // Go代码：exchangeIdToTradeSettingMap := make(map[uint64]*subaccounttypes.TradeSetting)
+        // Build exchangeId to TradeSetting mapping (consistent with Go code)
+        // Go code: exchangeIdToTradeSettingMap := make(map[uint64]*subaccounttypes.TradeSetting)
         TradeSetting[] memory tradeSettings = subaccount.tradeSettings;
         
-        // 初始化CrossGroup
-        // Go代码：
+        // Initialize CrossGroup
+        // Go code:
         // CollateralAmount = new(big.Int).SetInt64(perpetualAsset.CrossCollateralAmount)
         // TV = new(big.Int).Mul(new(big.Int).SetInt64(perpetualAsset.CrossCollateralAmount), big.NewInt(1000000))
         int64 crossCollateralAmount = perpetualAsset.crossCollateralAmount;
@@ -345,28 +345,28 @@ library MarginAsset {
         asset.crossGroup.imr = 0;
         asset.crossGroup.mmr = 0;
         
-        // 设置 asset 的 subaccountId 和 collateralCoinId
+        // Set asset's subaccountId and collateralCoinId
         asset.subaccountId = subaccount.id;
         asset.collateralCoinId = collateralCoin.id;
 
-        // 初始化IsolatedGroup数组（预留空间）
+        // Initialize IsolatedGroup array (pre-allocate space)
         Position[] memory positions = perpetualAsset.positions;
         IsolatedGroup[] memory isolatedGroups = new IsolatedGroup[](positions.length);
         uint64[] memory isolatedGroupExchangeIds = new uint64[](positions.length);
         uint256 isolatedGroupCount = 0;
 
-        // 初始化CrossGroup的positions数组（预留空间）
+        // Initialize CrossGroup's positions array (pre-allocate space)
         AssetPosition[] memory crossPositions = new AssetPosition[](positions.length);
         uint64[] memory crossPositionsExchangeIds = new uint64[](positions.length);
         uint256 crossPositionsCount = 0;
 
-        int256 crossFundingAmount = 0; // 精度为 collateralCoin.StepSizeScale + 6
+        int256 crossFundingAmount = 0; // Precision = collateralCoin.StepSizeScale + 6
 
-        // 遍历所有仓位
+        // Iterate through all positions
         for (uint256 i = 0; i < positions.length; i++) {
             Position memory positionInput = positions[i];
             
-            // 查找对应的exchange
+            // Find corresponding exchange
             Exchange memory exchange;
             bool exchangeFound = false;
             uint256 exchangeIndex = 0;
@@ -381,13 +381,13 @@ library MarginAsset {
             }
             
             require(exchangeFound, "exchange not found");
-            // Go代码：if exchange.QuoteCoinId != collateralCoin.Id { return error }
-            // 注意：在 Solidity 中，Exchange 结构体中没有 QuoteCoinId 字段，需要在调用时确保匹配
-            // Go代码：if exchange.GetPerpetual() == nil { return error }
-            // 注意：在 Solidity 中，如果 riskTiers 为空，则认为不支持永续合约
+            // Go code: if exchange.QuoteCoinId != collateralCoin.Id { return error }
+            // Note: In Solidity, the Exchange struct does not have a QuoteCoinId field, need to ensure matching when calling
+            // Go code: if exchange.GetPerpetual() == nil { return error }
+            // Note: In Solidity, if riskTiers is empty, it is considered that perpetual contracts are not supported
             require(exchange.riskTiers.length > 0, "exchange not support perpetual");
 
-            // 查找对应的tradeSetting
+            // Find corresponding tradeSetting
             TradeSetting memory tradeSetting;
             bool tradeSettingFound = false;
             
@@ -401,7 +401,7 @@ library MarginAsset {
             
             require(tradeSettingFound && tradeSetting.leverage > 0, "trade setting not valid");
 
-            // 查找对应的oraclePrice和fundingIndex
+            // Find corresponding oraclePrice and fundingIndex
             uint256 oraclePrice = 0;
             bool oraclePriceFound = false;
             int256 fundingIndex = 0;
@@ -420,16 +420,16 @@ library MarginAsset {
                     break;
                 }
             }
-            // 如果没有找到，fundingIndex 保持为 0（与 Go 代码行为一致）
+            // If not found, fundingIndex remains 0 (consistent with Go code behavior)
             
             require(oraclePriceFound && oraclePrice > 0, "oracle price not valid");
 
-            // 解析 cacheFundingIndex（Go代码：cacheFundingIndex, ok := new(big.Int).SetString(position.CacheFundingIndex, 10)）
-            // 在 Solidity 中，cacheFundingIndex 已经是 int256 类型，直接使用
+            // Parse cacheFundingIndex (Go code: cacheFundingIndex, ok := new(big.Int).SetString(position.CacheFundingIndex, 10))
+            // In Solidity, cacheFundingIndex is already int256 type, use directly
             int256 cacheFundingIndex = positionInput.cacheFundingIndex;
 
-            // 计算资金费用：fundingAmount = openSize * (cacheFundingIndex - fundingIndex)
-            // Go代码：fundingAmount := new(big.Int).Mul(positionOpenSize, new(big.Int).Sub(cacheFundingIndex, fundingIndex))
+            // Calculate funding fee: fundingAmount = openSize * (cacheFundingIndex - fundingIndex)
+            // Go code: fundingAmount := new(big.Int).Mul(positionOpenSize, new(big.Int).Sub(cacheFundingIndex, fundingIndex))
             int256 fundingAmount = calculateFundingAmount(
                 int256(positionInput.openSize),
                 cacheFundingIndex,
@@ -439,7 +439,7 @@ library MarginAsset {
                 collateralCoin.stepSizeScale
             );
 
-            // 计算仓位价值：positionValue = (openSize * oraclePrice) / (10^(stepSizeScale + tickSizeScale - coinStepSizeScale))
+            // Calculate position value: positionValue = (openSize * oraclePrice) / (10^(stepSizeScale + tickSizeScale - coinStepSizeScale))
             int256 positionValue = calculatePositionValue(
                 int256(positionInput.openSize),
                 oraclePrice,
@@ -450,24 +450,24 @@ library MarginAsset {
             
             uint256 positionValueAbs = absInt(positionValue);
             
-            // 查找风险档位
+            // Find risk tier
             uint256 riskTierIndex = findPositionRiskTier(exchange.riskTiers, positionValueAbs);
             RiskTier memory riskTier = exchange.riskTiers[riskTierIndex];
             
-            // 计算初始保证金率（如果杠杆超过风险档位最大杠杆，使用风险档位最大杠杆）
-            // Go代码：initialMarginRatioPpm, err := LeverageToInitialMarginRatioPpm(sdkmath.Min(tradeSetting.Leverage, riskTier.MaxLeverage))
+            // Calculate initial margin ratio (if leverage exceeds risk tier max leverage, use risk tier max leverage)
+            // Go code: initialMarginRatioPpm, err := LeverageToInitialMarginRatioPpm(sdkmath.Min(tradeSetting.Leverage, riskTier.MaxLeverage))
             uint32 effectiveLeverage = min(tradeSetting.leverage, riskTier.maxLeverage);
             uint32 initialMarginRatioPpm = leverageToInitialMarginRatioPpm(effectiveLeverage);
             
-            // 计算IMR和MMR
+            // Calculate IMR and MMR
             uint256 positionIMR = calculatePositionIMR(positionValueAbs, initialMarginRatioPpm);
             uint256 positionMMR = calculatePositionMMR(positionValueAbs, riskTier.maintenanceMarginRatioPpm);
             
-            // 计算PV：PV = positionValue * PPM_SCALE（带符号）
-            // Go代码：PV: new(big.Int).Mul(positionValue, big.NewInt(1000000))
+            // Calculate PV: PV = positionValue * PPM_SCALE (signed)
+            // Go code: PV: new(big.Int).Mul(positionValue, big.NewInt(1000000))
             int256 positionPV = positionValue * int256(PPM_SCALE);
 
-            // 创建AssetPosition对象
+            // Create AssetPosition object
             AssetPosition memory marginPosition = AssetPosition({
                 exchangeId: positionInput.exchangeId,
                 openSize: int256(positionInput.openSize),
@@ -477,50 +477,50 @@ library MarginAsset {
                 pv: positionPV
             });
 
-            // 根据保证金模式处理
+            // Process according to margin mode
             if (tradeSetting.marginMode == 1) {
-                // 全仓模式
-                // Go代码：crossFundingAmount = new(big.Int).Add(crossFundingAmount, fundingAmountNormalized)
+                // Cross-margin mode
+                // Go code: crossFundingAmount = new(big.Int).Add(crossFundingAmount, fundingAmountNormalized)
                 crossFundingAmount += fundingAmount;
                 
-                // 累加到CrossGroup
-                // Go代码：
+                // Accumulate to CrossGroup
+                // Go code:
                 // crossGroup.IMR = new(big.Int).Add(crossGroup.IMR, marginPosition.IMR)
                 // crossGroup.MMR = new(big.Int).Add(crossGroup.MMR, marginPosition.MMR)
                 // crossGroup.TV = new(big.Int).Add(crossGroup.TV, marginPosition.PV)
                 asset.crossGroup.imr += positionIMR;
                 asset.crossGroup.mmr += positionMMR;
-                // 累加PV到TV（PV是带符号的，直接累加即可）
+                // Accumulate PV to TV (PV is signed, can accumulate directly)
                 asset.crossGroup.tv += positionPV;
                 
-                // 添加仓位到CrossGroup的positions数组
+                // Add position to CrossGroup's positions array
                 crossPositions[crossPositionsCount] = marginPosition;
                 crossPositionsExchangeIds[crossPositionsCount] = positionInput.exchangeId;
                 crossPositionsCount++;
             } else if (tradeSetting.marginMode == 2) {
-                // 逐仓模式
-                // Go代码：tmpAmount := new(big.Int).Div(fundingAmountNormalized, big.NewInt(1000000))
-                // big.Int.Div 对于负数也是向下取整
+                // Isolated-margin mode
+                // Go code: tmpAmount := new(big.Int).Div(fundingAmountNormalized, big.NewInt(1000000))
+                // big.Int.Div rounds down for negative numbers
                 int256 fundingAmountNormalized;
                 if (fundingAmount >= 0) {
                     fundingAmountNormalized = fundingAmount / int256(PPM_SCALE);
                 } else {
-                    // 负数向下取整：对于负数，big.Int.Div是向下取整
+                    // Negative number rounds down: for negative numbers, big.Int.Div rounds down
                     uint256 absFunding = absInt(fundingAmount);
                     uint256 quotient = absFunding / PPM_SCALE;
-                    // 如果有余数，需要加1（向下取整）
+                    // If there is a remainder, need to add 1 (round down)
                     if (absFunding % PPM_SCALE != 0) {
                         quotient += 1;
                     }
                     fundingAmountNormalized = -int256(quotient);
                 }
                 
-                // 计算逐仓抵押品数量：collateralAmount = isolatedCollateralAmount + tmpAmount
-                // Go代码：collateralAmount := new(big.Int).Add(new(big.Int).SetInt64(position.IsolatedCollateralAmount), tmpAmount)
+                // Calculate isolated-margin collateral amount: collateralAmount = isolatedCollateralAmount + tmpAmount
+                // Go code: collateralAmount := new(big.Int).Add(new(big.Int).SetInt64(position.IsolatedCollateralAmount), tmpAmount)
                 int256 collateralAmount = int256(positionInput.isolatedCollateralAmount) + fundingAmountNormalized;
                 
-                // 创建IsolatedGroup
-                // Go代码：TV: new(big.Int).Add(new(big.Int).Mul(collateralAmount, big.NewInt(1000000)), marginPosition.PV)
+                // Create IsolatedGroup
+                // Go code: TV: new(big.Int).Add(new(big.Int).Mul(collateralAmount, big.NewInt(1000000)), marginPosition.PV)
                 int256 isolatedTV = collateralAmount * int256(PPM_SCALE) + positionPV;
                 isolatedGroups[isolatedGroupCount] = IsolatedGroup({
                     collateralAmount: collateralAmount,
@@ -534,8 +534,8 @@ library MarginAsset {
             }
         }
 
-        // 处理全仓资金费用
-        // Go代码：
+        // Process cross-margin funding fee
+        // Go code:
         // tmpAmount := new(big.Int).Div(crossFundingAmount, big.NewInt(1000000))
         // crossGroup.CollateralAmount = new(big.Int).Add(crossGroup.CollateralAmount, tmpAmount)
         // crossGroup.TV = new(big.Int).Add(crossGroup.TV, new(big.Int).Mul(tmpAmount, big.NewInt(1000000)))
@@ -544,7 +544,7 @@ library MarginAsset {
             if (crossFundingAmount >= 0) {
                 tmpAmount = crossFundingAmount / int256(PPM_SCALE);
             } else {
-                // 负数向下取整
+                // Negative number rounds down
                 uint256 absFunding = absInt(crossFundingAmount);
                 uint256 quotient = absFunding / PPM_SCALE;
                 if (absFunding % PPM_SCALE != 0) {
@@ -553,15 +553,15 @@ library MarginAsset {
                 tmpAmount = -int256(quotient);
             }
             
-            // 更新CollateralAmount和TV
-            // Go代码：
+            // Update CollateralAmount and TV
+            // Go code:
             // crossGroup.CollateralAmount = new(big.Int).Add(crossGroup.CollateralAmount, tmpAmount)
             // crossGroup.TV = new(big.Int).Add(crossGroup.TV, new(big.Int).Mul(tmpAmount, big.NewInt(1000000)))
             asset.crossGroup.collateralAmount += tmpAmount;
             asset.crossGroup.tv += tmpAmount * int256(PPM_SCALE);
         }
 
-        // 调整CrossGroup的positions数组大小为实际使用的大小
+        // Adjust CrossGroup's positions array size to actual used size
         AssetPosition[] memory finalCrossPositions = new AssetPosition[](crossPositionsCount);
         uint64[] memory finalCrossPositionsExchangeIds = new uint64[](crossPositionsCount);
         for (uint256 i = 0; i < crossPositionsCount; i++) {
@@ -570,7 +570,7 @@ library MarginAsset {
         }
         asset.crossGroup.positions = finalCrossPositions;
 
-        // 调整IsolatedGroup数组大小为实际使用的大小
+        // Adjust IsolatedGroup array size to actual used size
         IsolatedGroup[] memory finalIsolatedGroups = new IsolatedGroup[](isolatedGroupCount);
         uint64[] memory finalIsolatedGroupExchangeIds = new uint64[](isolatedGroupCount);
         for (uint256 i = 0; i < isolatedGroupCount; i++) {
@@ -584,18 +584,18 @@ library MarginAsset {
 
 /**
  * @title MarginAssetCalculator
- * @notice 提供跨仓转出可用金额计算的外部接口
+ * @notice Provides external interface for cross-margin transfer out available amount calculation
  */
 contract MarginAssetCalculator {
     /**
-     * @notice 计算跨仓转出可用金额（完整版本，从原始数据计算）
-     * @param collateralCoin 抵押品币种信息
-     * @param exchanges 交易所信息列表
-     * @param oraclePrices Oracle价格列表
-     * @param fundingIndices 资金费率指数列表
-     * @param subaccount 子账号信息
-     * @param perpetualAsset 永续合约资产信息
-     * @return availableAmount 可用金额，精度为 collateralCoin.StepSizeScale
+     * @notice Calculate cross-margin transfer out available amount (full version, calculated from raw data)
+     * @param collateralCoin Collateral coin information
+     * @param exchanges Exchange information list
+     * @param oraclePrices Oracle price list
+     * @param fundingIndices Funding rate index list
+     * @param subaccount Subaccount information
+     * @param perpetualAsset Perpetual asset information
+     * @return availableAmount Available amount, precision = collateralCoin.StepSizeScale
      */
     function getCrossTransferOutAvailableAmount(
         MarginAsset.Coin memory collateralCoin,
@@ -615,8 +615,8 @@ contract MarginAssetCalculator {
         );
 
         uint256 orderFrozenAmount = 0;
-        // orderFrozenAmount 应该从未成交订单中计算，如果当前没有订单信息，则设为0
-        // TODO: 如果将来需要支持订单冻结金额计算，需要传入订单信息
+        // orderFrozenAmount should be calculated from unfilled orders, if there is no order information currently, set to 0
+        // TODO: If order frozen amount calculation is needed in the future, order information needs to be passed in
         
         return MarginAsset.getCrossTransferOutAvailableAmount(
             asset.crossGroup.tv,
@@ -627,14 +627,14 @@ contract MarginAssetCalculator {
     }
 
     /**
-     * @notice 获取完整的Asset对象（用于调试或其他需要）
-     * @param collateralCoin 抵押品币种信息
-     * @param exchanges 交易所信息列表
-     * @param oraclePrices Oracle价格列表
-     * @param fundingIndices 资金费率指数列表
-     * @param subaccount 子账号信息
-     * @param perpetualAsset 永续合约资产信息
-     * @return asset 完整的Asset对象
+     * @notice Get complete Asset object (for debugging or other needs)
+     * @param collateralCoin Collateral coin information
+     * @param exchanges Exchange information list
+     * @param oraclePrices Oracle price list
+     * @param fundingIndices Funding rate index list
+     * @param subaccount Subaccount information
+     * @param perpetualAsset Perpetual asset information
+     * @return asset Complete Asset object
      */
     function getAsset(
         MarginAsset.Coin memory collateralCoin,

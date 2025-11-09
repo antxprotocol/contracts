@@ -127,14 +127,14 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     }
 
     function _calculateAvailableAmount(bytes32 user) internal view returns (int256) {
-        // 直接通过反向映射查找subaccountId
+        // Directly find subaccountId through reverse mapping
         uint64 subaccountId = addressToSubaccountId[user];
         if (subaccountId == 0) return 0;
         
         MarginAsset.Subaccount memory subaccount = subaccounts[subaccountId];
         if (subaccount.id == 0) return 0;
 
-        // 查找对应的PerpetualAsset（遍历所有可能的collateralCoinId）
+        // Find corresponding PerpetualAsset (iterate through all possible collateralCoinIds)
         MarginAsset.PerpetualAsset memory perpetualAsset;
         uint64 collateralCoinId = 0;
         bool foundPerpetualAsset = false;
@@ -153,35 +153,35 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         if (perpetualAsset.crossCollateralAmount <= 0) return 0;
         if (perpetualAsset.positions.length == 0) return int256(int64(perpetualAsset.crossCollateralAmount));
 
-        // 获取抵押品币种信息
+        // Get collateral coin information
         MarginAsset.Coin memory collateralCoin = coins[collateralCoinId];
         if (collateralCoin.id == 0) {
-            // Coin未设置，无法计算可用金额
+            // Coin not set, cannot calculate available amount
             revert("Coin not found");
         }
 
-        // 构建Exchange数组
+        // Build Exchange array
         MarginAsset.Exchange[] memory exchangeArray = new MarginAsset.Exchange[](subaccount.tradeSettings.length);
         for (uint256 i = 0; i < subaccount.tradeSettings.length; i++) {
             uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
             exchangeArray[i] = exchanges[exchangeId];
         }
 
-        // 构建OraclePrice数组
+        // Build OraclePrice array
         MarginAsset.OraclePrice[] memory oraclePriceArray = new MarginAsset.OraclePrice[](subaccount.tradeSettings.length);
         for (uint256 i = 0; i < subaccount.tradeSettings.length; i++) {
             uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
             oraclePriceArray[i] = oraclePrices[exchangeId];
         }
 
-        // 构建FundingIndex数组
+        // Build FundingIndex array
         MarginAsset.FundingIndex[] memory fundingIndexArray = new MarginAsset.FundingIndex[](subaccount.tradeSettings.length);
         for (uint256 i = 0; i < subaccount.tradeSettings.length; i++) {
             uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
             fundingIndexArray[i] = fundingIndexes[exchangeId];
         }
 
-        // 构建Subaccount（使用存储中的subaccount，但更新chainAddress）
+        // Build Subaccount (use subaccount from storage, but update chainAddress)
         MarginAsset.Subaccount memory subaccountForCalc = MarginAsset.Subaccount({
             id: subaccountId,
             chainAddress: user,
@@ -274,7 +274,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
                 coins[batchUpdateData.coinUpdates[i].id] = batchUpdateData.coinUpdates[i];
                 emit CoinInfoUpdated(batchUpdateData.coinUpdates[i].id, batchUpdateData.coinUpdates[i].symbol, batchUpdateData.coinUpdates[i].stepSizeScale);
 
-                // ensure coin id 
+                // Ensure coin id exists in coinIds array
                 bool existCoin = false;
                 for (uint256 j = 0; j < coinIds.length; j++) {
                     if (coinIds[j] == batchUpdateData.coinUpdates[i].id) {
