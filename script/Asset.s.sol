@@ -25,10 +25,10 @@ contract AssetScript is Script {
         address withdrawOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2;
         console.log("Withdraw operator address at:", address(withdrawOperator));
 
-        address ed25519Oracle = 0x2C122b77028B8c47587696a30E5359Ad95e5653c;
+        address ed25519Oracle = 0xDA4d9912057A1cA19e9b3A16dc689054AA55981c;
         console.log("Ed25519 oracle address at:", address(ed25519Oracle));
 
-        address marginAsset = 0xe634d1b4b0FB073174fC0A10974a4Ae54687271c;
+        address marginAsset = 0xC6B7926Ad8d58b95C23cAE9E92854532ff775678;
         console.log("Margin asset address at:", address(marginAsset));
 
         // Deploy asset

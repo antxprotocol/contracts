@@ -11,7 +11,7 @@ import {Ed25519Oracle} from "../src/oracle/Ed25519Oracle.sol";
 contract Ed25519OracleSetterScript is Script {
     function setUp() public {}
 
-    address payable oracleAddress = payable(0x2C122b77028B8c47587696a30E5359Ad95e5653c);
+    address payable oracleAddress = payable(0xDA4d9912057A1cA19e9b3A16dc689054AA55981c);
     address node1Address = 0xDEfaa510D5E6c1D9C41Aa1a268c4263265502DC8;
     address node2Address = 0xF68a530Cc3d134b6007062028feC1592273B31E1;
     
