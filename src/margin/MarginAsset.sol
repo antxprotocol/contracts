@@ -150,11 +150,11 @@ library MarginAsset {
         for (uint256 i = 0; i < crossGroup.positions.length; i++) {
             tmpValue = tmpValue + crossGroup.positions[i].openValue;
         }
-        if (result < tmpValue) {
-            return 0;
+        if (result > tmpValue) {
+            result = tmpValue;
         }
         if (result < 0) {
-            return 0;
+            result = 0;
         }
         return result;
     }
