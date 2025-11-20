@@ -10,6 +10,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IEd25519Oracle} from "./interfaces/IEd25519Oracle.sol";
 import "./interfaces/IAsset.sol";
 import "./margin/MarginAsset.sol";
+import "./stargate/StargateWithdraw.sol";
+import {MessagingFee} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 
 contract Asset is Ownable, ReentrancyGuard, IAsset {
     using SafeERC20 for IERC20;
@@ -34,7 +36,14 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     uint256 public lastBatchTime;
     uint256 public lastAntxChainHeight;
     IEd25519Oracle public ed25519Oracle;
-    uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days; 
+    uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days;
+    
+    // Stargate cross-chain withdraw adapter
+    StargateWithdraw public stargateWithdraw;
+    
+    // Arbitrum chain IDs
+    uint256 public constant ARBITRUM_MAINNET = 42161;
+    uint256 public constant ARBITRUM_SEPOLIA = 421614; 
 
     // MarginAsset storage info
     address public marginAsset;
@@ -76,27 +85,27 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         USDC = IERC20(_USDC);
     }
 
-    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
+    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds, uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
         if (subaccountIds.length != amounts.length) revert UserAndAmountLengthNotMatch();
         if (subaccountIds.length != signatures.length) revert UserAndSignatureLengthNotMatch();
 
         for (uint64 i = 0; i < subaccountIds.length; i++) {
             bytes32 user = subaccounts[subaccountIds[i]].chainAddress;
-            _userWithdraw(clientOrderIds[i],user,amounts[i],signatures[i],false,signatureType);
+            _userWithdraw(clientOrderIds[i],user,dstChainIds[i],amounts[i],signatures[i],false,signatureType);
             emit UserWithdraw(clientOrderIds[i],user,amounts[i]);
         }
     }
 
-    function forceWithdraw(uint64 subaccountId,uint256 amount,SignatureType signatureType,bytes memory signatures) external nonReentrant validAmount(amount) {
+    function forceWithdraw(uint64 subaccountId,uint256 amount,SignatureType signatureType,bytes memory signatures,uint64 dstChainId) external nonReentrant validAmount(amount) {
         // check time lock
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
         // force withdraw
         bytes32 user = subaccounts[subaccountId].chainAddress;
-        _userWithdraw(0, user, amount, signatures, true, signatureType);
+        _userWithdraw(0, user, dstChainId, amount, signatures, true, signatureType);
         emit ForceWithdraw(user, amount);
     }
 
-    function _userWithdraw(uint256 clientOrderId,bytes32 user, uint256 amount,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
+    function _userWithdraw(uint256 clientOrderId,bytes32 user, uint64 dstChainId, uint256 amount,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
         if (!isForce) {
             // check user signature
             bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, amount, block.chainid));
@@ -112,18 +121,33 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         uint256 userAvailableAmount = availableAmount(user);
         if (userAvailableAmount < amount) revert InsufficientUserBalance(userAvailableAmount, amount);
 
-        // Store balance before transfer
-        uint256 preBalance = USDC.balanceOf(address(this));
-        
-        // Execute transfer
-        IERC20(USDC).safeTransfer(address(uint160(uint256(user))), amount);
-        
-        // Verify transfer happened correctly 
-        uint256 postBalance = USDC.balanceOf(address(this));
-        assert(preBalance - postBalance == amount);
 
-        // emit event
-        emit UserWithdraw(clientOrderId, user, amount);
+        // check if the user is on Arbitrum
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+           // Store balance before transfer
+            uint256 preBalance = USDC.balanceOf(address(this));
+            
+            // Execute transfer
+            IERC20(USDC).safeTransfer(address(uint160(uint256(user))), amount);
+            
+            // Verify transfer happened correctly 
+            uint256 postBalance = USDC.balanceOf(address(this));
+            assert(preBalance - postBalance == amount);
+             // emit event
+            emit UserWithdraw(clientOrderId, user, amount);
+        } else {
+            // cross-chain withdraw
+            // Approve StargateWithdraw to spend USDC
+            USDC.forceApprove(address(stargateWithdraw), amount);
+            
+            // Execute cross-chain withdraw
+            stargateWithdraw.crossChainWithdraw(clientOrderId, user, amount, dstChainId, user, 0, MessagingFee({nativeFee: 0, lzTokenFee: 0}), address(this));
+            
+            // Reset approval
+            USDC.forceApprove(address(stargateWithdraw), 0);
+            
+            emit CrossChainWithdraw(clientOrderId, user, amount, dstChainId);
+        }
     }
 
     function _calculateAvailableAmount(bytes32 user) internal view returns (int256) {
@@ -363,6 +387,12 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         if (_marginAsset == address(0)) revert ZeroAddressNotAllowed();
         marginAsset = _marginAsset;
         emit MarginAssetAddressUpdated(_marginAsset);
+    }
+
+    function setStargateWithdraw(address _stargateWithdraw) external onlyOwner validAddress(_stargateWithdraw) {
+        if (_stargateWithdraw == address(0)) revert ZeroAddressNotAllowed();
+        stargateWithdraw = StargateWithdraw(_stargateWithdraw);
+        emit StargateWithdrawUpdated(_stargateWithdraw);
     }
    
 }

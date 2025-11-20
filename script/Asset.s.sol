@@ -18,18 +18,22 @@ contract AssetScript is Script {
         signers[0] = 0x4626eb76a7c2896645B0117614Ec0555e6E3a180;
         signers[1] = 0x6c7459c4B3B84E24734E59D4a6749EB02Ea26406;
         signers[2] = 0x3171E2318402Cea35849CDaed28261A25e25849c;
-       
-        address settlementOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2;
+
+        // address settlementOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2; // devnet
+        address settlementOperator = 0x3a53d44375e5202ad3bCAeB0D6588e7Ad0B0F8C6; // testnet
         console.log("Settlement address at:", address(settlementOperator));
 
-        address withdrawOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2;
+        // address withdrawOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2; // devnet
+        address withdrawOperator = 0x3a53d44375e5202ad3bCAeB0D6588e7Ad0B0F8C6; // testnet
         console.log("Withdraw operator address at:", address(withdrawOperator));
 
-        address ed25519Oracle = 0xDA4d9912057A1cA19e9b3A16dc689054AA55981c;
+        // address ed25519Oracle = 0xDA4d9912057A1cA19e9b3A16dc689054AA55981c; //devnet
+        address ed25519Oracle = 0x4D4434E2c9987f9cc67b6Ac7c42a792fcB74E4f1; //testnet
+
         console.log("Ed25519 oracle address at:", address(ed25519Oracle));
 
-        address marginAsset = 0xC6B7926Ad8d58b95C23cAE9E92854532ff775678;
-        console.log("Margin asset address at:", address(marginAsset));
+        address marginAssetCalculator = 0xC6B7926Ad8d58b95C23cAE9E92854532ff775678;
+        console.log("Margin asset calculator address at:", address(marginAssetCalculator));
 
         // Deploy asset
         Asset asset =  new Asset(address(usdcAddress));
@@ -48,7 +52,7 @@ contract AssetScript is Script {
         asset.setEd25519Oracle(ed25519Oracle);
 
         // set margin asset
-        asset.setMarginAsset(marginAsset);
+        asset.setMarginAsset(marginAssetCalculator);
 
         vm.stopBroadcast();
     }

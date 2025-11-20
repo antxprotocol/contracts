@@ -7,6 +7,7 @@ interface IAsset {
     // Events
     event SignersUpdated(address[] signers);
     event UserWithdraw(uint256 clientOrderId,bytes32 indexed user, uint256 amount);
+    event CrossChainWithdraw(uint256 clientOrderId,bytes32 indexed user, uint256 amount, uint64 dstChainId);
     event ForceWithdraw(bytes32 indexed user, uint256 amount);
     event BatchUpdated(uint256 batchId, uint256 antxChainHeight, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
@@ -14,6 +15,7 @@ interface IAsset {
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
     event MarginAssetAddressUpdated(address indexed marginAsset);
+    event StargateWithdrawUpdated(address indexed stargateWithdraw);
     event ExchangeInfoUpdated(uint64 exchangeId, uint32 stepSizeScale, uint32 tickSizeScale, uint256 oraclePrice, uint256 fundingIndex, MarginAsset.RiskTier[] riskTiers);
     event CoinInfoUpdated(uint64 coinId, string symbol, uint32 stepSizeScale);
     event FundingIndexUpdated(uint64 exchangeId, int256 fundingIndex);
@@ -42,6 +44,7 @@ interface IAsset {
     error NotAllowedToken(address token);
     error UserNotFound();
     error InvalidAntxChainHeight();
+    error InvalidChainId();
 
     enum SignatureType {
         ECDSA,
@@ -49,8 +52,8 @@ interface IAsset {
     }
     
     // State-changing functions
-    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds, uint256 []memory amounts,bytes[] memory signatures,SignatureType signatureType) external;
-    function forceWithdraw(uint64 subaccountId,uint256 amount, SignatureType signatureType, bytes memory signatures) external;
+    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds, uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external;
+    function forceWithdraw(uint64 subaccountId,uint256 amount, SignatureType signatureType, bytes memory signatures,uint64 dstChainId) external;
     function setSigners(address[] memory _signers) external;
     function setSettlementAddress(address _settlementAddress) external;
     function setWithdrawOperator(address _withdrawOperator) external;

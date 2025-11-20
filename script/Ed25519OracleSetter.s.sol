@@ -11,9 +11,16 @@ import {Ed25519Oracle} from "../src/oracle/Ed25519Oracle.sol";
 contract Ed25519OracleSetterScript is Script {
     function setUp() public {}
 
-    address payable oracleAddress = payable(0xDA4d9912057A1cA19e9b3A16dc689054AA55981c);
-    address node1Address = 0xDEfaa510D5E6c1D9C41Aa1a268c4263265502DC8;
-    address node2Address = 0xF68a530Cc3d134b6007062028feC1592273B31E1;
+    // address payable oracleAddress = payable(0xDA4d9912057A1cA19e9b3A16dc689054AA55981c);  // devnet
+    address payable oracleAddress = payable(0x4D4434E2c9987f9cc67b6Ac7c42a792fcB74E4f1); // testnet
+
+    // devnet
+    address node1AddressDev = 0xDEfaa510D5E6c1D9C41Aa1a268c4263265502DC8;
+    address node2AddressDev = 0xF68a530Cc3d134b6007062028feC1592273B31E1;
+
+    // testnet
+    address node1Address = 0x4b971aE314964A31Bda6f370f03567AC5E9b963a;
+    address node2Address = 0x0BF12419d6354ba13452D00C47d376f881EF7b5e;
     
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -28,8 +35,11 @@ contract Ed25519OracleSetterScript is Script {
         Ed25519Oracle oracle = Ed25519Oracle(oracleAddress);
         console.log("Ed25519Oracle deployed at:", address(oracle));
         
-        oracle.registerNode{value: 0.001 ether}(node1Address, 0.001 ether);
-        oracle.registerNode{value: 0.001 ether}(node2Address, 0.001 ether);
+        // oracle.registerNode{value: 0.001 ether}(node1Address, 0.001 ether);
+        // oracle.registerNode{value: 0.001 ether}(node2Address, 0.001 ether);
+
+        oracle.unregisterNode(node1AddressDev);
+        oracle.unregisterNode(node2AddressDev);
 
         vm.stopBroadcast();
     }

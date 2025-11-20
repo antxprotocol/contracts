@@ -12,6 +12,8 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {MarginAsset} from "../src/margin/MarginAsset.sol";
 import {MarginAssetCalculator} from "../src/margin/MarginAsset.sol";
+import {MessagingFee} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 // Simple mock for Ed25519 oracle used within tests
 contract MockEd25519Oracle {
@@ -21,6 +23,44 @@ contract MockEd25519Oracle {
     }
     function isVerified(bytes32, bytes32, bytes calldata) external view returns (bool) {
         return result;
+    }
+}
+
+// Mock StargateWithdraw for testing
+contract MockStargateWithdraw {
+    using SafeERC20 for IERC20;
+    
+    bool public shouldRevert;
+    bytes32 public lastGuid;
+    address public usdc;
+    
+    constructor(address _usdc) {
+        usdc = _usdc;
+    }
+    
+    function setShouldRevert(bool _shouldRevert) external {
+        shouldRevert = _shouldRevert;
+    }
+    
+    function crossChainWithdraw(
+        uint256 clientOrderId,
+        bytes32 user,
+        uint256 amount,
+        uint256 dstChainId,
+        bytes32 dstAddress,
+        uint256 minAmountLD,
+        MessagingFee memory fee,
+        address refundAddress
+    ) external returns (bytes32 guid) {
+        if (shouldRevert) {
+            revert("MockStargateWithdraw: should revert");
+        }
+        // Transfer USDC from caller (Asset contract) to simulate cross-chain withdraw
+        // Use safeTransferFrom to properly handle failures
+        IERC20(usdc).safeTransferFrom(msg.sender, address(this), amount);
+        // Simulate successful cross-chain withdraw
+        lastGuid = keccak256(abi.encodePacked(clientOrderId, user, amount, dstChainId, block.timestamp));
+        return lastGuid;
     }
 }
 
@@ -60,6 +100,7 @@ contract AssetTest is Test {
     Asset public asset;
     MockToken public USDC;
     MockMarginAssetCalculator public marginAssetCalculator;
+    MockStargateWithdraw public mockStargateWithdraw;
     address public owner;
     address public systemAddress;
     address public settlementOperator;
@@ -73,6 +114,12 @@ contract AssetTest is Test {
     address internal user1 = address(0x5);
     address internal user2 = address(0x6);
     address[] public signers;
+    
+    // Chain IDs for testing
+    uint64 constant ARBITRUM_MAINNET = 42161;
+    uint64 constant ARBITRUM_SEPOLIA = 421614;
+    uint64 constant ETHEREUM_MAINNET = 1;
+    uint64 constant SEPOLIA = 11155111;
     
     // Helper function to convert multiple user updates into BatchUpdateData
     function createBatchUpdateDataFromUsers(
@@ -137,6 +184,46 @@ contract AssetTest is Test {
             subaccountIds[i] = getSubaccountId(users[i]);
         }
         return subaccountIds;
+    }
+    
+    // Helper function to get dstChainId based on current chain
+    function getDstChainId() internal view returns (uint64) {
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            return ARBITRUM_MAINNET;
+        }
+        return ETHEREUM_MAINNET;
+    }
+    
+    // Helper function to create dstChainIds array
+    function createDstChainIds(uint256 length) internal view returns (uint64[] memory) {
+        uint64[] memory dstChainIds = new uint64[](length);
+        uint64 dstChainId = getDstChainId();
+        for (uint256 i = 0; i < length; i++) {
+            dstChainIds[i] = dstChainId;
+        }
+        return dstChainIds;
+    }
+    
+    // Helper function to assert balance changes based on chain
+    function assertBalanceChange(
+        address user,
+        uint256 userBalanceBefore,
+        uint256 userBalanceAfter,
+        uint256 expectedAmount,
+        uint256 assetBalanceBefore,
+        uint256 mockStargateBalanceBefore
+    ) internal view {
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            // On Arbitrum, user receives USDC directly
+            assertEq(userBalanceAfter - userBalanceBefore, expectedAmount);
+        } else {
+            // On non-Arbitrum chains, USDC goes to MockStargateWithdraw for cross-chain
+            uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
+            uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
+            assertEq(userBalanceAfter - userBalanceBefore, 0);
+            assertEq(mockStargateBalanceAfter - mockStargateBalanceBefore, expectedAmount);
+            assertEq(assetBalanceBefore - assetBalanceAfter, expectedAmount);
+        }
     }
 
     // Helper function to create BatchUpdateData
@@ -213,6 +300,9 @@ contract AssetTest is Test {
 
         // Deploy mock MarginAssetCalculator
         marginAssetCalculator = new MockMarginAssetCalculator();
+        
+        // Deploy mock StargateWithdraw
+        mockStargateWithdraw = new MockStargateWithdraw(address(USDC));
 
         // Initialize signers array
         signers = new address[](3);
@@ -227,6 +317,7 @@ contract AssetTest is Test {
         asset.setSettlementAddress(settlementOperator);
         asset.setWithdrawOperator(withdrawOperator);
         asset.setMarginAsset(address(marginAssetCalculator));
+        asset.setStargateWithdraw(address(mockStargateWithdraw));
         vm.stopPrank();
         
         // Set up coin (coinId=1 is USDC) for tests via batchUpdate
@@ -517,17 +608,37 @@ contract AssetTest is Test {
         signatures[0] = userSignature;
 
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
         
         // Execute batch withdraw - should now work with correct signature
         vm.startPrank(withdrawOperator);
-        vm.expectEmit(address(asset));
-        emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), 500);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            vm.expectEmit(address(asset));
+            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), 500);
+        } else {
+            vm.expectEmit(address(asset));
+            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), 500, getDstChainId());
+        }
         uint64[] memory subaccountIds = getSubaccountIds(users);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = new uint64[](1);
+        dstChainIds[0] = block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA ? ARBITRUM_MAINNET : ETHEREUM_MAINNET;
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
-        assertEq(userBalanceAfter - userBalanceBefore, 500);
+        uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
+        
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            // On Arbitrum, user receives USDC directly
+            assertEq(userBalanceAfter - userBalanceBefore, 500);
+        } else {
+            // On non-Arbitrum chains, USDC goes to MockStargateWithdraw for cross-chain
+            assertEq(userBalanceAfter - userBalanceBefore, 0);
+            assertEq(mockStargateBalanceAfter - mockStargateBalanceBefore, 500);
+            assertEq(assetBalanceBefore - assetBalanceAfter, 500);
+        }
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
     }
@@ -577,7 +688,8 @@ contract AssetTest is Test {
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(bUsers);
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidUserSignature.selector));
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -626,7 +738,8 @@ contract AssetTest is Test {
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 100, 500));
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -660,7 +773,8 @@ contract AssetTest is Test {
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.UserAndAmountLengthNotMatch.selector));
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -692,7 +806,8 @@ contract AssetTest is Test {
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.UserAndSignatureLengthNotMatch.selector));
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -725,7 +840,8 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.OnlyWithdrawOperator.selector));
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -752,16 +868,23 @@ contract AssetTest is Test {
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
         uint256 user1BalanceBefore = USDC.balanceOf(user1);
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
 
         vm.startPrank(user1);
-        vm.expectEmit(address(asset));
-        emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            vm.expectEmit(address(asset));
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+        } else {
+            vm.expectEmit(address(asset));
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), 500, getDstChainId());
+        }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0));
+        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, 500);
+        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
@@ -786,14 +909,17 @@ contract AssetTest is Test {
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
         uint256 beforeBal = USDC.balanceOf(user1);
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
+        
         vm.startPrank(user1);
         // Use ED25519 enum to cover that path (isForce skips signature logic)
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 200, IAsset.SignatureType.ED25519, new bytes(0));
+        asset.forceWithdraw(subaccountId, 200, IAsset.SignatureType.ED25519, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 afterBal = USDC.balanceOf(user1);
-        assertEq(afterBal - beforeBal, 200);
+        assertBalanceChange(user1, beforeBal, afterBal, 200, assetBalanceBefore, mockStargateBalanceBefore);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 600);
     }
@@ -817,7 +943,7 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.TimeLockNotPassed.selector));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0));
+        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
 
@@ -838,7 +964,7 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.forceWithdraw(subaccountId, 0, IAsset.SignatureType.ECDSA, new bytes(0));
+        asset.forceWithdraw(subaccountId, 0, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
 
@@ -862,7 +988,7 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 100, 500));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0));
+        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
 
@@ -1262,7 +1388,7 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(); // Should revert due to SafeERC20 failing on false return
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0));
+        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         // Reset transfer behavior
@@ -1296,7 +1422,7 @@ contract AssetTest is Test {
         // Normal withdrawal should work
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0));
+        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
         
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
@@ -1358,18 +1484,32 @@ contract AssetTest is Test {
 
         uint256 user1BalanceBefore = USDC.balanceOf(testUser1);
         uint256 user2BalanceBefore = USDC.balanceOf(testUser2);
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
         
         // Execute batch withdraw for both users
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         uint256 user1BalanceAfter = USDC.balanceOf(testUser1);
         uint256 user2BalanceAfter = USDC.balanceOf(testUser2);
+        uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
         
-        assertEq(user1BalanceAfter - user1BalanceBefore, 500);
-        assertEq(user2BalanceAfter - user2BalanceBefore, 800);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            // On Arbitrum, users receive USDC directly
+            assertEq(user1BalanceAfter - user1BalanceBefore, 500);
+            assertEq(user2BalanceAfter - user2BalanceBefore, 800);
+        } else {
+            // On non-Arbitrum chains, USDC goes to MockStargateWithdraw for cross-chain
+            assertEq(user1BalanceAfter - user1BalanceBefore, 0);
+            assertEq(user2BalanceAfter - user2BalanceBefore, 0);
+            assertEq(mockStargateBalanceAfter - mockStargateBalanceBefore, 1300); // 500 + 800
+            assertEq(assetBalanceBefore - assetBalanceAfter, 1300);
+        }
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser1)))), 1000);
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser2)))), 2000);
@@ -1525,7 +1665,8 @@ contract AssetTest is Test {
         // This will cause an array bounds error when accessing clientOrderIds[1]
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert();
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
     }
 
     // Test isAllowedSigner with empty signers array
@@ -1614,7 +1755,8 @@ contract AssetTest is Test {
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -1730,12 +1872,22 @@ contract AssetTest is Test {
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         // Verify balance change is exactly what was expected
         uint256 contractBalanceAfter = USDC.balanceOf(address(asset));
-        assertEq(contractBalanceBefore - contractBalanceAfter, 500);
+        uint256 userBalanceAfter = USDC.balanceOf(testUser);
+        uint256 userBalanceBefore = USDC.balanceOf(testUser);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            assertEq(contractBalanceBefore - contractBalanceAfter, 500);
+        } else {
+            // On non-Arbitrum chains, balance goes to MockStargateWithdraw
+            uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
+            assertEq(contractBalanceBefore - contractBalanceAfter, 500);
+            assertEq(mockStargateBalanceAfter, 500);
+        }
     }
 
     // Test validTime modifier (though it's not currently used in the contract)
@@ -1906,7 +2058,7 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 0, 100));
-        asset.forceWithdraw(subaccountId, 100, IAsset.SignatureType.ECDSA, new bytes(0));
+        asset.forceWithdraw(subaccountId, 100, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
 
@@ -2108,16 +2260,23 @@ contract AssetTest is Test {
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
         uint256 user1BalanceBefore = USDC.balanceOf(user1);
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
 
         vm.startPrank(user1);
-        vm.expectEmit(address(asset));
-        emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            vm.expectEmit(address(asset));
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+        } else {
+            vm.expectEmit(address(asset));
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), 500, getDstChainId());
+        }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0));
+        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, 500);
+        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
@@ -2173,14 +2332,23 @@ contract AssetTest is Test {
 
         // Execute batch withdraw with Ed25519 signature type
         vm.startPrank(withdrawOperator);
-        vm.expectEmit(address(asset));
-        emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), 500);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            vm.expectEmit(address(asset));
+            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), 500);
+        } else {
+            vm.expectEmit(address(asset));
+            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), 500, getDstChainId());
+        }
         uint64[] memory subaccountIds = getSubaccountIds(users);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ED25519);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
+        
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ED25519);
         vm.stopPrank();
         
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
-        assertEq(userBalanceAfter - userBalanceBefore, 500);
+        assertBalanceChange(testUser, userBalanceBefore, userBalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
     }
@@ -2236,7 +2404,8 @@ contract AssetTest is Test {
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidUserSignature.selector));
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ED25519);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ED25519);
         vm.stopPrank();
     }
     
@@ -2431,14 +2600,23 @@ contract AssetTest is Test {
         
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
-        vm.expectEmit(address(asset));
-        emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), maxAmount);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            vm.expectEmit(address(asset));
+            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), maxAmount);
+        } else {
+            vm.expectEmit(address(asset));
+            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), maxAmount, getDstChainId());
+        }
         uint64[] memory subaccountIds = getSubaccountIds(users);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
+        
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
-        assertEq(userBalanceAfter - userBalanceBefore, maxAmount);
+        assertBalanceChange(testUser, userBalanceBefore, userBalanceAfter, maxAmount, assetBalanceBefore, mockStargateBalanceBefore);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), maxAmount);
     }
@@ -2468,14 +2646,22 @@ contract AssetTest is Test {
         uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
-        vm.expectEmit(address(asset));
-        emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), maxAmount);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            vm.expectEmit(address(asset));
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), maxAmount);
+        } else {
+            vm.expectEmit(address(asset));
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), maxAmount, getDstChainId());
+        }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, maxAmount, IAsset.SignatureType.ECDSA, new bytes(0));
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
+        
+        asset.forceWithdraw(subaccountId, maxAmount, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, maxAmount);
+        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, maxAmount, assetBalanceBefore, mockStargateBalanceBefore);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), maxAmount);
     }
@@ -2715,14 +2901,23 @@ contract AssetTest is Test {
         
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
-        vm.expectEmit(address(asset));
-        emit IAsset.UserWithdraw(type(uint256).max, bytes32(uint256(uint160(testUser))), 500);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            vm.expectEmit(address(asset));
+            emit IAsset.UserWithdraw(type(uint256).max, bytes32(uint256(uint160(testUser))), 500);
+        } else {
+            vm.expectEmit(address(asset));
+            emit IAsset.CrossChainWithdraw(type(uint256).max, bytes32(uint256(uint160(testUser))), 500, getDstChainId());
+        }
         uint64[] memory subaccountIds = getSubaccountIds(users);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
+        
+        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
-        assertEq(userBalanceAfter - userBalanceBefore, 500);
+        assertBalanceChange(testUser, userBalanceBefore, userBalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
     }
@@ -2751,14 +2946,22 @@ contract AssetTest is Test {
         uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
-        vm.expectEmit(address(asset));
-        emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            vm.expectEmit(address(asset));
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+        } else {
+            vm.expectEmit(address(asset));
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), 500, getDstChainId());
+        }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0));
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
+        
+        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, 500);
+        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
@@ -2788,7 +2991,7 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.TimeLockNotPassed.selector));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0));
+        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
     
@@ -2816,14 +3019,22 @@ contract AssetTest is Test {
         uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
-        vm.expectEmit(address(asset));
-        emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+            vm.expectEmit(address(asset));
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+        } else {
+            vm.expectEmit(address(asset));
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), 500, getDstChainId());
+        }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0));
+        uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
+        uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
+        
+        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertEq(user1BalanceAfter - user1BalanceBefore, 500);
+        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
