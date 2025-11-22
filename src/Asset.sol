@@ -288,8 +288,14 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         uint256 antxChainHeight,
         BatchUpdateData memory batchUpdateData
     ) public onlySettlementOperator {
-        if (batchId != lastBatchId +1 || 
-        (batchId == lastBatchId && batchSeqIds[batchId][seqInBatch])) revert InvalidBatchId();
+        // Validate batchId: must be lastBatchId + 1, or lastBatchId with unused seqInBatch
+        if (batchId == lastBatchId) {
+            // If using same batchId, seqInBatch must not be used
+            if (batchSeqIds[batchId][seqInBatch]) revert InvalidBatchId();
+        } else if (batchId != lastBatchId + 1) {
+            // If not same batchId, must be sequential
+            revert InvalidBatchId();
+        }
         if (antxChainHeight <= lastAntxChainHeight) revert InvalidAntxChainHeight();
         if (marginAsset == address(0)) revert ZeroAddressNotAllowed();
 
