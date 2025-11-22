@@ -108,6 +108,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     function _userWithdraw(uint256 clientOrderId,bytes32 user, uint64 dstChainId, uint256 amount,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
         if (!isForce) {
             // check user signature
+            // TODO：add more fields to the operationHash
             bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, amount, block.chainid));
             operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
             if (signatureType == SignatureType.ECDSA) {
@@ -122,8 +123,8 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         if (userAvailableAmount < amount) revert InsufficientUserBalance(userAvailableAmount, amount);
 
 
-        // check if the user is on Arbitrum
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        // check if the dstChainId is native chain
+        if (dstChainId == ARBITRUM_MAINNET || dstChainId == ARBITRUM_SEPOLIA) {
            // Store balance before transfer
             uint256 preBalance = USDC.balanceOf(address(this));
             
