@@ -39,9 +39,13 @@ contract AssetSetterScript is Script {
         // console.log("settlement operator address at:", address(settlementOperator));
 
         // 
-        address marginAsset = 0xC6B7926Ad8d58b95C23cAE9E92854532ff775678;
-        console.log("Margin asset address at:", address(marginAsset));
-        asset.setMarginAsset(marginAsset);
+        // address marginAsset = 0xC6B7926Ad8d58b95C23cAE9E92854532ff775678;
+        // console.log("Margin asset address at:", address(marginAsset));
+        // asset.setMarginAsset(marginAsset);
+
+        address stargateWithdraw = 0x0000000000000000000000000000000000000000;
+        console.log("Stargate withdraw address at:", address(stargateWithdraw));
+        asset.setStargateWithdraw(stargateWithdraw);
 
         vm.stopBroadcast();
     }
