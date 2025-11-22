@@ -1340,6 +1340,34 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
+    function test_setStargateWithdraw_success() public {
+        address newStargateWithdraw = address(0x999);
+        
+        vm.startPrank(owner);
+        vm.expectEmit(address(asset));
+        emit IAsset.StargateWithdrawUpdated(newStargateWithdraw);
+        asset.setStargateWithdraw(newStargateWithdraw);
+        vm.stopPrank();
+
+        assertEq(address(asset.stargateWithdraw()), newStargateWithdraw);
+    }
+
+    function test_setStargateWithdraw_onlyOwner() public {
+        address newStargateWithdraw = address(0x999);
+        
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
+        asset.setStargateWithdraw(newStargateWithdraw);
+        vm.stopPrank();
+    }
+
+    function test_setStargateWithdraw_zeroAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
+        asset.setStargateWithdraw(address(0));
+        vm.stopPrank();
+    }
+
     // Test isAllowedSigner function
     function test_isAllowedSigner() public {
         assertTrue(asset.isAllowedSigner(signer1));
