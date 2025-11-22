@@ -30,7 +30,7 @@ contract StargateWithdrawScript is Script {
         // Stargate Pool address - Update based on your network
         // For Arbitrum Sepolia, check Stargate documentation for the correct pool address
         // Note: Stargate v2 pool addresses may vary by network
-        address stargatePoolAddress = vm.envAddress("STARGATE_POOL_ADDRESS");
+        address stargatePoolAddress = vm.envOr("STARGATE_POOL_ADDRESS", address(0x543BdA7c6cA4384FE90B1F5929bb851F52888983));
         console.log("Stargate Pool address:", stargatePoolAddress);
         
         // Owner address (can be deployer or a multisig)

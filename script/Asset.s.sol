@@ -35,6 +35,9 @@ contract AssetScript is Script {
         address marginAssetCalculator = 0xC6B7926Ad8d58b95C23cAE9E92854532ff775678;
         console.log("Margin asset calculator address at:", address(marginAssetCalculator));
 
+        address stargateWithdraw = 0x48E34cA9fa930b7A1e0dddb663320c97305bf6d2;
+        console.log("Stargate withdraw address at:", address(stargateWithdraw));
+
         // Deploy asset
         Asset asset =  new Asset(address(usdcAddress));
         console.log("Asset deployed at:", address(asset));
@@ -53,6 +56,9 @@ contract AssetScript is Script {
 
         // set margin asset
         asset.setMarginAsset(marginAssetCalculator);
+
+        // set stargate withdraw
+        asset.setStargateWithdraw(stargateWithdraw);
 
         vm.stopBroadcast();
     }
