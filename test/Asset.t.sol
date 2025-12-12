@@ -116,8 +116,8 @@ contract AssetTest is Test {
     address[] public signers;
     
     // Chain IDs for testing
-    uint64 constant ARBITRUM_MAINNET = 42161;
-    uint64 constant ARBITRUM_SEPOLIA = 421614;
+    uint64 constant BASE_MAINNET = 8543;
+    uint64 constant BASE_SEPOLIA = 85432;
     uint64 constant ETHEREUM_MAINNET = 1;
     uint64 constant SEPOLIA = 11155111;
     
@@ -188,10 +188,35 @@ contract AssetTest is Test {
     
     // Helper function to get dstChainId based on current chain
     function getDstChainId() internal view returns (uint64) {
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
-            return ARBITRUM_MAINNET;
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
+            return BASE_MAINNET;
         }
         return ETHEREUM_MAINNET;
+    }
+    
+    // Helper function to create signature hash for USER_WITHDRAW
+    function createWithdrawSignatureHash(
+        uint256 clientOrderId,
+        bytes32 user,
+        bytes32 recipient,
+        uint256 amount,
+        uint256 expireTime
+    ) internal view returns (bytes32) {
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, recipient, amount, expireTime, block.chainid));
+        return MessageHashUtils.toEthSignedMessageHash(operationHash);
+    }
+    
+    // Helper function to create signature for USER_WITHDRAW
+    function createWithdrawSignature(
+        uint256 clientOrderId,
+        bytes32 user,
+        bytes32 recipient,
+        uint256 amount,
+        uint256 expireTime,
+        uint256 privateKey
+    ) internal view returns (bytes memory) {
+        bytes32 hash = createWithdrawSignatureHash(clientOrderId, user, recipient, amount, expireTime);
+        return signMessage(hash, privateKey);
     }
     
     // Helper function to create dstChainIds array
@@ -204,6 +229,24 @@ contract AssetTest is Test {
         return dstChainIds;
     }
     
+    // Helper function to create recipients array (defaults to user address)
+    function createRecipients(bytes32[] memory users) internal pure returns (bytes32[] memory) {
+        bytes32[] memory recipients = new bytes32[](users.length);
+        for (uint256 i = 0; i < users.length; i++) {
+            recipients[i] = users[i]; // Default recipient is the user themselves
+        }
+        return recipients;
+    }
+    
+    // Helper function to create expireTimes array
+    function createExpireTimes(uint256 length, uint256 expireTime) internal pure returns (uint256[] memory) {
+        uint256[] memory expireTimes = new uint256[](length);
+        for (uint256 i = 0; i < length; i++) {
+            expireTimes[i] = expireTime;
+        }
+        return expireTimes;
+    }
+    
     // Helper function to assert balance changes based on chain
     function assertBalanceChange(
         address user,
@@ -213,8 +256,8 @@ contract AssetTest is Test {
         uint256 assetBalanceBefore,
         uint256 mockStargateBalanceBefore
     ) internal view {
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
-            // On Arbitrum, user receives USDC directly
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
+            // On Base, user receives USDC directly
             assertEq(userBalanceAfter - userBalanceBefore, expectedAmount);
         } else {
             // On non-Arbitrum chains, USDC goes to MockStargateWithdraw for cross-chain
@@ -598,14 +641,18 @@ contract AssetTest is Test {
         amounts[0] = 500;
 
         // Create user signature with the correct private key for the test user
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser))), uint256(500), block.chainid));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
-        bytes memory userSignature = abi.encodePacked(r, s, v);
+        bytes32 userBytes = bytes32(uint256(uint160(testUser)));
+        bytes32 recipient = userBytes; // Default recipient is the user themselves
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
+        
+        bytes32[] memory recipients = new bytes32[](1);
+        recipients[0] = recipient;
+        uint256[] memory expireTimes = new uint256[](1);
+        expireTimes[0] = expireTime;
 
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
@@ -613,25 +660,24 @@ contract AssetTest is Test {
         
         // Execute batch withdraw - should now work with correct signature
         vm.startPrank(withdrawOperator);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), 500);
+            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, BASE_MAINNET);
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, getDstChainId());
         }
         uint64[] memory subaccountIds = getSubaccountIds(users);
-        uint64[] memory dstChainIds = new uint64[](1);
-        dstChainIds[0] = block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA ? ARBITRUM_MAINNET : ETHEREUM_MAINNET;
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
         uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
         
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
-            // On Arbitrum, user receives USDC directly
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
+            // On Base, user receives USDC directly
             assertEq(userBalanceAfter - userBalanceBefore, 500);
         } else {
             // On non-Arbitrum chains, USDC goes to MockStargateWithdraw for cross-chain
@@ -674,22 +720,23 @@ contract AssetTest is Test {
         amounts[0] = 500;
 
         // Create signature with wrong private key
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), user1, uint256(500), block.chainid));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
-        uint256 wrongPrivateKey = 999;
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPrivateKey, operationHash);
-        bytes memory wrongSignature = abi.encodePacked(r, s, v);
+        bytes32 userBytes = bytes32(uint256(uint160(user1)));
+        bytes32 recipient = userBytes;
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes memory wrongSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, 999);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = wrongSignature;
+        
+        bytes32[] memory recipients = createRecipients(bUsers);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, expireTime);
         
         // Execute batch withdraw - should fail with invalid signature
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(bUsers);
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidUserSignature.selector));
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -725,21 +772,23 @@ contract AssetTest is Test {
         amounts[0] = 500; // More than user has
 
         // Create user signature
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser))), uint256(500), block.chainid));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
-        bytes memory userSignature = abi.encodePacked(r, s, v);
+        bytes32 userBytes = bytes32(uint256(uint160(testUser)));
+        bytes32 recipient = userBytes;
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
+        
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, expireTime);
         
         // Execute batch withdraw - should fail with insufficient balance
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 100, 500));
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -774,7 +823,9 @@ contract AssetTest is Test {
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.UserAndAmountLengthNotMatch.selector));
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -807,7 +858,9 @@ contract AssetTest is Test {
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.UserAndSignatureLengthNotMatch.selector));
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -841,7 +894,9 @@ contract AssetTest is Test {
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.OnlyWithdrawOperator.selector));
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -872,15 +927,16 @@ contract AssetTest is Test {
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
 
         vm.startPrank(user1);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, BASE_MAINNET);
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, getDstChainId());
         }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
@@ -915,7 +971,8 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         // Use ED25519 enum to cover that path (isForce skips signature logic)
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 200, IAsset.SignatureType.ED25519, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 200, expireTime, IAsset.SignatureType.ED25519, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 afterBal = USDC.balanceOf(user1);
@@ -943,7 +1000,8 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.TimeLockNotPassed.selector));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
 
@@ -964,7 +1022,8 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        asset.forceWithdraw(subaccountId, 0, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 0, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
 
@@ -988,7 +1047,8 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 100, 500));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
 
@@ -1416,7 +1476,8 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(); // Should revert due to SafeERC20 failing on false return
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         // Reset transfer behavior
@@ -1450,7 +1511,8 @@ contract AssetTest is Test {
         // Normal withdrawal should work
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
         
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
@@ -1497,18 +1559,15 @@ contract AssetTest is Test {
         amounts[1] = 800;
 
         // Create signatures for both users
-        bytes32 operationHash1 = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser1))), uint256(500), block.chainid));
-        operationHash1 = MessageHashUtils.toEthSignedMessageHash(operationHash1);
-        
-        bytes32 operationHash2 = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(456), bytes32(uint256(uint160(testUser2))), uint256(800), block.chainid));
-        operationHash2 = MessageHashUtils.toEthSignedMessageHash(operationHash2);
-        
-        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(user1PrivateKey, operationHash1);
-        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(user2PrivateKey, operationHash2);
+        bytes32 user1Bytes = bytes32(uint256(uint160(testUser1)));
+        bytes32 user2Bytes = bytes32(uint256(uint160(testUser2)));
+        bytes32 recipient1 = user1Bytes;
+        bytes32 recipient2 = user2Bytes;
+        uint256 expireTime = block.timestamp + 1 days;
         
         bytes[] memory signatures = new bytes[](2);
-        signatures[0] = abi.encodePacked(r1, s1, v1);
-        signatures[1] = abi.encodePacked(r2, s2, v2);
+        signatures[0] = createWithdrawSignature(123, user1Bytes, recipient1, 500, expireTime, user1PrivateKey);
+        signatures[1] = createWithdrawSignature(456, user2Bytes, recipient2, 800, expireTime, user2PrivateKey);
 
         uint256 user1BalanceBefore = USDC.balanceOf(testUser1);
         uint256 user2BalanceBefore = USDC.balanceOf(testUser2);
@@ -1519,7 +1578,9 @@ contract AssetTest is Test {
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         uint256 user1BalanceAfter = USDC.balanceOf(testUser1);
@@ -1527,7 +1588,7 @@ contract AssetTest is Test {
         uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
         
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             // On Arbitrum, users receive USDC directly
             assertEq(user1BalanceAfter - user1BalanceBefore, 500);
             assertEq(user2BalanceAfter - user2BalanceBefore, 800);
@@ -1694,7 +1755,9 @@ contract AssetTest is Test {
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert();
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
     }
 
     // Test isAllowedSigner with empty signers array
@@ -1770,11 +1833,10 @@ contract AssetTest is Test {
         amounts[0] = 0; // Zero amount
 
         // Create user signature for zero amount
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser))), uint256(0), block.chainid));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
-        bytes memory userSignature = abi.encodePacked(r, s, v);
+        bytes32 userBytes = bytes32(uint256(uint160(testUser)));
+        bytes32 recipient = userBytes;
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 0, expireTime, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -1784,7 +1846,9 @@ contract AssetTest is Test {
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
     }
 
@@ -1888,11 +1952,10 @@ contract AssetTest is Test {
         amounts[0] = 500;
 
         // Create user signature
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser))), uint256(500), block.chainid));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
-        bytes memory userSignature = abi.encodePacked(r, s, v);
+        bytes32 userBytes = bytes32(uint256(uint160(testUser)));
+        bytes32 recipient = userBytes;
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -1901,14 +1964,16 @@ contract AssetTest is Test {
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         // Verify balance change is exactly what was expected
         uint256 contractBalanceAfter = USDC.balanceOf(address(asset));
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             assertEq(contractBalanceBefore - contractBalanceAfter, 500);
         } else {
             // On non-Arbitrum chains, balance goes to MockStargateWithdraw
@@ -2086,7 +2151,8 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 0, 100));
-        asset.forceWithdraw(subaccountId, 100, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 100, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
 
@@ -2292,15 +2358,16 @@ contract AssetTest is Test {
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
 
         vm.startPrank(user1);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, BASE_MAINNET);
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, getDstChainId());
         }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
@@ -2340,11 +2407,10 @@ contract AssetTest is Test {
         amounts[0] = 500;
 
         // Create user signature with the correct private key for the test user
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser))), uint256(500), block.chainid));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
-        bytes memory userSignature = abi.encodePacked(r, s, v);
+        bytes32 userBytes = bytes32(uint256(uint160(testUser)));
+        bytes32 recipient = userBytes;
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -2360,19 +2426,21 @@ contract AssetTest is Test {
 
         // Execute batch withdraw with Ed25519 signature type
         vm.startPrank(withdrawOperator);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), 500);
+            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, BASE_MAINNET);
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, getDstChainId());
         }
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
         
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ED25519);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ED25519);
         vm.stopPrank();
         
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
@@ -2412,11 +2480,10 @@ contract AssetTest is Test {
         amounts[0] = 500;
 
         // Create user signature with the correct private key for the test user
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser))), uint256(500), block.chainid));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
-        bytes memory userSignature = abi.encodePacked(r, s, v);
+        bytes32 userBytes = bytes32(uint256(uint160(testUser)));
+        bytes32 recipient = userBytes;
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -2433,7 +2500,9 @@ contract AssetTest is Test {
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidUserSignature.selector));
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ED25519);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ED25519);
         vm.stopPrank();
     }
     
@@ -2615,11 +2684,10 @@ contract AssetTest is Test {
         amounts[0] = maxAmount;
 
         // Create user signature for max amount
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", uint256(123), bytes32(uint256(uint160(testUser))), maxAmount, block.chainid));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
-        bytes memory userSignature = abi.encodePacked(r, s, v);
+        bytes32 userBytes = bytes32(uint256(uint160(testUser)));
+        bytes32 recipient = userBytes;
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, maxAmount, expireTime, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -2628,19 +2696,21 @@ contract AssetTest is Test {
         
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), maxAmount);
+            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), maxAmount, BASE_MAINNET);
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), maxAmount, getDstChainId());
+            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), maxAmount, getDstChainId());
         }
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
         
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
@@ -2674,18 +2744,19 @@ contract AssetTest is Test {
         uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), maxAmount);
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), maxAmount, BASE_MAINNET);
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), maxAmount, getDstChainId());
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), maxAmount, getDstChainId());
         }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
         
-        asset.forceWithdraw(subaccountId, maxAmount, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, maxAmount, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
@@ -2916,11 +2987,10 @@ contract AssetTest is Test {
         amounts[0] = 500;
 
         // Create user signature with max client order ID
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", type(uint256).max, bytes32(uint256(uint160(testUser))), uint256(500), block.chainid));
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, operationHash);
-        bytes memory userSignature = abi.encodePacked(r, s, v);
+        bytes32 userBytes = bytes32(uint256(uint160(testUser)));
+        bytes32 recipient = userBytes;
+        uint256 expireTime = block.timestamp + 1 days;
+        bytes memory userSignature = createWithdrawSignature(type(uint256).max, userBytes, recipient, 500, expireTime, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -2929,19 +2999,21 @@ contract AssetTest is Test {
         
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.UserWithdraw(type(uint256).max, bytes32(uint256(uint160(testUser))), 500);
+            emit IAsset.UserWithdraw(type(uint256).max, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, BASE_MAINNET);
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(type(uint256).max, bytes32(uint256(uint160(testUser))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(type(uint256).max, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, getDstChainId());
         }
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
         
-        asset.batchWithdraw(clientOrderIds, subaccountIds, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        bytes32[] memory recipients = createRecipients(users);
+        uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
+        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
         vm.stopPrank();
         
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
@@ -2974,18 +3046,19 @@ contract AssetTest is Test {
         uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, BASE_MAINNET);
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, getDstChainId());
         }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
         
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
@@ -3019,7 +3092,8 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.TimeLockNotPassed.selector));
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
     
@@ -3047,18 +3121,19 @@ contract AssetTest is Test {
         uint256 user1BalanceBefore = USDC.balanceOf(user1);
 
         vm.startPrank(user1);
-        if (block.chainid == ARBITRUM_MAINNET || block.chainid == ARBITRUM_SEPOLIA) {
+        if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), 500);
+            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, BASE_MAINNET);
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, getDstChainId());
         }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
         
-        asset.forceWithdraw(subaccountId, 500, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        uint256 expireTime = block.timestamp + 1 days;
+        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);

@@ -41,9 +41,9 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     // Stargate cross-chain withdraw adapter
     StargateWithdraw public stargateWithdraw;
     
-    // Arbitrum chain IDs
-    uint256 public constant ARBITRUM_MAINNET = 42161;
-    uint256 public constant ARBITRUM_SEPOLIA = 421614; 
+    // Base chain IDs
+    uint256 public constant BASE_MAINNET = 8543;
+    uint256 public constant BASE_SEPOLIA = 85432; 
 
     // MarginAsset storage info
     address public marginAsset;
@@ -85,31 +85,30 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         USDC = IERC20(_USDC);
     }
 
-    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds, uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
+    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds,bytes32 []memory recipients,uint256 []memory expireTimes,uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
         if (subaccountIds.length != amounts.length) revert UserAndAmountLengthNotMatch();
         if (subaccountIds.length != signatures.length) revert UserAndSignatureLengthNotMatch();
 
         for (uint64 i = 0; i < subaccountIds.length; i++) {
             bytes32 user = subaccounts[subaccountIds[i]].chainAddress;
-            _userWithdraw(clientOrderIds[i],user,dstChainIds[i],amounts[i],signatures[i],false,signatureType);
-            emit UserWithdraw(clientOrderIds[i],user,amounts[i]);
+            _userWithdraw(clientOrderIds[i],user,recipients[i],expireTimes[i],dstChainIds[i],amounts[i],signatures[i],false,signatureType);
+            emit UserWithdraw(clientOrderIds[i],user,recipients[i],amounts[i],dstChainIds[i]);
         }
     }
 
-    function forceWithdraw(uint64 subaccountId,uint256 amount,SignatureType signatureType,bytes memory signatures,uint64 dstChainId) external nonReentrant validAmount(amount) {
+    function forceWithdraw(uint64 subaccountId,uint256 amount,uint256 expireTime,SignatureType signatureType,bytes memory signatures,uint64 dstChainId) external nonReentrant validAmount(amount) {
         // check time lock
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
         // force withdraw
         bytes32 user = subaccounts[subaccountId].chainAddress;
-        _userWithdraw(0, user, dstChainId, amount, signatures, true, signatureType);
-        emit ForceWithdraw(user, amount);
+        _userWithdraw(0, user, user, expireTime, dstChainId, amount, signatures, true, signatureType);
+        emit ForceWithdraw(user, user, amount, dstChainId);
     }
 
-    function _userWithdraw(uint256 clientOrderId,bytes32 user, uint64 dstChainId, uint256 amount,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
+    function _userWithdraw(uint256 clientOrderId,bytes32 user,bytes32 recipient,uint256 expireTime,uint64 dstChainId, uint256 amount,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
         if (!isForce) {
             // check user signature
-            // TODO：add more fields to the operationHash
-            bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, amount, block.chainid));
+            bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, recipient, amount, expireTime, block.chainid));
             operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
             if (signatureType == SignatureType.ECDSA) {
                 if (user != bytes32(uint256(uint160(ECDSA.recover(operationHash, signatures))))) revert InvalidUserSignature();
@@ -124,30 +123,30 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
 
 
         // check if the dstChainId is native chain
-        if (dstChainId == ARBITRUM_MAINNET || dstChainId == ARBITRUM_SEPOLIA) {
+        if (dstChainId == BASE_MAINNET || dstChainId == BASE_SEPOLIA) {
            // Store balance before transfer
             uint256 preBalance = USDC.balanceOf(address(this));
             
             // Execute transfer
-            IERC20(USDC).safeTransfer(address(uint160(uint256(user))), amount);
+            IERC20(USDC).safeTransfer(address(uint160(uint256(recipient))), amount);
             
             // Verify transfer happened correctly 
             uint256 postBalance = USDC.balanceOf(address(this));
             assert(preBalance - postBalance == amount);
              // emit event
-            emit UserWithdraw(clientOrderId, user, amount);
+            emit UserWithdraw(clientOrderId, user,recipient, amount,dstChainId);
         } else {
             // cross-chain withdraw
             // Approve StargateWithdraw to spend USDC
             USDC.forceApprove(address(stargateWithdraw), amount);
             
             // Execute cross-chain withdraw
-            stargateWithdraw.crossChainWithdraw(clientOrderId, user, amount, dstChainId, user, 0, MessagingFee({nativeFee: 0, lzTokenFee: 0}), address(this));
+            stargateWithdraw.crossChainWithdraw(clientOrderId, recipient, amount, dstChainId, user, 0, MessagingFee({nativeFee: 0, lzTokenFee: 0}), address(this));
             
             // Reset approval
             USDC.forceApprove(address(stargateWithdraw), 0);
             
-            emit CrossChainWithdraw(clientOrderId, user, amount, dstChainId);
+            emit CrossChainWithdraw(clientOrderId, user, recipient, amount, dstChainId);
         }
     }
 

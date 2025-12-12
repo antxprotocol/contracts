@@ -6,9 +6,9 @@ import "../margin/MarginAsset.sol";
 interface IAsset {
     // Events
     event SignersUpdated(address[] signers);
-    event UserWithdraw(uint256 clientOrderId,bytes32 indexed user, uint256 amount);
-    event CrossChainWithdraw(uint256 clientOrderId,bytes32 indexed user, uint256 amount, uint64 dstChainId);
-    event ForceWithdraw(bytes32 indexed user, uint256 amount);
+    event UserWithdraw(uint256 clientOrderId,bytes32 indexed user,bytes32 indexed recipient, uint256 amount, uint64 dstChainId);
+    event CrossChainWithdraw(uint256 clientOrderId,bytes32 indexed user, bytes32 indexed recipient, uint256 amount, uint64 dstChainId);
+    event ForceWithdraw(bytes32 indexed user, bytes32 indexed recipient, uint256 amount, uint64 dstChainId);
     event BatchUpdated(uint256 batchId, uint256 antxChainHeight, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
     event EmergencyWithdraw(address indexed to, uint256 amount);
@@ -52,8 +52,8 @@ interface IAsset {
     }
     
     // State-changing functions
-    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds, uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external;
-    function forceWithdraw(uint64 subaccountId,uint256 amount, SignatureType signatureType, bytes memory signatures,uint64 dstChainId) external;
+    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds,bytes32 []memory recipients,uint256 []memory expireTimes,uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external;
+    function forceWithdraw(uint64 subaccountId,uint256 amount,uint256 expireTime,SignatureType signatureType,bytes memory signatures,uint64 dstChainId) external;
     function setSigners(address[] memory _signers) external;
     function setSettlementAddress(address _settlementAddress) external;
     function setWithdrawOperator(address _withdrawOperator) external;
