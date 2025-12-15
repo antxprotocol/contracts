@@ -17,9 +17,9 @@ import {MessagingFee, MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/
 contract StargateWithdraw is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // Arbitrum chain IDs
-    uint256 public constant ARBITRUM_MAINNET = 42161;
-    uint256 public constant ARBITRUM_SEPOLIA = 421614;
+    // Ethereum chain IDs
+    uint256 public constant MAINNET = 1;
+    uint256 public constant SEPOLIA = 11155111;
 
     // Stargate pool contract
     IStargatePool public stargatePool;
@@ -50,7 +50,6 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
 
     // Errors
     error InvalidChainId();
-    error ArbitrumChainNotSupported();
     error ChainNotSupported(uint256 chainId);
     error InvalidStargatePool();
     error InsufficientBalance();
@@ -59,8 +58,8 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
 
     modifier validChain(uint256 chainId) {
         if (chainId == 0) revert InvalidChainId();
-        if (chainId == ARBITRUM_MAINNET || chainId == ARBITRUM_SEPOLIA) {
-            revert ArbitrumChainNotSupported();
+        if (chainId != MAINNET && chainId != SEPOLIA) {
+            revert ChainNotSupported(chainId);
         }
         if (!supportedChains[chainId]) {
             revert ChainNotSupported(chainId);
@@ -174,8 +173,8 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
      * @param supported Whether the chain is supported
      */
     function setChainSupport(uint256 chainId, bool supported) external onlyOwner {
-        if (chainId == ARBITRUM_MAINNET || chainId == ARBITRUM_SEPOLIA) {
-            revert ArbitrumChainNotSupported();
+        if (chainId != MAINNET && chainId != SEPOLIA) {
+            revert ChainNotSupported(chainId);
         }
         supportedChains[chainId] = supported;
         emit ChainSupportUpdated(chainId, supported);

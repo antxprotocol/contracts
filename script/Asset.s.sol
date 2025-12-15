@@ -11,31 +11,48 @@ contract AssetScript is Script {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(privateKey);
 
-        address usdcAddress = 0x3253a335E7bFfB4790Aa4C25C4250d206E9b9773;
-        console.log("USDC address at:", address(usdcAddress));
+        address usdcAddress;
 
         address[] memory signers = new address[](3);
         signers[0] = 0x4626eb76a7c2896645B0117614Ec0555e6E3a180;
         signers[1] = 0x6c7459c4B3B84E24734E59D4a6749EB02Ea26406;
         signers[2] = 0x3171E2318402Cea35849CDaed28261A25e25849c;
 
+        string memory currentEnv = vm.envString("CURRENT_ENV");
         // address settlementOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2; // devnet
-        address settlementOperator = 0x3a53d44375e5202ad3bCAeB0D6588e7Ad0B0F8C6; // testnet
+        address settlementOperator;
+        address withdrawOperator;
+        address ed25519Oracle;
+        address marginAssetCalculator;
+        address stargateWithdraw ;
+
+        if (keccak256(bytes(currentEnv)) == keccak256(bytes("devnet"))) {
+            usdcAddress = vm.envAddress("DEVNET_USDC_ADDRESS"); // devnet
+            settlementOperator = vm.envAddress("DEVNET_SETTLEMENT_ADDRESS"); // devnet
+            withdrawOperator = vm.envAddress("DEVNET_WITHDRAW_ADDRESS"); // devnet
+            ed25519Oracle = vm.envAddress("DEVNET_ED25519_ORACLE_ADDRESS"); // devnet
+            marginAssetCalculator = vm.envAddress("DEVNET_MARGIN_ASSET_CALCULATOR_ADDRESS"); // devnet
+            stargateWithdraw = vm.envAddress("DEVNET_STARGATE_WITHDRAW_ADDRESS"); // devnet
+        } else if (keccak256(bytes(currentEnv)) == keccak256(bytes("testnet"))) {
+            usdcAddress = vm.envAddress("TESTNET_USDC_ADDRESS"); // testnet
+            settlementOperator = vm.envAddress("TESTNET_SETTLEMENT_ADDRESS"); // testnet
+            withdrawOperator = vm.envAddress("TESTNET_WITHDRAW_ADDRESS"); // testnet
+            ed25519Oracle = vm.envAddress("TESTNET_ED25519_ORACLE_ADDRESS"); // testnet
+            marginAssetCalculator = vm.envAddress("TESTNET_MARGIN_ASSET_CALCULATOR_ADDRESS"); // testnet
+            stargateWithdraw = vm.envAddress("TESTNET_STARGATE_WITHDRAW_ADDRESS"); // testnet
+        } else {
+            usdcAddress = vm.envAddress("MAINNET_USDC_ADDRESS"); // mainnet
+            settlementOperator = vm.envAddress("MAINNET_SETTLEMENT_ADDRESS"); // mainnet
+            withdrawOperator = vm.envAddress("MAINNET_WITHDRAW_ADDRESS"); // mainnet
+            ed25519Oracle = vm.envAddress("MAINNET_ED25519_ORACLE_ADDRESS"); // mainnet
+            marginAssetCalculator = vm.envAddress("MAINNET_MARGIN_ASSET_CALCULATOR_ADDRESS"); // mainnet
+            stargateWithdraw = vm.envAddress("MAINNET_STARGATE_WITHDRAW_ADDRESS"); // mainnet
+        }
+        console.log("USDC address at:", address(usdcAddress));
         console.log("Settlement address at:", address(settlementOperator));
-
-        // address withdrawOperator = 0x99998e313c602C1D602e6874446b3eaAB4CD7bE2; // devnet
-        address withdrawOperator = 0x3a53d44375e5202ad3bCAeB0D6588e7Ad0B0F8C6; // testnet
         console.log("Withdraw operator address at:", address(withdrawOperator));
-
-        // address ed25519Oracle = 0xDA4d9912057A1cA19e9b3A16dc689054AA55981c; //devnet
-        address ed25519Oracle = 0x4D4434E2c9987f9cc67b6Ac7c42a792fcB74E4f1; //testnet
-
         console.log("Ed25519 oracle address at:", address(ed25519Oracle));
-
-        address marginAssetCalculator = 0xC6B7926Ad8d58b95C23cAE9E92854532ff775678;
         console.log("Margin asset calculator address at:", address(marginAssetCalculator));
-
-        address stargateWithdraw = 0x48E34cA9fa930b7A1e0dddb663320c97305bf6d2;
         console.log("Stargate withdraw address at:", address(stargateWithdraw));
 
         // Deploy asset

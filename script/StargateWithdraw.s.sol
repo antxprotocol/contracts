@@ -20,29 +20,30 @@ contract StargateWithdrawScript is Script {
         
         vm.startBroadcast(deployerPrivateKey);
         
-        // Configuration - Update these addresses based on your deployment network
-        // USDC address
-        // Arbitrum Sepolia: 0x3253a335E7bFfB4790Aa4C25C4250d206E9b9773
-        // Arbitrum Mainnet: Check Stargate documentation
-        address usdcAddress = vm.envOr("USDC_ADDRESS", address(0x3253a335E7bFfB4790Aa4C25C4250d206E9b9773));
+
+        string memory currentEnv = vm.envString("CURRENT_ENV");
+        address usdcAddress;
+        address stargatePoolAddress;
+        if (keccak256(bytes(currentEnv)) == keccak256(bytes("devnet"))) {
+            usdcAddress = vm.envAddress("DEVNET_USDC_ADDRESS");
+            stargatePoolAddress = vm.envAddress("DEVNET_STARGATE_POOL_USDC_ADDRESS");
+        } else if (keccak256(bytes(currentEnv)) == keccak256(bytes("testnet"))) {
+            usdcAddress = vm.envAddress("TESTNET_USDC_ADDRESS");
+            stargatePoolAddress = vm.envAddress("TESTNET_STARGATE_POOL_USDC_ADDRESS");
+        } else {
+            usdcAddress = vm.envAddress("MAINNET_USDC_ADDRESS");
+            stargatePoolAddress = vm.envAddress("MAINNET_STARGATE_POOL_USDC_ADDRESS");
+        }
         console.log("USDC address:", usdcAddress);
         
         // Stargate Pool address - Update based on your network
-        // For Arbitrum Sepolia, check Stargate documentation for the correct pool address
-        // Note: Stargate v2 pool addresses may vary by network
-        address stargatePoolAddress = vm.envOr("STARGATE_POOL_ADDRESS", address(0x543BdA7c6cA4384FE90B1F5929bb851F52888983));
         console.log("Stargate Pool address:", stargatePoolAddress);
-        
-        // Owner address (can be deployer or a multisig)
-        // If not set, use deployer as owner
-        address owner = vm.envOr("OWNER_ADDRESS", deployer);
-        console.log("Owner address:", owner);
         
         // Deploy StargateWithdraw contract
         StargateWithdraw stargateWithdraw = new StargateWithdraw(
             usdcAddress,
             stargatePoolAddress,
-            owner
+            deployer
         );
         
         console.log("StargateWithdraw deployed at:", address(stargateWithdraw));
