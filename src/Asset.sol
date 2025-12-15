@@ -40,10 +40,6 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     
     // Stargate cross-chain withdraw adapter
     StargateWithdraw public stargateWithdraw;
-    
-    // Base chain IDs
-    uint256 public constant BASE_MAINNET = 8543;
-    uint256 public constant BASE_SEPOLIA = 85432; 
 
     // MarginAsset storage info
     address public marginAsset;
@@ -123,7 +119,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
 
 
         // check if the dstChainId is native chain
-        if (dstChainId == BASE_MAINNET || dstChainId == BASE_SEPOLIA) {
+        if (dstChainId != block.chainid) {
            // Store balance before transfer
             uint256 preBalance = USDC.balanceOf(address(this));
             
