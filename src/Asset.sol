@@ -116,9 +116,8 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         uint256 userAvailableAmount = availableAmount(user);
         if (userAvailableAmount < amount) revert InsufficientUserBalance(userAvailableAmount, amount);
 
-
         // check if the dstChainId is native chain
-        if (dstChainId != block.chainid) {
+        if (dstChainId == block.chainid) {
            // Store balance before transfer
             uint256 preBalance = USDC.balanceOf(address(this));
             
