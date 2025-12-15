@@ -88,7 +88,6 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         for (uint64 i = 0; i < subaccountIds.length; i++) {
             bytes32 user = subaccounts[subaccountIds[i]].chainAddress;
             _userWithdraw(clientOrderIds[i],user,recipients[i],expireTimes[i],dstChainIds[i],amounts[i],signatures[i],false,signatureType);
-            emit UserWithdraw(clientOrderIds[i],user,recipients[i],amounts[i],dstChainIds[i]);
         }
     }
 
