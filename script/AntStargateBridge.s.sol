@@ -13,7 +13,7 @@ contract AntStargateBridgeScript is Script {
     address constant ARB_SEPOLIA_ADAPTER_ADDRESS = 0xE348621f6fd4031e2b5A2E2f03c2F6140e50A9A2;    // arb sepolia adapter address
     address constant USDC_TOKEN = 0x3253a335E7bFfB4790Aa4C25C4250d206E9b9773;    // arb sepolia usdc address
     address constant USDC_STARGATE_ENDPOINT = 0x543BdA7c6cA4384FE90B1F5929bb851F52888983;    // arb sepolia stargate endpoint
-    address constant receiver = 0xF6d79F80758029D8957ee4028Fc0156ebEb3b751;    // arb sepolia receiver address  
+    address constant receiver = 0x2E8D9A9bF85A06C57f46bA7Ac8e0c25259c544cC;    // sepolia receiver address  
     uint32 constant destinationEndpointId = 40161;  // sepolia testnet
 
     function run() external {
