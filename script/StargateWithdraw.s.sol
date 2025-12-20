@@ -48,7 +48,7 @@ contract StargateWithdrawScript is Script {
         
         console.log("StargateWithdraw deployed at:", address(stargateWithdraw));
         console.log("USDC token:", address(stargateWithdraw.usdc()));
-        console.log("Stargate Pool:", address(stargateWithdraw.stargatePool()));
+        console.log("Stargate Pool:", address(stargateWithdraw.stargate()));
         console.log("Owner:", stargateWithdraw.owner());
         
         vm.stopBroadcast();

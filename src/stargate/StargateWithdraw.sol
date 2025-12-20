@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IStargatePool} from "@stargatefinance/stg-evm-v2/src/interfaces/IStargatePool.sol";
+import { IStargate } from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -17,12 +17,8 @@ import {MessagingFee, MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/
 contract StargateWithdraw is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // Ethereum chain IDs
-    uint256 public constant MAINNET = 1;
-    uint256 public constant SEPOLIA = 11155111;
-
-    // Stargate pool contract
-    IStargatePool public stargatePool;
+    // Stargate contract
+    IStargate public stargate;
     
     // USDC token address
     IERC20 public immutable usdc;
@@ -50,7 +46,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
 
     // Errors
     error InvalidChainId();
-    error ChainNotSupported(uint256 chainId);
+    error CrossChainNotSupported(uint256 chainId);
     error InvalidStargatePool();
     error InsufficientBalance();
     error TransferFailed();
@@ -58,25 +54,25 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
 
     modifier validChain(uint256 chainId) {
         if (chainId == 0) revert InvalidChainId();
-        if (chainId != MAINNET && chainId != SEPOLIA) {
-            revert ChainNotSupported(chainId);
+        if (chainId == block.chainid) {
+            revert CrossChainNotSupported(chainId);
         }
         if (!supportedChains[chainId]) {
-            revert ChainNotSupported(chainId);
+            revert CrossChainNotSupported(chainId);
         }
         _;
     }
 
     constructor(
         address _usdc,
-        address _stargatePool,
+        address _stargate,
         address _owner
     ) Ownable(_owner) {
         if (_usdc == address(0)) revert InvalidChainId();
-        if (_stargatePool == address(0)) revert InvalidStargatePool();
+        if (_stargate == address(0)) revert InvalidStargatePool();
         
         usdc = IERC20(_usdc);
-        stargatePool = IStargatePool(_stargatePool);
+        stargate = IStargate(_stargate);
     }
 
     /**
@@ -89,7 +85,6 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
      * @param minAmountLD Minimum amount to receive on destination (for slippage protection)
      * @param fee Messaging fee for LayerZero
      * @param refundAddress Address to refund excess fees
-     * @return guid Message GUID for tracking
      */
     function crossChainWithdraw(
         uint256 clientOrderId,
@@ -109,28 +104,16 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
         // Approve Stargate pool to spend USDC
-        usdc.forceApprove(address(stargatePool), amount);
+        usdc.forceApprove(address(stargate), amount);
 
         // Prepare send parameters
-        SendParam memory sendParam = SendParam({
-            dstEid: dstEid,
-            to: dstAddress,
-            amountLD: amount,
-            minAmountLD: minAmountLD,
-            extraOptions: "",
-            composeMsg: "",
-            oftCmd: ""
-        });
+       (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = prepareRideBus(dstEid, amount, dstAddress);
 
         // Execute cross-chain send via Stargate
-        (MessagingReceipt memory receipt,) = stargatePool.send(
-            sendParam,
-            fee,
-            refundAddress
-        );
+        (MessagingReceipt memory msgReceipt,,) = stargate.sendToken{value: valueToSend}(sendParam, messagingFee, refundAddress);
 
         // Reset approval
-        usdc.forceApprove(address(stargatePool), 0);
+        usdc.forceApprove(address(stargate), 0);
 
         // Emit event
         emit CrossChainWithdrawInitiated(
@@ -140,21 +123,21 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
             block.chainid,
             dstEid,
             dstAddress,
-            receipt.guid
+            msgReceipt.guid
         );
 
-        return receipt.guid;
+        return msgReceipt.guid;
     }
 
     /**
      * @notice Set Stargate pool address
-     * @param _stargatePool New Stargate pool address
+     * @param _stargate New Stargate pool address
      */
-    function setStargatePool(address _stargatePool) external onlyOwner {
-        if (_stargatePool == address(0)) revert InvalidStargatePool();
-        address oldPool = address(stargatePool);
-        stargatePool = IStargatePool(_stargatePool);
-        emit StargatePoolUpdated(oldPool, _stargatePool);
+    function setStargatePool(address _stargate) external onlyOwner {
+        if (_stargate == address(0)) revert InvalidStargatePool();
+        address oldPool = address(stargate);
+        stargate = IStargate(_stargate);
+        emit StargatePoolUpdated(oldPool, _stargate);
     }
 
     /**
@@ -173,39 +156,67 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
      * @param supported Whether the chain is supported
      */
     function setChainSupport(uint256 chainId, bool supported) external onlyOwner {
-        if (chainId != MAINNET && chainId != SEPOLIA) {
-            revert ChainNotSupported(chainId);
+        if (chainId == block.chainid) {
+            revert CrossChainNotSupported(chainId);
         }
         supportedChains[chainId] = supported;
         emit ChainSupportUpdated(chainId, supported);
     }
 
-    /**
-     * @notice Quote the fee for cross-chain withdrawal
-     * @param dstChainId Destination chain ID
-     * @param amount Amount to send
-     * @param payInLzToken Whether to pay fee in LZ token
-     * @return fee Messaging fee
-     */
-    function quoteCrossChainFee(
-        uint256 dstChainId,
-        uint256 amount,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory fee) {
-        uint32 dstEid = chainIdToEndpointId[dstChainId];
-        if (dstEid == 0) revert InvalidEndpointId();
-
-        SendParam memory sendParam = SendParam({
-            dstEid: dstEid,
-            to: bytes32(0), // Not needed for quote
-            amountLD: amount,
-            minAmountLD: 0,
-            extraOptions: "",
-            composeMsg: "",
-            oftCmd: ""
+     function prepareTakeTaxi(
+        uint32 _dstEid,
+        uint256 _amount,
+        bytes32 _receiver
+    ) internal view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+        sendParam = SendParam({
+            dstEid: _dstEid,
+            to: _receiver,
+            amountLD: _amount,
+            minAmountLD: _amount,
+            extraOptions: new bytes(0),
+            composeMsg: new bytes(0),
+            oftCmd: new bytes(0)
         });
 
-        return stargatePool.quoteSend(sendParam, payInLzToken);
+        (, , OFTReceipt memory receipt) = stargate.quoteOFT(sendParam);
+        sendParam.minAmountLD = receipt.amountReceivedLD;
+
+        messagingFee = stargate.quoteSend(sendParam, false);
+        valueToSend = messagingFee.nativeFee;
+
+        if (stargate.token() == address(0x0)) {
+            valueToSend += sendParam.amountLD;
+        }
+    }
+
+    function prepareRideBus(
+        uint32 _dstEid,
+        uint256 _amount,
+        bytes32 _receiver
+    ) internal view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+        sendParam = SendParam({
+            dstEid: _dstEid,
+            to: _receiver,
+            amountLD: _amount,
+            minAmountLD: _amount,
+            extraOptions: new bytes(0),
+            composeMsg: new bytes(0),
+            oftCmd: new bytes(1)
+        });
+
+        (, , OFTReceipt memory receipt) = stargate.quoteOFT(sendParam);
+        sendParam.minAmountLD = receipt.amountReceivedLD;
+
+        messagingFee = stargate.quoteSend(sendParam, false);
+        valueToSend = messagingFee.nativeFee;
+
+        if (stargate.token() == address(0x0)) {
+            valueToSend += sendParam.amountLD;
+        }
+    }
+
+    function addressToBytes32(address _addr) internal pure returns (bytes32) {
+        return bytes32(uint256(uint160(_addr)));
     }
 
     /**
