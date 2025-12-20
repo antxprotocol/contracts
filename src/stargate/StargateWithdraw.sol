@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import { IStargate } from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
+import { IStargate, Ticket } from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -21,7 +21,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     IStargate public stargate;
     
     // USDC token address
-    IERC20 public immutable usdc;
+    IERC20 public immutable USDC;
 
     // Mapping from chain ID to LayerZero endpoint ID
     mapping(uint256 => uint32) public chainIdToEndpointId;
@@ -40,6 +40,13 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         bytes32 guid
     );
     
+    event CrossChainWithdrawFailed(
+        uint256 indexed clientOrderId,
+        bytes32 indexed user,
+        uint256 amount,
+        address refundTo
+    );
+    
     event StargatePoolUpdated(address indexed oldPool, address indexed newPool);
     event ChainEndpointUpdated(uint256 indexed chainId, uint32 endpointId);
     event ChainSupportUpdated(uint256 indexed chainId, bool supported);
@@ -51,6 +58,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     error InsufficientBalance();
     error TransferFailed();
     error InvalidEndpointId();
+    error RefundFailed();
 
     modifier validChain(uint256 chainId) {
         _validChain(chainId);
@@ -75,7 +83,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         if (_usdc == address(0)) revert InvalidChainId();
         if (_stargate == address(0)) revert InvalidStargatePool();
         
-        usdc = IERC20(_usdc);
+        USDC = IERC20(_usdc);
         stargate = IStargate(_stargate);
     }
 
@@ -87,6 +95,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
      * @param dstChainId Destination chain ID
      * @param dstAddress Destination address (bytes32 format)
      * @param refundAddress Address to refund excess fees
+     * @return guid The GUID of the cross-chain message, or bytes32(0) if failed and refunded
      */
     function crossChainWithdraw(
         uint256 clientOrderId,
@@ -101,32 +110,48 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         if (dstEid == 0) revert InvalidEndpointId();
 
         // Transfer USDC from caller to this contract
-        usdc.safeTransferFrom(msg.sender, address(this), amount);
+        USDC.safeTransferFrom(msg.sender, address(this), amount);
 
         // Approve Stargate pool to spend USDC
-        usdc.forceApprove(address(stargate), amount);
+        USDC.forceApprove(address(stargate), amount);
 
         // Prepare send parameters
-       (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = prepareRideBus(dstEid, amount, dstAddress);
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = prepareRideBus(dstEid, amount, dstAddress);
 
-        // Execute cross-chain send via Stargate
-        (MessagingReceipt memory msgReceipt,,) = stargate.sendToken{value: valueToSend}(sendParam, messagingFee, refundAddress);
+        // Execute cross-chain send via Stargate with error handling
+        try stargate.sendToken{value: valueToSend}(sendParam, messagingFee, refundAddress) returns (
+            MessagingReceipt memory msgReceipt,
+            OFTReceipt memory,
+            Ticket memory
+        ) {
+            // Success: Reset approval and emit success event
+            USDC.forceApprove(address(stargate), 0);
+            
+            emit CrossChainWithdrawInitiated(
+                clientOrderId,
+                user,
+                amount,
+                block.chainid,
+                dstEid,
+                dstAddress,
+                msgReceipt.guid
+            );
 
-        // Reset approval
-        usdc.forceApprove(address(stargate), 0);
-
-        // Emit event
-        emit CrossChainWithdrawInitiated(
-            clientOrderId,
-            user,
-            amount,
-            block.chainid,
-            dstEid,
-            dstAddress,
-            msgReceipt.guid
-        );
-
-        return msgReceipt.guid;
+            return msgReceipt.guid;
+        } catch {
+            // Failure: Reset approval first
+            USDC.forceApprove(address(stargate), 0);
+            
+            // Refund USDC to the original caller
+            // SafeERC20.safeTransfer will revert if transfer fails, which is caught by outer catch
+            USDC.safeTransfer(msg.sender, amount);
+            
+            // Emit failure event
+            emit CrossChainWithdrawFailed(clientOrderId, user, amount, msg.sender);
+            
+            // Return zero GUID to indicate failure
+            return bytes32(0);
+        }
     }
 
     /**

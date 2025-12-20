@@ -68,13 +68,21 @@ contract Ed25519Oracle is Ownable, ReentrancyGuard, IEd25519Oracle {
     // ============ Modifiers ============
     
     modifier onlyRegisteredNode() {
-        if (!nodes[msg.sender].isRegistered) revert NodeNotRegistered();
+        _onlyRegisteredNode();
         _;
     }
     
     modifier onlyActiveNode() {
-        if (!nodes[msg.sender].isActive) revert OnlyActiveNode();
+        _onlyActiveNode();
         _;
+    }
+    
+    function _onlyRegisteredNode() internal view {
+        if (!nodes[msg.sender].isRegistered) revert NodeNotRegistered();
+    }
+    
+    function _onlyActiveNode() internal view {
+        if (!nodes[msg.sender].isActive) revert OnlyActiveNode();
     }
     
     // ============ Constructor ============
@@ -200,7 +208,7 @@ contract Ed25519Oracle is Ownable, ReentrancyGuard, IEd25519Oracle {
         bytes calldata signature,
         bool isValid
     ) external onlyActiveNode nonReentrant {
-        bytes32 dataId = keccak256(abi.encodePacked(publicKey, messageHash, signature));
+        bytes32 dataId = _hashDataId(publicKey, messageHash, signature);
         
         // Check if data has expired
         if (consensusData[dataId].createdAt > 0) {
@@ -260,10 +268,7 @@ contract Ed25519Oracle is Ownable, ReentrancyGuard, IEd25519Oracle {
             return;
         }
         
-        // Check if we have enough votes for consensus
-        uint256 requiredVotes = (nodeList.length * consensusThreshold) / 10000;
-        
-        // Require at least 2 active nodes for consensus (excluding owner with 0 stake)
+        // Count active nodes (excluding owner with 0 stake)
         uint256 activeNodes = 0;
         for (uint256 i = 0; i < nodeList.length; i++) {
             if (nodes[nodeList[i]].isActive && nodes[nodeList[i]].stake > 0) {
@@ -271,13 +276,30 @@ contract Ed25519Oracle is Ownable, ReentrancyGuard, IEd25519Oracle {
             }
         }
         
+        // Require at least 2 active nodes for consensus
         if (activeNodes < 2) {
             return; // No consensus possible with less than 2 active staked nodes
         }
         
-        // Ensure minimum required votes
+        // Calculate required votes based on active nodes (not total nodeList.length)
+        // Use ceiling division to ensure we require at least the threshold percentage
+        // Formula: ceil(activeNodes * consensusThreshold / 10000)
+        // Implementation: (activeNodes * consensusThreshold + 9999) / 10000
+        uint256 requiredVotes = (activeNodes * consensusThreshold + 9999) / 10000;
+        
+        // Ensure minimum required votes: at least 1 vote if there are active nodes
+        // But also ensure we require at least 2 votes for consensus (majority of 2 nodes)
         if (requiredVotes == 0) {
-            requiredVotes = 2; // At least 2 votes required for consensus
+            requiredVotes = 1;
+        }
+        // Ensure we require at least 2 votes for consensus when we have 2+ active nodes
+        if (activeNodes >= 2 && requiredVotes < 2) {
+            requiredVotes = 2;
+        }
+        
+        // Ensure requiredVotes doesn't exceed activeNodes
+        if (requiredVotes > activeNodes) {
+            requiredVotes = activeNodes;
         }
         
         if (data.totalVotes >= requiredVotes) {
@@ -310,7 +332,7 @@ contract Ed25519Oracle is Ownable, ReentrancyGuard, IEd25519Oracle {
         bytes32 messageHash,
         bytes calldata signature
     ) external view override(IEd25519Oracle) returns (bool) {
-        bytes32 dataId = keccak256(abi.encodePacked(publicKey, messageHash, signature));
+        bytes32 dataId = _hashDataId(publicKey, messageHash, signature);
         return finalizedResults[dataId];
     }
     
@@ -444,5 +466,21 @@ contract Ed25519Oracle is Ownable, ReentrancyGuard, IEd25519Oracle {
     
     receive() external payable {
         // Allow contract to receive ETH for staking
+    }
+
+    /**
+     * @dev Optimized hash function for dataId using inline assembly
+     * Equivalent to: keccak256(abi.encodePacked(publicKey, messageHash, signature))
+     */
+    function _hashDataId(
+        bytes32 publicKey,
+        bytes32 messageHash,
+        bytes calldata signature
+    ) internal pure returns (bytes32 hash) {
+        // Use abi.encodePacked but optimize the keccak256 call with inline assembly
+        bytes memory data = abi.encodePacked(publicKey, messageHash, signature);
+        assembly ("memory-safe") {
+            hash := keccak256(add(data, 0x20), mload(data))
+        }
     }
 }

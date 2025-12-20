@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {Ed25519Oracle} from "../src/oracle/Ed25519Oracle.sol";
-import {IEd25519Oracle} from "../src/interfaces/IEd25519Oracle.sol";
 
 /**
  * @title Ed25519OracleTest
@@ -640,8 +639,11 @@ contract Ed25519OracleTest is Test {
         assertEq(validVotes, 2);
         assertEq(invalidVotes, 2);
         assertEq(totalVotes, 4);
-        // With 100% threshold and owner included in nodeList, requiredVotes = 5, so not finalized
-        assertFalse(isFinalized);
+        // With 100% threshold: activeNodes = 4 (owner has 0 stake, so not counted)
+        // requiredVotes = (4 * 10000 + 9999) / 10000 = 4
+        // All 4 nodes voted, so consensus is reached
+        // Result is false because validVotes (2) <= invalidVotes (2)
+        assertTrue(isFinalized);
         assertFalse(finalResult);
     }
     

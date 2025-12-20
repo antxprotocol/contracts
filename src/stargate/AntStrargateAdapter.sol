@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT 
 pragma solidity ^0.8.28; 
  
-import { IStargate } from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
 import { IStargate, StargateType, Ticket } from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
-import { IOFT, MessagingFee, MessagingReceipt, OFTReceipt, SendParam, OFTLimit, OFTFeeDetail } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
+import { MessagingFee, MessagingReceipt, OFTReceipt, SendParam, OFTLimit, OFTFeeDetail } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
 
 contract AntStrargateAdapter is IStargate{ 
     IStargate public immutable stargate;

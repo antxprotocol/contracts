@@ -13,7 +13,7 @@ contract AssetScript is Script {
         vm.startBroadcast(privateKey);
 
         address usdcAddress;
-
+        uint64 defaultCollateralCoinId = 1000; // default collateral coin id
         address[] memory signers = new address[](3);
         signers[0] = 0x4626eb76a7c2896645B0117614Ec0555e6E3a180;
         signers[1] = 0x6c7459c4B3B84E24734E59D4a6749EB02Ea26406;
@@ -63,7 +63,8 @@ contract AssetScript is Script {
         // Encode initialize function call
         bytes memory initData = abi.encodeWithSelector(
             Asset.initialize.selector,
-            usdcAddress
+            usdcAddress,
+            defaultCollateralCoinId
         );
 
         // Deploy proxy with implementation and initialize data

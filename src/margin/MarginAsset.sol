@@ -195,6 +195,7 @@ library MarginAsset {
         uint32 scaleDiff = stepSizeScale + tickSizeScale;
         if (scaleDiff > coinStepSizeScale) {
             uint32 divisor = scaleDiff - coinStepSizeScale;
+            require(divisor <= 77, "Divisor too large");  // 10^77 is the maximum value for uint256
             value = value / (10 ** divisor);
         } else if (scaleDiff < coinStepSizeScale) {
             uint32 multiplier = coinStepSizeScale - scaleDiff;

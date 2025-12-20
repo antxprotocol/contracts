@@ -12,7 +12,6 @@ import {IEd25519Oracle} from "./interfaces/IEd25519Oracle.sol";
 import "./interfaces/IAsset.sol";
 import "./margin/MarginAsset.sol";
 import "./stargate/StargateWithdraw.sol";
-import {MessagingFee} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 
 contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable, IAsset {
     using SafeERC20 for IERC20;
@@ -38,6 +37,8 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     uint256 public lastAntxChainHeight;
     IEd25519Oracle public ed25519Oracle;
     uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days;
+    mapping(uint256 => bool) public usedClientOrderIds; // clientOrderId => used
+    uint64 public defaultCollateralCoinId;
     
     // Stargate cross-chain withdraw adapter
     StargateWithdraw public stargateWithdraw;
@@ -103,18 +104,25 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         _disableInitializers();
     }
 
-    function initialize(address _USDC) external initializer validAddress(_USDC) {
+    function initialize(address _USDC,uint64 _defaultCollateralCoinId) external initializer validAddress(_USDC) validAmount(_defaultCollateralCoinId) {
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
         USDC = IERC20(_USDC);
+        
+        defaultCollateralCoinId = _defaultCollateralCoinId;
+        emit DefaultCollateralCoinIdUpdated(_defaultCollateralCoinId);
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds,bytes32 []memory recipients,uint256 []memory expireTimes,uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
-        if (subaccountIds.length != amounts.length) revert UserAndAmountLengthNotMatch();
-        if (subaccountIds.length != signatures.length) revert UserAndSignatureLengthNotMatch();
+        if (clientOrderIds.length != subaccountIds.length) revert LengthNotMatch();
+        if (clientOrderIds.length != recipients.length) revert LengthNotMatch();
+        if (clientOrderIds.length != expireTimes.length) revert LengthNotMatch();
+        if (clientOrderIds.length != amounts.length) revert LengthNotMatch();
+        if (clientOrderIds.length != signatures.length) revert LengthNotMatch();
+        if (clientOrderIds.length != dstChainIds.length) revert LengthNotMatch();
 
         for (uint64 i = 0; i < subaccountIds.length; i++) {
             bytes32 user = subaccounts[subaccountIds[i]].chainAddress;
@@ -133,8 +141,15 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
     function _userWithdraw(uint256 clientOrderId,bytes32 user,bytes32 recipient,uint256 expireTime,uint64 dstChainId, uint256 amount,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
         if (!isForce) {
+            // check if the clientOrderId is already used
+            if (usedClientOrderIds[clientOrderId]) revert ClientOrderIdAlreadyUsed();
+            usedClientOrderIds[clientOrderId] = true;
+
+            // check if the expireTime is expired
+            if (expireTime < block.timestamp) revert ExpiredTransaction();
+
             // check user signature
-            bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, recipient, amount, expireTime,dstChainId, block.chainid, address(this)));
+            bytes32 operationHash = _hashUserWithdraw(clientOrderId, user, recipient, amount, expireTime, dstChainId);
             operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
             if (signatureType == SignatureType.ECDSA) {
                 if (user != bytes32(uint256(uint160(ECDSA.recover(operationHash, signatures))))) revert InvalidUserSignature();
@@ -175,7 +190,13 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         }
     }
 
-    function _calculateAvailableAmount(bytes32 user) internal view returns (int256) {
+    /**
+     * @dev Calculate available amount for a user with optional collateralCoinId
+     * @param user User address (bytes32 format)
+     * @param collateralCoinId Collateral coin ID (0 means auto-find first available)
+     * @return Available amount
+     */
+    function _calculateAvailableAmount(bytes32 user, uint64 collateralCoinId) internal view returns (int256) {
         // Directly find subaccountId through reverse mapping
         uint64 subaccountId = addressToSubaccountId[user];
         if (subaccountId == 0) return 0;
@@ -183,18 +204,29 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         MarginAsset.Subaccount memory subaccount = subaccounts[subaccountId];
         if (subaccount.id == 0) return 0;
 
-        // Find corresponding PerpetualAsset (iterate through all possible collateralCoinIds)
+        // Find corresponding PerpetualAsset
         MarginAsset.PerpetualAsset memory perpetualAsset;
-        uint64 collateralCoinId = 0;
+        uint64 targetCollateralCoinId = collateralCoinId;
         bool foundPerpetualAsset = false;
-        for (uint256 i = 0; i < coinIds.length; i++) {
-            uint64 coinId = coinIds[i];
-            MarginAsset.PerpetualAsset memory pa = perpetualAssets[subaccountId][coinId];
-            if (pa.subaccountId == subaccountId && pa.collateralCoinId > 0) {
-                perpetualAsset = pa;
-                collateralCoinId = pa.collateralCoinId;
+        
+        if (collateralCoinId == 0) {
+            // Auto-find: iterate through all possible collateralCoinIds
+            for (uint256 i = 0; i < coinIds.length; i++) {
+                uint64 coinId = coinIds[i];
+                MarginAsset.PerpetualAsset memory pa = perpetualAssets[subaccountId][coinId];
+                if (pa.subaccountId == subaccountId && pa.collateralCoinId > 0) {
+                    perpetualAsset = pa;
+                    targetCollateralCoinId = pa.collateralCoinId;
+                    foundPerpetualAsset = true;
+                    break;
+                }
+            }
+        } else {
+            // Use specified collateralCoinId
+            perpetualAsset = perpetualAssets[subaccountId][collateralCoinId];
+            if (perpetualAsset.subaccountId == subaccountId && perpetualAsset.collateralCoinId > 0) {
+                targetCollateralCoinId = perpetualAsset.collateralCoinId;
                 foundPerpetualAsset = true;
-                break;
             }
         }
         
@@ -203,30 +235,20 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         if (perpetualAsset.positions.length == 0) return int256(int64(perpetualAsset.crossCollateralAmount));
 
         // Get collateral coin information
-        MarginAsset.Coin memory collateralCoin = coins[collateralCoinId];
-        if (collateralCoin.id == 0) {
-            // Coin not set, cannot calculate available amount
-            revert("Coin not found");
-        }
+        MarginAsset.Coin memory collateralCoin = coins[targetCollateralCoinId];
+        if (collateralCoin.id == 0) revert CoinNotFound();
 
-        // Build Exchange array
-        MarginAsset.Exchange[] memory exchangeArray = new MarginAsset.Exchange[](subaccount.tradeSettings.length);
-        for (uint256 i = 0; i < subaccount.tradeSettings.length; i++) {
+        // Build arrays in a single loop to optimize gas consumption
+        uint256 tradeSettingsLength = subaccount.tradeSettings.length;
+        MarginAsset.Exchange[] memory exchangeArray = new MarginAsset.Exchange[](tradeSettingsLength);
+        MarginAsset.OraclePrice[] memory oraclePriceArray = new MarginAsset.OraclePrice[](tradeSettingsLength);
+        MarginAsset.FundingIndex[] memory fundingIndexArray = new MarginAsset.FundingIndex[](tradeSettingsLength);
+        
+        // Single loop to populate all three arrays (optimized from 3 separate loops)
+        for (uint256 i = 0; i < tradeSettingsLength; i++) {
             uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
             exchangeArray[i] = exchanges[exchangeId];
-        }
-
-        // Build OraclePrice array
-        MarginAsset.OraclePrice[] memory oraclePriceArray = new MarginAsset.OraclePrice[](subaccount.tradeSettings.length);
-        for (uint256 i = 0; i < subaccount.tradeSettings.length; i++) {
-            uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
             oraclePriceArray[i] = oraclePrices[exchangeId];
-        }
-
-        // Build FundingIndex array
-        MarginAsset.FundingIndex[] memory fundingIndexArray = new MarginAsset.FundingIndex[](subaccount.tradeSettings.length);
-        for (uint256 i = 0; i < subaccount.tradeSettings.length; i++) {
-            uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
             fundingIndexArray[i] = fundingIndexes[exchangeId];
         }
 
@@ -250,16 +272,46 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         );
     }
 
+    /**
+     * @notice Get available amount for a user (auto-find collateralCoinId)
+     * @param user User address (bytes32 format)
+     * @return Available amount
+     */
     function availableAmount(bytes32 user) public view returns (uint256) {
-        int256 userAvailableAmount = _calculateAvailableAmount(user);
+        return availableAmount(user, defaultCollateralCoinId);
+    }
+
+    /**
+     * @notice Get available amount for a user with specified collateralCoinId
+     * @param user User address (bytes32 format)
+     * @param collateralCoinId Collateral coin ID (0 means auto-find first available)
+     * @return Available amount
+     */
+    function availableAmount(bytes32 user, uint64 collateralCoinId) public view returns (uint256) {
+        int256 userAvailableAmount = _calculateAvailableAmount(user, collateralCoinId);
         if (userAvailableAmount < 0) return 0;
         return uint256(userAvailableAmount);
     }
 
+    /**
+     * @notice Get available amount by subaccount ID (auto-find collateralCoinId)
+     * @param subAccountId Subaccount ID
+     * @return Available amount
+     */
     function availableAmountBySubAccountId(uint64 subAccountId) public view returns (uint256) {
+        return availableAmountBySubAccountId(subAccountId, defaultCollateralCoinId);
+    }
+
+    /**
+     * @notice Get available amount by subaccount ID with specified collateralCoinId
+     * @param subAccountId Subaccount ID
+     * @param collateralCoinId Collateral coin ID (0 means auto-find first available)
+     * @return Available amount
+     */
+    function availableAmountBySubAccountId(uint64 subAccountId, uint64 collateralCoinId) public view returns (uint256) {
         MarginAsset.Subaccount memory subaccount = subaccounts[subAccountId];
         if (subaccount.id == 0) revert UserNotFound();
-        int256 subaccountAvailableAmount = _calculateAvailableAmount(subaccount.chainAddress);
+        int256 subaccountAvailableAmount = _calculateAvailableAmount(subaccount.chainAddress, collateralCoinId);
         if (subaccountAvailableAmount < 0) return 0;
         return uint256(subaccountAvailableAmount);
     }
@@ -275,11 +327,17 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         if (token != address(USDC)) revert NotAllowedToken(token);
         if (allSigners.length < 2) revert InvalidAllSignersLength();
         if (allSigners.length != signatures.length) revert InvalidSignaturesLength();
-        if (allSigners[0] == allSigners[1]) revert SameSigner();
         if (expireTime < block.timestamp) revert ExpiredTransaction();
 
+        // check if the signers are the same
+        for (uint256 i = 0; i < allSigners.length; i++) {
+            for (uint256 j = i + 1; j < allSigners.length; j++) {
+                if (allSigners[i] == allSigners[j]) revert SameSigner();
+            }
+        }
+
         // verify multi signatures
-        bytes32 operationHash = keccak256(abi.encodePacked("EMERGENCY_WITHDRAW", token, to, amount, expireTime, address(this), block.chainid));
+        bytes32 operationHash = _hashEmergencyWithdraw(token, to, amount, expireTime);
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
 
         for (uint8 index = 0; index < allSigners.length; index++) {
@@ -425,5 +483,66 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         stargateWithdraw = StargateWithdraw(_stargateWithdraw);
         emit StargateWithdrawUpdated(_stargateWithdraw);
     }
-   
+
+    function setDefaultCollateralCoinId(uint64 _defaultCollateralCoinId) external onlyOwner {
+        if (_defaultCollateralCoinId == 0) revert InvalidCollateralCoinId();
+        defaultCollateralCoinId = _defaultCollateralCoinId;
+        emit DefaultCollateralCoinIdUpdated(_defaultCollateralCoinId);
+    }
+
+    /**
+     * @dev Optimized hash function for USER_WITHDRAW operation using inline assembly
+     * Equivalent to: keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, recipient, amount, expireTime, dstChainId, block.chainid, address(this)))
+     */
+    function _hashUserWithdraw(
+        uint256 clientOrderId,
+        bytes32 user,
+        bytes32 recipient,
+        uint256 amount,
+        uint256 expireTime,
+        uint64 dstChainId
+    ) internal view returns (bytes32 hash) {
+        // Use abi.encodePacked but optimize the keccak256 call with inline assembly
+        bytes memory data = abi.encodePacked(
+            "USER_WITHDRAW",
+            clientOrderId,
+            user,
+            recipient,
+            amount,
+            expireTime,
+            dstChainId,
+            block.chainid,
+            address(this)
+        );
+        assembly ("memory-safe") {
+            hash := keccak256(add(data, 0x20), mload(data))
+        }
+    }
+
+    /**
+     * @dev Optimized hash function for EMERGENCY_WITHDRAW operation using inline assembly
+     * Equivalent to: keccak256(abi.encodePacked("EMERGENCY_WITHDRAW", token, to, amount, expireTime, address(this), block.chainid))
+     */
+    function _hashEmergencyWithdraw(
+        address token,
+        address to,
+        uint256 amount,
+        uint256 expireTime
+    ) internal view returns (bytes32 hash) {
+        // Use abi.encodePacked but optimize the keccak256 call with inline assembly
+        bytes memory data = abi.encodePacked(
+            "EMERGENCY_WITHDRAW",
+            token,
+            to,
+            amount,
+            expireTime,
+            address(this),
+            block.chainid
+        );
+        assembly ("memory-safe") {
+            hash := keccak256(add(data, 0x20), mload(data))
+        }
+    }
+    
+    uint256[50] private __gap; // allow for future upgrades
 }

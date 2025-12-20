@@ -1,13 +1,14 @@
 #!/bin/bash
 
 # Asset proxy verification script for Sepolia testnet
-# Asset proxy deployed at: 0x8511FD1b2360B3cEf21FbECA3C241ed7Be5B3128
-# Asset implementation deployed at: 0x8fB94D1b85d3C78b7993143472678E0F20e7C4c5
+# Asset proxy deployed at: 0x871bD685AcE3E8f5383BDbC4bfD98a31559AA8F4
+# Asset implementation deployed at: 0x9379D536D4172E0bd36d882FC70F02d6c4Db83a4
 
 # Configuration - Update these values based on your deployment
-PROXY_ADDRESS="${ASSET_PROXY_ADDRESS:-0x8511FD1b2360B3cEf21FbECA3C241ed7Be5B3128}"
-IMPLEMENTATION_ADDRESS="${ASSET_IMPLEMENTATION_ADDRESS:-0x8fB94D1b85d3C78b7993143472678E0F20e7C4c5}"
+PROXY_ADDRESS="${ASSET_PROXY_ADDRESS:-0x871bD685AcE3E8f5383BDbC4bfD98a31559AA8F4}"
+IMPLEMENTATION_ADDRESS="${ASSET_IMPLEMENTATION_ADDRESS:-0x9379D536D4172E0bd36d882FC70F02d6c4Db83a4}"
 USDC_ADDRESS="${USDC_ADDRESS:-0x2F6F07CDcf3588944Bf4C42aC74ff24bF56e7590}"
+DEFAULT_COLLATERAL_COIN_ID="${DEFAULT_COLLATERAL_COIN_ID:-1000}"
 CHAIN_ID="${CHAIN_ID:-11155111}"  # Sepolia
 VERIFIER_API_KEY="${VERIFIER_API_KEY:-4KQXQ25KPRHNIVCVVRFJ1PB6SA9SGPYW89}"
 COMPILER_VERSION="0.8.28"
@@ -22,9 +23,9 @@ echo "  USDC Address: $USDC_ADDRESS"
 echo "  Chain ID: $CHAIN_ID"
 echo ""
 
-# Encode initialize function call: initialize(address _USDC)
+# Encode initialize function call: initialize(address _USDC,uint64 _defaultCollateralCoinId)
 echo "Encoding initialize function call..."
-INIT_DATA=$(cast calldata "initialize(address)" "$USDC_ADDRESS")
+INIT_DATA=$(cast calldata "initialize(address,uint64)" "$USDC_ADDRESS" "$DEFAULT_COLLATERAL_COIN_ID")
 echo "Initialize data: $INIT_DATA"
 echo ""
 

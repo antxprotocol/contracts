@@ -17,6 +17,7 @@ interface IAsset {
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
     event MarginAssetAddressUpdated(address indexed marginAsset);
     event StargateWithdrawUpdated(address indexed stargateWithdraw);
+    event DefaultCollateralCoinIdUpdated(uint64 indexed defaultCollateralCoinId);
     event ExchangeInfoUpdated(uint64 exchangeId, uint32 stepSizeScale, uint32 tickSizeScale, uint256 oraclePrice, uint256 fundingIndex, MarginAsset.RiskTier[] riskTiers);
     event CoinInfoUpdated(uint64 coinId, string symbol, uint32 stepSizeScale);
     event FundingIndexUpdated(uint64 exchangeId, int256 fundingIndex);
@@ -30,8 +31,7 @@ interface IAsset {
     error ZeroAmountNotAllowed();
     error TimeLockNotPassed();
     error InvalidTime(uint256 time);
-    error UserAndAmountLengthNotMatch();
-    error UserAndSignatureLengthNotMatch();
+    error LengthNotMatch();
     error InvalidUserSignature();
     error InvalidAllSignersLength();
     error InvalidSignaturesLength();
@@ -46,6 +46,9 @@ interface IAsset {
     error UserNotFound();
     error InvalidAntxChainHeight();
     error InvalidChainId();
+    error ClientOrderIdAlreadyUsed();
+    error CoinNotFound();
+    error InvalidCollateralCoinId();
 
     enum SignatureType {
         ECDSA,
@@ -59,7 +62,9 @@ interface IAsset {
     function setSettlementAddress(address _settlementAddress) external;
     function setWithdrawOperator(address _withdrawOperator) external;
     function availableAmount(bytes32 user) external view returns (uint256);
+    function availableAmount(bytes32 user, uint64 collateralCoinId) external view returns (uint256);
     function availableAmountBySubAccountId(uint64 subAccountId) external view returns (uint256);
+    function availableAmountBySubAccountId(uint64 subAccountId, uint64 collateralCoinId) external view returns (uint256);
     function emergencyWithdraw(
         address token,
         address to, 
