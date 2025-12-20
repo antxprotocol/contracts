@@ -11,6 +11,7 @@ interface IAsset {
     event ForceWithdraw(bytes32 indexed user, bytes32 indexed recipient, uint256 amount, uint64 dstChainId);
     event BatchUpdated(uint256 batchId, uint256 antxChainHeight, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
+    event USDCUpdated(address indexed USDC);
     event EmergencyWithdraw(address indexed to, uint256 amount);
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
     event Ed25519OracleUpdated(address indexed ed25519Oracle);

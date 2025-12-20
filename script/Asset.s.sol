@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {Script} from "@forge-std/Script.sol";
 import "forge-std/console.sol";
 import "../src/Asset.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract AssetScript is Script {
     function run() public {
@@ -55,9 +56,23 @@ contract AssetScript is Script {
         console.log("Margin asset calculator address at:", address(marginAssetCalculator));
         console.log("Stargate withdraw address at:", address(stargateWithdraw));
 
-        // Deploy asset
-        Asset asset =  new Asset(address(usdcAddress));
-        console.log("Asset deployed at:", address(asset));
+        // Deploy implementation contract
+        Asset implementation = new Asset();
+        console.log("Asset implementation deployed at:", address(implementation));
+
+        // Encode initialize function call
+        bytes memory initData = abi.encodeWithSelector(
+            Asset.initialize.selector,
+            usdcAddress
+        );
+
+        // Deploy proxy with implementation and initialize data
+        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+        console.log("Asset proxy deployed at:", address(proxy));
+
+        // Get Asset instance through proxy
+        Asset asset = Asset(address(proxy));
+        console.log("Asset (via proxy) at:", address(asset));
 
         // set signers
         asset.setSigners(signers);

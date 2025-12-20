@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
+import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -13,7 +14,7 @@ import "./margin/MarginAsset.sol";
 import "./stargate/StargateWithdraw.sol";
 import {MessagingFee} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 
-contract Asset is Ownable, ReentrancyGuard, IAsset {
+contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable, IAsset {
     using SafeERC20 for IERC20;
     using MarginAsset for MarginAsset.Asset;
 
@@ -27,7 +28,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         MarginAsset.PerpetualAsset []perpetualAssetUpdates;
     }
 
-    IERC20 public immutable USDC;
+    IERC20 public USDC;
     address[] public signers;
     address public settlementOperator;
     address public withdrawOperator;
@@ -77,9 +78,19 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
         _;
     }
 
-    constructor(address _USDC) validAddress(_USDC) Ownable(msg.sender) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _USDC) external initializer validAddress(_USDC) {
+        __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
         USDC = IERC20(_USDC);
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds,bytes32 []memory recipients,uint256 []memory expireTimes,uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
         if (subaccountIds.length != amounts.length) revert UserAndAmountLengthNotMatch();
@@ -103,7 +114,7 @@ contract Asset is Ownable, ReentrancyGuard, IAsset {
     function _userWithdraw(uint256 clientOrderId,bytes32 user,bytes32 recipient,uint256 expireTime,uint64 dstChainId, uint256 amount,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
         if (!isForce) {
             // check user signature
-            bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, recipient, amount, expireTime, block.chainid));
+            bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, recipient, amount, expireTime,dstChainId, block.chainid, address(this)));
             operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
             if (signatureType == SignatureType.ECDSA) {
                 if (user != bytes32(uint256(uint160(ECDSA.recover(operationHash, signatures))))) revert InvalidUserSignature();

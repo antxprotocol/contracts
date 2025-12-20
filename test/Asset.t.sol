@@ -14,6 +14,7 @@ import {MarginAsset} from "../src/margin/MarginAsset.sol";
 import {MarginAssetCalculator} from "../src/margin/MarginAsset.sol";
 import {MessagingFee} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // Simple mock for Ed25519 oracle used within tests
 contract MockEd25519Oracle {
@@ -87,12 +88,59 @@ contract MockMarginAssetCalculator {
 
 // Helper contract to expose the validTime modifier via a simple callable function
 contract AssetValidTimeHelper is Asset {
-    constructor(
-        address usdc
-    ) Asset(usdc) {}
-
     function ping(uint256 t) external validTime(t) returns (bool) {
         return true;
+    }
+}
+
+// Helper function to deploy Asset via proxy
+library AssetDeployer {
+    function deployAsset(address usdc, address owner) internal returns (Asset) {
+        // Deploy implementation
+        Asset implementation = new Asset();
+        
+        // Encode initialize function call
+        bytes memory initData = abi.encodeWithSelector(
+            Asset.initialize.selector,
+            usdc
+        );
+        
+        // Deploy proxy
+        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+        
+        // Return Asset instance through proxy
+        Asset asset = Asset(address(proxy));
+        
+        // Transfer ownership to the specified owner
+        if (owner != address(0)) {
+            asset.transferOwnership(owner);
+        }
+        
+        return asset;
+    }
+    
+    function deployAssetValidTimeHelper(address usdc, address owner) internal returns (AssetValidTimeHelper) {
+        // Deploy implementation
+        AssetValidTimeHelper implementation = new AssetValidTimeHelper();
+        
+        // Encode initialize function call (using Asset's initialize)
+        bytes memory initData = abi.encodeWithSelector(
+            Asset.initialize.selector,
+            usdc
+        );
+        
+        // Deploy proxy
+        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+        
+        // Return AssetValidTimeHelper instance through proxy
+        AssetValidTimeHelper helper = AssetValidTimeHelper(address(proxy));
+        
+        // Transfer ownership to the specified owner
+        if (owner != address(0)) {
+            helper.transferOwnership(owner);
+        }
+        
+        return helper;
     }
 }
 
@@ -200,9 +248,10 @@ contract AssetTest is Test {
         bytes32 user,
         bytes32 recipient,
         uint256 amount,
-        uint256 expireTime
+        uint256 expireTime,
+        uint64 dstChainId
     ) internal view returns (bytes32) {
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, recipient, amount, expireTime, block.chainid));
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, recipient, amount, expireTime, dstChainId, block.chainid, address(asset)));
         return MessageHashUtils.toEthSignedMessageHash(operationHash);
     }
     
@@ -213,9 +262,10 @@ contract AssetTest is Test {
         bytes32 recipient,
         uint256 amount,
         uint256 expireTime,
+        uint64 dstChainId,
         uint256 privateKey
     ) internal view returns (bytes memory) {
-        bytes32 hash = createWithdrawSignatureHash(clientOrderId, user, recipient, amount, expireTime);
+        bytes32 hash = createWithdrawSignatureHash(clientOrderId, user, recipient, amount, expireTime, dstChainId);
         return signMessage(hash, privateKey);
     }
     
@@ -355,7 +405,7 @@ contract AssetTest is Test {
 
         // Deploy Asset contract with proper owner
         vm.startPrank(owner);
-        asset = new Asset(address(USDC));
+        asset = AssetDeployer.deployAsset(address(USDC), owner);
         asset.setSigners(signers);
         asset.setSettlementAddress(settlementOperator);
         asset.setWithdrawOperator(withdrawOperator);
@@ -388,7 +438,7 @@ contract AssetTest is Test {
 
     function test_validTime_pass_and_revert() public {
         vm.startPrank(owner);
-        AssetValidTimeHelper a = new AssetValidTimeHelper(address(USDC));
+        AssetValidTimeHelper a = AssetDeployer.deployAssetValidTimeHelper(address(USDC), owner);
         vm.stopPrank();
 
         // pass
@@ -402,7 +452,7 @@ contract AssetTest is Test {
     function test_constructor_emits_OracleUpdated_when_nonzero_arg() public {
         address dummyOracle = address(0x12345);
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDC));
+        Asset a2 = AssetDeployer.deployAsset(address(USDC), owner);
         a2.setEd25519Oracle(dummyOracle);
         vm.stopPrank();
         assertEq(address(a2.ed25519Oracle()), dummyOracle);
@@ -429,14 +479,20 @@ contract AssetTest is Test {
 
     function test_constructor_zeroUSDC() public {
         vm.startPrank(owner);
+        // Deploy implementation first
+        Asset implementation = new Asset();
+        bytes memory initData = abi.encodeWithSelector(
+            Asset.initialize.selector,
+            address(0)
+        );
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        new Asset(address(0));
+        new ERC1967Proxy(address(implementation), initData);
         vm.stopPrank();
     }
 
     function test_constructor_zeroSystemAddress() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDC));
+        Asset a = AssetDeployer.deployAsset(address(USDC), owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         a.setSettlementAddress(address(0));
         vm.stopPrank();
@@ -444,7 +500,7 @@ contract AssetTest is Test {
 
     function test_constructor_zeroSettlementOperator() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDC));
+        Asset a = AssetDeployer.deployAsset(address(USDC), owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         a.setSettlementAddress(address(0));
         vm.stopPrank();
@@ -452,7 +508,7 @@ contract AssetTest is Test {
 
     function test_constructor_zeroWithdrawOperator() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDC));
+        Asset a = AssetDeployer.deployAsset(address(USDC), owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         a.setWithdrawOperator(address(0));
         vm.stopPrank();
@@ -460,7 +516,7 @@ contract AssetTest is Test {
 
     function test_constructor_emptySigners() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDC));
+        Asset a = AssetDeployer.deployAsset(address(USDC), owner);
         address[] memory emptySigners = new address[](0);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         a.setSigners(emptySigners);
@@ -469,7 +525,7 @@ contract AssetTest is Test {
 
     function test_constructor_zeroAddressInSigners() public {
         vm.startPrank(owner);
-        Asset a = new Asset(address(USDC));
+        Asset a = AssetDeployer.deployAsset(address(USDC), owner);
         address[] memory invalidSigners = new address[](2);
         invalidSigners[0] = signer1;
         invalidSigners[1] = address(0);
@@ -644,7 +700,8 @@ contract AssetTest is Test {
         bytes32 userBytes = bytes32(uint256(uint160(testUser)));
         bytes32 recipient = userBytes; // Default recipient is the user themselves
         uint256 expireTime = block.timestamp + 1 days;
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
+        uint64 dstChainId = getDstChainId();
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -723,7 +780,8 @@ contract AssetTest is Test {
         bytes32 userBytes = bytes32(uint256(uint160(user1)));
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
-        bytes memory wrongSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, 999);
+        uint64 dstChainId = getDstChainId();
+        bytes memory wrongSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, dstChainId, 999);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = wrongSignature;
@@ -775,7 +833,8 @@ contract AssetTest is Test {
         bytes32 userBytes = bytes32(uint256(uint160(testUser)));
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
+        uint64 dstChainId = getDstChainId();
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -1442,7 +1501,7 @@ contract AssetTest is Test {
         address[] memory single = new address[](1);
         single[0] = signer1;
         vm.startPrank(owner);
-        Asset a2 = new Asset(address(USDC));
+        Asset a2 = AssetDeployer.deployAsset(address(USDC), owner);
         a2.setSigners(single);
         vm.stopPrank();
         address notSigner = address(0xDEADBEeF);
@@ -1564,10 +1623,11 @@ contract AssetTest is Test {
         bytes32 recipient1 = user1Bytes;
         bytes32 recipient2 = user2Bytes;
         uint256 expireTime = block.timestamp + 1 days;
+        uint64 dstChainId = getDstChainId();
         
         bytes[] memory signatures = new bytes[](2);
-        signatures[0] = createWithdrawSignature(123, user1Bytes, recipient1, 500, expireTime, user1PrivateKey);
-        signatures[1] = createWithdrawSignature(456, user2Bytes, recipient2, 800, expireTime, user2PrivateKey);
+        signatures[0] = createWithdrawSignature(123, user1Bytes, recipient1, 500, expireTime, dstChainId, user1PrivateKey);
+        signatures[1] = createWithdrawSignature(456, user2Bytes, recipient2, 800, expireTime, dstChainId, user2PrivateKey);
 
         uint256 user1BalanceBefore = USDC.balanceOf(testUser1);
         uint256 user2BalanceBefore = USDC.balanceOf(testUser2);
@@ -1836,7 +1896,8 @@ contract AssetTest is Test {
         bytes32 userBytes = bytes32(uint256(uint160(testUser)));
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 0, expireTime, userPrivateKey);
+        uint64 dstChainId = getDstChainId();
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 0, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -1955,7 +2016,8 @@ contract AssetTest is Test {
         bytes32 userBytes = bytes32(uint256(uint160(testUser)));
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
+        uint64 dstChainId = getDstChainId();
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -2059,7 +2121,7 @@ contract AssetTest is Test {
         fourSigners[3] = signer4;
 
         vm.startPrank(owner);
-        Asset assetWith4Signers = new Asset(address(USDC));
+        Asset assetWith4Signers = AssetDeployer.deployAsset(address(USDC), owner);
         assetWith4Signers.setSigners(fourSigners);
         assetWith4Signers.setSettlementAddress(settlementOperator);
         assetWith4Signers.setWithdrawOperator(withdrawOperator);
@@ -2410,7 +2472,8 @@ contract AssetTest is Test {
         bytes32 userBytes = bytes32(uint256(uint160(testUser)));
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
+        uint64 dstChainId = getDstChainId();
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -2483,7 +2546,8 @@ contract AssetTest is Test {
         bytes32 userBytes = bytes32(uint256(uint160(testUser)));
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, userPrivateKey);
+        uint64 dstChainId = getDstChainId();
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -2687,7 +2751,8 @@ contract AssetTest is Test {
         bytes32 userBytes = bytes32(uint256(uint160(testUser)));
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, maxAmount, expireTime, userPrivateKey);
+        uint64 dstChainId = getDstChainId();
+        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, maxAmount, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -2990,7 +3055,8 @@ contract AssetTest is Test {
         bytes32 userBytes = bytes32(uint256(uint160(testUser)));
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
-        bytes memory userSignature = createWithdrawSignature(type(uint256).max, userBytes, recipient, 500, expireTime, userPrivateKey);
+        uint64 dstChainId = getDstChainId();
+        bytes memory userSignature = createWithdrawSignature(type(uint256).max, userBytes, recipient, 500, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
