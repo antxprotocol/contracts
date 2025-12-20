@@ -35,11 +35,11 @@ contract StargateWithdrawSetterScript is Script {
         console.log("StargateWithdraw contract:", stargateWithdrawAddress);
         console.log("Current owner:", stargateWithdraw.owner());
 
-        // https://docs.layerzero.network/v1/deployments/deployed-contracts?stages=testnet&chains=sepolia
-        uint256 sepoliaChainId = 11155111;
-        uint32 sepoliaEndpointId = 10161;
-        stargateWithdraw.setChainEndpoint(sepoliaChainId, sepoliaEndpointId);
-        stargateWithdraw.setChainSupport(sepoliaChainId, true);
+        // https://stargateprotocol.gitbook.io/stargate/v2-developer-docs/technical-reference/testnet-contracts
+        uint256 arbitrumSepoliaChainId = 421614;
+        uint32 arbitrumSepoliaEndpointId = 40231;
+        stargateWithdraw.setChainEndpoint(arbitrumSepoliaChainId, arbitrumSepoliaEndpointId);
+        stargateWithdraw.setChainSupport(arbitrumSepoliaChainId, true);
         
         console.log("Configuration completed!");
         vm.stopBroadcast();

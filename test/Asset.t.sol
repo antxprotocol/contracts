@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
-import {Vm} from "forge-std/Vm.sol";
 import {Asset} from "../src/Asset.sol";
 import {IAsset} from "../src/interfaces/IAsset.sol";
 import {MockToken} from "../src/mock/MockToken.sol";
@@ -11,7 +10,6 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {MarginAsset} from "../src/margin/MarginAsset.sol";
-import {MarginAssetCalculator} from "../src/margin/MarginAsset.sol";
 import {MessagingFee} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -49,8 +47,6 @@ contract MockStargateWithdraw {
         uint256 amount,
         uint256 dstChainId,
         bytes32 dstAddress,
-        uint256 minAmountLD,
-        MessagingFee memory fee,
         address refundAddress
     ) external returns (bytes32 guid) {
         if (shouldRevert) {
@@ -2329,6 +2325,7 @@ contract AssetTest is Test {
         uint256 amount = 1000000;
         uint256 clientOrderID = 1752463521625;
         uint256 chainID = 421614;
+        uint64 dstChainId = getDstChainId();
 
         console.log("=== Test Recover Address ===");
         console.log("testUser:", testUser);
@@ -2337,7 +2334,8 @@ contract AssetTest is Test {
         console.log("chainID:", chainID);
 
         // Create user signature with the correct private key for the test user
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderID, bytes32(uint256(uint160(testUser))), amount, chainID));
+        // Updated hash format includes dstChainId and address(this)
+        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderID, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), amount, block.timestamp + 1 days, dstChainId, chainID, address(asset)));
         console.log("operationHash before toEthSignedMessageHash:");
         console.logBytes32(operationHash);
         

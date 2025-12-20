@@ -2,7 +2,7 @@ pragma solidity ^0.8.28;
 
 import "@forge-std/Script.sol";
 
-import {IOFT,MessagingFee, OFTReceipt, SendParam } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
+import {MessagingFee, SendParam } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 

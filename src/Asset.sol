@@ -54,28 +54,48 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     mapping(bytes32 => uint64) public addressToSubaccountId; // user => subaccountId (reverse mapping)
 
     modifier validAddress(address addr) {
-        if (addr == address(0)) revert ZeroAddressNotAllowed();
+        _validAddress(addr);
         _;
+    }
+
+    function _validAddress(address addr) internal {
+        if (addr == address(0)) revert ZeroAddressNotAllowed();
     }
 
     modifier validAmount(uint256 amount) {
-        if (amount == 0) revert ZeroAmountNotAllowed();
+        _validAmount(amount);
         _;
+    }
+
+    function _validAmount(uint256 amount) internal {
+        if (amount == 0) revert ZeroAmountNotAllowed();
     }
 
     modifier validTime(uint256 time) {
-        if (time == 0) revert InvalidTime(time);
+       _validTime(time);
         _;
+    }
+
+    function _validTime(uint256 time) internal {
+        if (time == 0) revert InvalidTime(time);
     }
 
     modifier onlySettlementOperator() {
-        if (msg.sender != settlementOperator) revert OnlySettlementOperator();
+       _onlySettlementOperator();
         _;
     }
 
-    modifier onlyWithdrawOperator() {
-        if (msg.sender != withdrawOperator) revert OnlyWithdrawOperator();
+    function _onlySettlementOperator() internal {
+        if (msg.sender != settlementOperator) revert OnlySettlementOperator();
+    }
+
+   modifier onlyWithdrawOperator() {
+        _onlyWithdrawOperator();
         _;
+    }
+            
+    function _onlyWithdrawOperator() internal {
+        if (msg.sender != withdrawOperator) revert OnlyWithdrawOperator();
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -146,7 +166,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             USDC.forceApprove(address(stargateWithdraw), amount);
             
             // Execute cross-chain withdraw
-            stargateWithdraw.crossChainWithdraw(clientOrderId, recipient, amount, dstChainId, user, 0, MessagingFee({nativeFee: 0, lzTokenFee: 0}), address(this));
+            stargateWithdraw.crossChainWithdraw(clientOrderId, recipient, amount, dstChainId, user, address(this));
             
             // Reset approval
             USDC.forceApprove(address(stargateWithdraw), 0);

@@ -53,6 +53,11 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     error InvalidEndpointId();
 
     modifier validChain(uint256 chainId) {
+        _validChain(chainId);
+        _;
+    }
+        
+    function _validChain(uint256 chainId) internal {
         if (chainId == 0) revert InvalidChainId();
         if (chainId == block.chainid) {
             revert CrossChainNotSupported(chainId);
@@ -60,7 +65,6 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         if (!supportedChains[chainId]) {
             revert CrossChainNotSupported(chainId);
         }
-        _;
     }
 
     constructor(
@@ -82,8 +86,6 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
      * @param amount Amount to withdraw
      * @param dstChainId Destination chain ID
      * @param dstAddress Destination address (bytes32 format)
-     * @param minAmountLD Minimum amount to receive on destination (for slippage protection)
-     * @param fee Messaging fee for LayerZero
      * @param refundAddress Address to refund excess fees
      */
     function crossChainWithdraw(
@@ -92,8 +94,6 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         uint256 amount,
         uint256 dstChainId,
         bytes32 dstAddress,
-        uint256 minAmountLD,
-        MessagingFee memory fee,
         address refundAddress
     ) external nonReentrant validChain(dstChainId) returns (bytes32 guid) {
         // Get destination endpoint ID
