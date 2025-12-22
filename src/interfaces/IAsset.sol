@@ -13,6 +13,7 @@ interface IAsset {
     event SettlementAddressUpdated(address indexed settlementAddress);
     event USDCUpdated(address indexed USDC);
     event EmergencyWithdraw(address indexed to, uint256 amount);
+    event EmergencyWithdrawETH(address indexed to, uint256 amount);
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
     event MarginAssetAddressUpdated(address indexed marginAsset);
@@ -49,6 +50,8 @@ interface IAsset {
     error ClientOrderIdAlreadyUsed();
     error CoinNotFound();
     error InvalidCollateralCoinId();
+    error InsufficientEthBalance(uint256 required, uint256 available);
+    error TransferFailed();
 
     enum SignatureType {
         ECDSA,
@@ -67,6 +70,13 @@ interface IAsset {
     function availableAmountBySubAccountId(uint64 subAccountId, uint64 collateralCoinId) external view returns (uint256);
     function emergencyWithdraw(
         address token,
+        address to, 
+        uint256 amount,
+        uint256 expireTime, 
+        address[] memory allSigners,
+        bytes[] memory signatures
+    ) external;
+    function emergencyWithdrawETH(
         address to, 
         uint256 amount,
         uint256 expireTime, 

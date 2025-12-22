@@ -30,7 +30,7 @@ contract StargateWithdrawSetterScript is Script {
         } else {
             stargateWithdrawAddress = vm.envAddress("MAINNET_STARGATE_WITHDRAW_ADDRESS");
         }
-        StargateWithdraw stargateWithdraw = StargateWithdraw(stargateWithdrawAddress);
+        StargateWithdraw stargateWithdraw = StargateWithdraw(payable(stargateWithdrawAddress));
         
         console.log("StargateWithdraw contract:", stargateWithdrawAddress);
         console.log("Current owner:", stargateWithdraw.owner());

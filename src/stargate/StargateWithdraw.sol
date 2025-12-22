@@ -65,7 +65,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         _;
     }
         
-    function _validChain(uint256 chainId) internal {
+    function _validChain(uint256 chainId) internal view {
         if (chainId == 0) revert InvalidChainId();
         if (chainId == block.chainid) {
             revert CrossChainNotSupported(chainId);
@@ -103,8 +103,10 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         uint256 amount,
         uint256 dstChainId,
         bytes32 dstAddress,
-        address refundAddress
-    ) external nonReentrant validChain(dstChainId) returns (bytes32 guid) {
+        address refundAddress,
+        SendParam memory sendParam,
+        MessagingFee memory messagingFee
+    ) external payable nonReentrant validChain(dstChainId) returns (bytes32 guid) {
         // Get destination endpoint ID
         uint32 dstEid = chainIdToEndpointId[dstChainId];
         if (dstEid == 0) revert InvalidEndpointId();
@@ -115,11 +117,8 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         // Approve Stargate pool to spend USDC
         USDC.forceApprove(address(stargate), amount);
 
-        // Prepare send parameters
-        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = prepareRideBus(dstEid, amount, dstAddress);
-
         // Execute cross-chain send via Stargate with error handling
-        try stargate.sendToken{value: valueToSend}(sendParam, messagingFee, refundAddress) returns (
+        try stargate.sendToken{value: msg.value}(sendParam, messagingFee, refundAddress) returns (
             MessagingReceipt memory msgReceipt,
             OFTReceipt memory,
             Ticket memory
@@ -136,7 +135,6 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
                 dstAddress,
                 msgReceipt.guid
             );
-
             return msgReceipt.guid;
         } catch {
             // Failure: Reset approval first
@@ -145,6 +143,12 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
             // Refund USDC to the original caller
             // SafeERC20.safeTransfer will revert if transfer fails, which is caught by outer catch
             USDC.safeTransfer(msg.sender, amount);
+            
+            // Refund all ETH sent by caller
+            if (msg.value > 0) {
+                (bool success, ) = msg.sender.call{value: msg.value}("");
+                if (!success) revert RefundFailed();
+            }
             
             // Emit failure event
             emit CrossChainWithdrawFailed(clientOrderId, user, amount, msg.sender);
@@ -188,13 +192,16 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         emit ChainSupportUpdated(chainId, supported);
     }
 
-     function prepareTakeTaxi(
-        uint32 _dstEid,
+    function prepareTakeTaxi(
+        uint64 _dstChainId,
         uint256 _amount,
         bytes32 _receiver
-    ) internal view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+    ) public view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+        uint32 dstEid = chainIdToEndpointId[uint256(_dstChainId)];
+        if (dstEid == 0) revert InvalidEndpointId();
+
         sendParam = SendParam({
-            dstEid: _dstEid,
+            dstEid: dstEid,
             to: _receiver,
             amountLD: _amount,
             minAmountLD: _amount,
@@ -215,12 +222,15 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     }
 
     function prepareRideBus(
-        uint32 _dstEid,
+        uint64 _dstChainId,
         uint256 _amount,
         bytes32 _receiver
-    ) internal view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+    ) public view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+        uint32 dstEid = chainIdToEndpointId[uint256(_dstChainId)];
+        if (dstEid == 0) revert InvalidEndpointId();
+
         sendParam = SendParam({
-            dstEid: _dstEid,
+            dstEid: dstEid,
             to: _receiver,
             amountLD: _amount,
             minAmountLD: _amount,
@@ -257,5 +267,24 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     ) external onlyOwner {
         IERC20(token).safeTransfer(to, amount);
     }
+
+    /**
+     * @notice Emergency withdraw ETH (owner only)
+     * @param to Recipient address
+     * @param amount Amount to withdraw
+     */
+    function emergencyWithdrawETH(
+        address to,
+        uint256 amount
+    ) external onlyOwner {
+        (bool success, ) = to.call{value: amount}("");
+        if (!success) revert TransferFailed();
+    }
+
+    /**
+     * @notice Receive ETH
+     * @dev Allows the contract to receive ETH
+     */
+    receive() external payable {}
 }
 

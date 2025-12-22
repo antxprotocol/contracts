@@ -59,7 +59,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         _;
     }
 
-    function _validAddress(address addr) internal {
+    function _validAddress(address addr) internal pure {
         if (addr == address(0)) revert ZeroAddressNotAllowed();
     }
 
@@ -68,7 +68,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         _;
     }
 
-    function _validAmount(uint256 amount) internal {
+    function _validAmount(uint256 amount) internal pure{
         if (amount == 0) revert ZeroAmountNotAllowed();
     }
 
@@ -77,7 +77,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         _;
     }
 
-    function _validTime(uint256 time) internal {
+    function _validTime(uint256 time) internal pure{
         if (time == 0) revert InvalidTime(time);
     }
 
@@ -86,7 +86,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         _;
     }
 
-    function _onlySettlementOperator() internal {
+    function _onlySettlementOperator() internal view {
         if (msg.sender != settlementOperator) revert OnlySettlementOperator();
     }
 
@@ -95,7 +95,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         _;
     }
             
-    function _onlyWithdrawOperator() internal {
+    function _onlyWithdrawOperator() internal view{
         if (msg.sender != withdrawOperator) revert OnlyWithdrawOperator();
     }
 
@@ -103,6 +103,13 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     constructor() {
         _disableInitializers();
     }
+
+    /**
+     * @notice Receive ETH
+     * @dev Allows the contract to receive ETH for cross-chain fees
+     * @notice ETH can be pre-funded to the contract to cover cross-chain withdrawal fees
+     */
+    receive() external payable {}
 
     function initialize(address _USDC,uint64 _defaultCollateralCoinId) external initializer validAddress(_USDC) validAmount(_defaultCollateralCoinId) {
         __Ownable_init(msg.sender);
@@ -179,9 +186,17 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             // cross-chain withdraw
             // Approve StargateWithdraw to spend USDC
             USDC.forceApprove(address(stargateWithdraw), amount);
-            
+
+            // Prepare send parameters
+            (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = stargateWithdraw.prepareRideBus(dstChainId, amount, recipient);
+         
+            // Check if contract has sufficient ETH balance for cross-chain fees
+            if (address(this).balance < valueToSend) {
+                revert InsufficientEthBalance(valueToSend, address(this).balance);
+            }
+         
             // Execute cross-chain withdraw
-            stargateWithdraw.crossChainWithdraw(clientOrderId, recipient, amount, dstChainId, user, address(this));
+            stargateWithdraw.crossChainWithdraw{value: valueToSend}(clientOrderId, user, amount, dstChainId, recipient, address(this), sendParam, messagingFee);
             
             // Reset approval
             USDC.forceApprove(address(stargateWithdraw), 0);
@@ -359,6 +374,48 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         emit EmergencyWithdraw(to, amount);
     }
 
+    function emergencyWithdrawETH(
+        address to, 
+        uint256 amount,
+        uint256 expireTime, 
+        address[] memory allSigners,
+        bytes[] memory signatures
+    ) external nonReentrant validAddress(to) validAmount(amount) {
+        if (allSigners.length < 2) revert InvalidAllSignersLength();
+        if (allSigners.length != signatures.length) revert InvalidSignaturesLength();
+        if (expireTime < block.timestamp) revert ExpiredTransaction();
+
+        // check if the signers are the same
+        for (uint256 i = 0; i < allSigners.length; i++) {
+            for (uint256 j = i + 1; j < allSigners.length; j++) {
+                if (allSigners[i] == allSigners[j]) revert SameSigner();
+            }
+        }
+
+        // verify multi signatures
+        bytes32 operationHash = _hashEmergencyWithdrawETH(to, amount, expireTime);
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        for (uint8 index = 0; index < allSigners.length; index++) {
+            address signer = ECDSA.recover(operationHash, signatures[index]);
+            if (signer != allSigners[index]) revert InvalidSigner();
+            if (!isAllowedSigner(signer)) revert NotAllowedSigner();
+        }
+        
+        // Store balance before transfer
+        uint256 preBalance = address(this).balance;
+        
+        // Execute transfer
+        (bool success, ) = to.call{value: amount}("");
+        if (!success) revert TransferFailed();
+
+        // Verify transfer happened correctly
+        uint256 postBalance = address(this).balance;
+        assert(preBalance - postBalance == amount);
+
+        emit EmergencyWithdrawETH(to, amount);
+    }
+
     /**
      * @notice Batch update user asset info
      * @param batchId Batch ID, must equal lastBatchId + 1
@@ -480,7 +537,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
     function setStargateWithdraw(address _stargateWithdraw) external onlyOwner validAddress(_stargateWithdraw) {
         if (_stargateWithdraw == address(0)) revert ZeroAddressNotAllowed();
-        stargateWithdraw = StargateWithdraw(_stargateWithdraw);
+        stargateWithdraw = StargateWithdraw(payable(_stargateWithdraw));
         emit StargateWithdrawUpdated(_stargateWithdraw);
     }
 
@@ -501,9 +558,8 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         uint256 amount,
         uint256 expireTime,
         uint64 dstChainId
-    ) internal view returns (bytes32 hash) {
-        // Use abi.encodePacked but optimize the keccak256 call with inline assembly
-        bytes memory data = abi.encodePacked(
+    ) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked(
             "USER_WITHDRAW",
             clientOrderId,
             user,
@@ -513,10 +569,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             dstChainId,
             block.chainid,
             address(this)
-        );
-        assembly ("memory-safe") {
-            hash := keccak256(add(data, 0x20), mload(data))
-        }
+        ));
     }
 
     /**
@@ -528,9 +581,8 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         address to,
         uint256 amount,
         uint256 expireTime
-    ) internal view returns (bytes32 hash) {
-        // Use abi.encodePacked but optimize the keccak256 call with inline assembly
-        bytes memory data = abi.encodePacked(
+    ) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked(
             "EMERGENCY_WITHDRAW",
             token,
             to,
@@ -538,10 +590,22 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             expireTime,
             address(this),
             block.chainid
-        );
-        assembly ("memory-safe") {
-            hash := keccak256(add(data, 0x20), mload(data))
-        }
+        ));
+    }
+
+    function _hashEmergencyWithdrawETH(
+        address to,
+        uint256 amount,
+        uint256 expireTime
+    ) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked(
+            "EMERGENCY_WITHDRAW_ETH",
+            to,
+            amount,
+            expireTime,
+            address(this),
+            block.chainid
+        ));
     }
     
     uint256[50] private __gap; // allow for future upgrades

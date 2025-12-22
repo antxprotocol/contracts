@@ -72,7 +72,7 @@ contract AssetScript is Script {
         console.log("Asset proxy deployed at:", address(proxy));
 
         // Get Asset instance through proxy
-        Asset asset = Asset(address(proxy));
+        Asset asset = Asset(payable(address(proxy)));
         console.log("Asset (via proxy) at:", address(asset));
 
         // set signers

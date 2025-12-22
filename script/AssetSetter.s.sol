@@ -14,7 +14,7 @@ contract AssetSetterScript is Script {
         address assetDeployedAddress = 0x4ee398227391f1e7ddfd6D73056e7532dDe0e29a;
         console.log("Asset address at:", address(assetDeployedAddress));
 
-        Asset asset  = Asset(assetDeployedAddress);
+        Asset asset  = Asset(payable(assetDeployedAddress));
 
         // address settlementOperator = asset.settlementOperator();
         // console.log("settlement operator address at:", address(settlementOperator));
