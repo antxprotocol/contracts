@@ -29,6 +29,6 @@ gas_reports = ["*"]
 
 [profile.ci]
 via_ir = true
-ir-minimum=true
+# ir-minimum=true
 optimizer = true
 optimizer_runs = 200
