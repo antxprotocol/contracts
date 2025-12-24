@@ -17,9 +17,11 @@ import {SendParam, MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contracts/o
 // Simple mock for Ed25519 oracle used within tests
 contract MockEd25519Oracle {
     bool public result;
+
     function setResult(bool newResult) external {
         result = newResult;
     }
+
     function isVerified(bytes32, bytes32, bytes calldata) external view returns (bool) {
         return result;
     }
@@ -28,24 +30,24 @@ contract MockEd25519Oracle {
 // Mock StargateWithdraw for testing
 contract MockStargateWithdraw {
     using SafeERC20 for IERC20;
-    
+
     bool public shouldRevert;
     bytes32 public lastGuid;
     address public usdc;
-    
+
     constructor(address _usdc) {
         usdc = _usdc;
     }
-    
+
     function setShouldRevert(bool _shouldRevert) external {
         shouldRevert = _shouldRevert;
     }
-    
-    function prepareRideBus(
-        uint64 dstChainId,
-        uint256 amount,
-        bytes32 receiver
-    ) external view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+
+    function prepareRideBus(uint64 dstChainId, uint256 amount, bytes32 receiver)
+        external
+        view
+        returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee)
+    {
         // Return minimal values for testing
         sendParam = SendParam({
             dstEid: 30101, // Dummy endpoint ID
@@ -56,20 +58,17 @@ contract MockStargateWithdraw {
             composeMsg: new bytes(0),
             oftCmd: new bytes(1)
         });
-        
-        messagingFee = MessagingFee({
-            nativeFee: 0.001 ether,
-            lzTokenFee: 0
-        });
-        
+
+        messagingFee = MessagingFee({nativeFee: 0.001 ether, lzTokenFee: 0});
+
         valueToSend = 0.001 ether;
     }
-    
-    function prepareTakeTaxi(
-        uint64 dstChainId,
-        uint256 amount,
-        bytes32 receiver
-    ) external view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+
+    function prepareTakeTaxi(uint64 dstChainId, uint256 amount, bytes32 receiver)
+        external
+        view
+        returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee)
+    {
         // Return minimal values for testing (same as prepareRideBus)
         sendParam = SendParam({
             dstEid: 30101, // Dummy endpoint ID
@@ -80,15 +79,12 @@ contract MockStargateWithdraw {
             composeMsg: new bytes(0),
             oftCmd: new bytes(0)
         });
-        
-        messagingFee = MessagingFee({
-            nativeFee: 0.001 ether,
-            lzTokenFee: 0
-        });
-        
+
+        messagingFee = MessagingFee({nativeFee: 0.001 ether, lzTokenFee: 0});
+
         valueToSend = 0.001 ether;
     }
-    
+
     function crossChainWithdraw(
         uint256 clientOrderId,
         bytes32 user,
@@ -155,58 +151,53 @@ library AssetDeployer {
     function deployAsset(address usdc, address owner) internal returns (Asset) {
         return deployAsset(usdc, owner, 1); // Default to coinId 1 for tests
     }
-    
+
     function deployAsset(address usdc, address owner, uint64 defaultCollateralCoinId) internal returns (Asset) {
         // Deploy implementation
         Asset implementation = new Asset();
-        
+
         // Encode initialize function call
-        bytes memory initData = abi.encodeWithSelector(
-            Asset.initialize.selector,
-            usdc,
-            defaultCollateralCoinId
-        );
-        
+        bytes memory initData = abi.encodeWithSelector(Asset.initialize.selector, usdc, defaultCollateralCoinId);
+
         // Deploy proxy
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
-        
+
         // Return Asset instance through proxy
         Asset asset = Asset(payable(address(proxy)));
-        
+
         // Transfer ownership to the specified owner
         if (owner != address(0)) {
             asset.transferOwnership(owner);
         }
-        
+
         return asset;
     }
-    
+
     function deployAssetValidTimeHelper(address usdc, address owner) internal returns (AssetValidTimeHelper) {
         return deployAssetValidTimeHelper(usdc, owner, 1); // Default to coinId 1 for tests
     }
-    
-    function deployAssetValidTimeHelper(address usdc, address owner, uint64 defaultCollateralCoinId) internal returns (AssetValidTimeHelper) {
+
+    function deployAssetValidTimeHelper(address usdc, address owner, uint64 defaultCollateralCoinId)
+        internal
+        returns (AssetValidTimeHelper)
+    {
         // Deploy implementation
         AssetValidTimeHelper implementation = new AssetValidTimeHelper();
-        
+
         // Encode initialize function call (using Asset's initialize)
-        bytes memory initData = abi.encodeWithSelector(
-            Asset.initialize.selector,
-            usdc,
-            defaultCollateralCoinId
-        );
-        
+        bytes memory initData = abi.encodeWithSelector(Asset.initialize.selector, usdc, defaultCollateralCoinId);
+
         // Deploy proxy
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
-        
+
         // Return AssetValidTimeHelper instance through proxy
         AssetValidTimeHelper helper = AssetValidTimeHelper(payable(address(proxy)));
-        
+
         // Transfer ownership to the specified owner
         if (owner != address(0)) {
             helper.transferOwnership(owner);
         }
-        
+
         return helper;
     }
 }
@@ -229,44 +220,42 @@ contract AssetTest is Test {
     address internal user1 = address(0x5);
     address internal user2 = address(0x6);
     address[] public signers;
-    
+
     // Chain IDs for testing
     uint64 constant BASE_MAINNET = 8543;
     uint64 constant BASE_SEPOLIA = 85432;
     uint64 constant ETHEREUM_MAINNET = 1;
     uint64 constant SEPOLIA = 11155111;
-    
+
     // Helper function to convert multiple user updates into BatchUpdateData
-    function createBatchUpdateDataFromUsers(
-        bytes32[] memory users,
-        uint256[] memory amounts
-    ) internal pure returns (Asset.BatchUpdateData memory) {
+    function createBatchUpdateDataFromUsers(bytes32[] memory users, uint256[] memory amounts)
+        internal
+        pure
+        returns (Asset.BatchUpdateData memory)
+    {
         require(users.length == amounts.length, "Arrays length mismatch");
-        
+
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](users.length);
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](users.length);
-        
+
         for (uint256 i = 0; i < users.length; i++) {
             uint64 subAccountId = uint64(uint256(users[i]) % type(uint64).max);
             if (subAccountId == 0) subAccountId = 1;
-            
+
             int64 crossCollateralAmount;
             if (amounts[i] > uint256(uint64(type(int64).max))) {
                 crossCollateralAmount = type(int64).max;
             } else {
                 crossCollateralAmount = int64(int256(amounts[i]));
             }
-            
+
             MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
             MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
-            
+
             subaccountUpdates[i] = MarginAsset.Subaccount({
-                id: subAccountId,
-                chainAddress: users[i],
-                clientAccountId: "",
-                tradeSettings: tradeSettings
+                id: subAccountId, chainAddress: users[i], clientAccountId: "", tradeSettings: tradeSettings
             });
-            
+
             perpetualAssetUpdates[i] = MarginAsset.PerpetualAsset({
                 subaccountId: subAccountId,
                 collateralCoinId: 1,
@@ -274,7 +263,7 @@ contract AssetTest is Test {
                 positions: positions
             });
         }
-        
+
         return Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -300,7 +289,7 @@ contract AssetTest is Test {
         }
         return subaccountIds;
     }
-    
+
     // Helper function to get dstChainId based on current chain
     function getDstChainId() internal view returns (uint64) {
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
@@ -308,14 +297,14 @@ contract AssetTest is Test {
         }
         return ETHEREUM_MAINNET;
     }
-    
+
     // Helper function to fund Asset contract with ETH for cross-chain fees
     function fundAssetWithETH() internal {
         if (block.chainid != BASE_MAINNET && block.chainid != BASE_SEPOLIA) {
             vm.deal(address(asset), 1 ether);
         }
     }
-    
+
     // Helper function to create signature hash for USER_WITHDRAW
     function createWithdrawSignatureHash(
         uint256 clientOrderId,
@@ -326,10 +315,23 @@ contract AssetTest is Test {
         uint256 expireTime,
         uint64 dstChainId
     ) internal view returns (bytes32) {
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderId, user, recipient, amount, fee, expireTime, dstChainId, block.chainid, address(asset)));
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "USER_WITHDRAW",
+                clientOrderId,
+                user,
+                recipient,
+                amount,
+                fee,
+                expireTime,
+                dstChainId,
+                block.chainid,
+                address(asset)
+            )
+        );
         return MessageHashUtils.toEthSignedMessageHash(operationHash);
     }
-    
+
     // Helper function to create signature for USER_WITHDRAW
     function createWithdrawSignature(
         uint256 clientOrderId,
@@ -344,7 +346,7 @@ contract AssetTest is Test {
         bytes32 hash = createWithdrawSignatureHash(clientOrderId, user, recipient, amount, fee, expireTime, dstChainId);
         return signMessage(hash, privateKey);
     }
-    
+
     // Helper function to create dstChainIds array
     function createDstChainIds(uint256 length) internal view returns (uint64[] memory) {
         uint64[] memory dstChainIds = new uint64[](length);
@@ -354,14 +356,14 @@ contract AssetTest is Test {
         }
         return dstChainIds;
     }
-    
+
     // Helper function to create fees array (default to 0)
     function createFees(uint256 length) internal pure returns (uint256[] memory) {
         uint256[] memory fees = new uint256[](length);
         // Default fee is 0
         return fees;
     }
-    
+
     // Helper function to create fees array with specific fee value
     function createFees(uint256 length, uint256 fee) internal pure returns (uint256[] memory) {
         uint256[] memory fees = new uint256[](length);
@@ -370,7 +372,7 @@ contract AssetTest is Test {
         }
         return fees;
     }
-    
+
     // Helper function to create recipients array (defaults to user address)
     function createRecipients(bytes32[] memory users) internal pure returns (bytes32[] memory) {
         bytes32[] memory recipients = new bytes32[](users.length);
@@ -379,7 +381,7 @@ contract AssetTest is Test {
         }
         return recipients;
     }
-    
+
     // Helper function to create expireTimes array
     function createExpireTimes(uint256 length, uint256 expireTime) internal pure returns (uint256[] memory) {
         uint256[] memory expireTimes = new uint256[](length);
@@ -388,7 +390,7 @@ contract AssetTest is Test {
         }
         return expireTimes;
     }
-    
+
     // Helper function to assert balance changes based on chain
     function assertBalanceChange(
         address user,
@@ -412,14 +414,15 @@ contract AssetTest is Test {
     }
 
     // Helper function to create BatchUpdateData
-    function createBatchUpdateData(
-        bytes32 user,
-        uint256 availableAmount
-    ) internal pure returns (Asset.BatchUpdateData memory) {
+    function createBatchUpdateData(bytes32 user, uint256 availableAmount)
+        internal
+        pure
+        returns (Asset.BatchUpdateData memory)
+    {
         // Use a simple subAccountId based on user address
         uint64 subAccountId = uint64(uint256(user) % type(uint64).max);
         if (subAccountId == 0) subAccountId = 1; // Ensure non-zero
-        
+
         // Convert to int64 safely, clamping if too large
         int64 crossCollateralAmount;
         if (availableAmount > uint256(uint64(type(int64).max))) {
@@ -427,17 +430,14 @@ contract AssetTest is Test {
         } else {
             crossCollateralAmount = int64(int256(availableAmount));
         }
-        
+
         // Create Subaccount
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: subAccountId,
-            chainAddress: user,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
+            id: subAccountId, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings
         });
-        
+
         // Create PerpetualAsset with default collateralCoinId = 1
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](1);
@@ -447,7 +447,7 @@ contract AssetTest is Test {
             crossCollateralAmount: crossCollateralAmount,
             positions: positions
         });
-        
+
         return Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -470,7 +470,7 @@ contract AssetTest is Test {
     function setUp() public {
         // Initialize private keys and addresses
         signer1PrivateKey = 1;
-        signer2PrivateKey = 2; 
+        signer2PrivateKey = 2;
         signer3PrivateKey = 3;
         signer1 = vm.addr(signer1PrivateKey);
         signer2 = vm.addr(signer2PrivateKey);
@@ -485,7 +485,7 @@ contract AssetTest is Test {
 
         // Deploy mock MarginAssetCalculator
         marginAssetCalculator = new MockMarginAssetCalculator();
-        
+
         // Deploy mock StargateWithdraw
         mockStargateWithdraw = new MockStargateWithdraw(address(USDC));
 
@@ -504,16 +504,12 @@ contract AssetTest is Test {
         asset.setMarginAsset(address(marginAssetCalculator));
         asset.setStargateWithdraw(address(mockStargateWithdraw));
         vm.stopPrank();
-        
+
         // Set up coin (coinId=1 is USDC) for tests via batchUpdate
         // Note: This sets lastBatchId to 1, so subsequent tests should start from batchId=2
         vm.startPrank(settlementOperator);
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](1);
-        coinUpdates[0] = MarginAsset.Coin({
-            id: 1,
-            symbol: "USDC",
-            stepSizeScale: 6
-        });
+        coinUpdates[0] = MarginAsset.Coin({id: 1, symbol: "USDC", stepSizeScale: 6});
         Asset.BatchUpdateData memory coinSetupData = Asset.BatchUpdateData({
             coinUpdates: coinUpdates,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -573,11 +569,7 @@ contract AssetTest is Test {
         vm.startPrank(owner);
         // Deploy implementation first
         Asset implementation = new Asset();
-        bytes memory initData = abi.encodeWithSelector(
-            Asset.initialize.selector,
-            address(0),
-            uint64(1)
-        );
+        bytes memory initData = abi.encodeWithSelector(Asset.initialize.selector, address(0), uint64(1));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         new ERC1967Proxy(address(implementation), initData);
         vm.stopPrank();
@@ -614,11 +606,7 @@ contract AssetTest is Test {
     function test_constructor_zeroDefaultCollateralCoinId() public {
         vm.startPrank(owner);
         Asset implementation = new Asset();
-        bytes memory initData = abi.encodeWithSelector(
-            Asset.initialize.selector,
-            address(USDC),
-            uint64(0)
-        );
+        bytes memory initData = abi.encodeWithSelector(Asset.initialize.selector, address(USDC), uint64(0));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
         new ERC1967Proxy(address(implementation), initData);
         vm.stopPrank();
@@ -648,10 +636,10 @@ contract AssetTest is Test {
     function test_batchUpdate_success() public {
         bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
         bytes32 user2Bytes = bytes32(uint256(uint160(user2)));
-        
+
         Asset.BatchUpdateData memory batchData1 = createBatchUpdateData(user1Bytes, 1000);
         Asset.BatchUpdateData memory batchData2 = createBatchUpdateData(user2Bytes, 2000);
-        
+
         // Merge both updates
         Asset.BatchUpdateData memory mergedData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
@@ -670,7 +658,7 @@ contract AssetTest is Test {
         vm.expectEmit(address(asset));
         emit IAsset.BatchUpdated(2, 101, block.timestamp);
 
-        asset.batchUpdate(2, 0, 101, mergedData);   
+        asset.batchUpdate(2, 0, 101, mergedData);
         vm.stopPrank();
 
         assertEq(asset.availableAmount(user1Bytes), 1000);
@@ -682,41 +670,41 @@ contract AssetTest is Test {
 
     function test_batchUpdate_invalidBatchId() public {
         bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user1Bytes, 1000);
 
         vm.startPrank(settlementOperator);
         // Try to update with invalid batch ID (should be 2, but using 3)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
         asset.batchUpdate(3, 0, 102, batchData);
-        
+
         // Try with 1 (should also fail since lastBatchId is 1, expecting 2)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
         asset.batchUpdate(1, 0, 102, batchData);
-        
+
         vm.stopPrank();
     }
 
     function test_batchUpdate_invalidAntxChainHeight() public {
         bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user1Bytes, 1000);
 
         vm.startPrank(settlementOperator);
         // First update should succeed
         asset.batchUpdate(2, 0, 101, batchData);
-        
+
         // Try with same antxChainHeight (should fail)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
         asset.batchUpdate(3, 0, 101, batchData);
-        
+
         // Try with lower antxChainHeight (should fail)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
         asset.batchUpdate(3, 0, 50, batchData);
-        
+
         // Try with valid higher antxChainHeight (should succeed)
         asset.batchUpdate(3, 0, 102, batchData);
-        
+
         vm.stopPrank();
     }
 
@@ -724,24 +712,24 @@ contract AssetTest is Test {
         bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
 
         vm.startPrank(settlementOperator);
-        
+
         // First batch should be ID 2 (since setUp already called batchUpdate(1, ...))
         Asset.BatchUpdateData memory batchData1 = createBatchUpdateData(user1Bytes, 1000);
         asset.batchUpdate(2, 0, 101, batchData1);
         assertEq(asset.lastBatchId(), 2);
-        
+
         // Second batch should be ID 3
         Asset.BatchUpdateData memory batchData2 = createBatchUpdateData(user1Bytes, 2000);
         asset.batchUpdate(3, 0, 102, batchData2);
         assertEq(asset.lastBatchId(), 3);
-        
+
         // Third batch should be ID 4
         Asset.BatchUpdateData memory batchData3 = createBatchUpdateData(user1Bytes, 3000);
         asset.batchUpdate(4, 0, 103, batchData3);
         assertEq(asset.lastBatchId(), 4);
-        
+
         vm.stopPrank();
-        
+
         assertEq(asset.availableAmount(user1Bytes), 3000);
     }
 
@@ -755,7 +743,7 @@ contract AssetTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IAsset.OnlySettlementOperator.selector));
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -765,7 +753,7 @@ contract AssetTest is Test {
         // batchUpdate doesn't have length mismatch anymore since it uses BatchUpdateData
         // This test validates that batchUpdate works correctly
         bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user1Bytes, 1000);
 
         vm.startPrank(settlementOperator);
@@ -780,7 +768,7 @@ contract AssetTest is Test {
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
-        
+
         // Setup user balances first
         address[] memory usersForBalance = new address[](1);
         usersForBalance[0] = testUser;
@@ -790,7 +778,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -802,7 +790,7 @@ contract AssetTest is Test {
         // Prepare batch withdraw
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(testUser)));
         amounts[0] = 500;
@@ -812,11 +800,12 @@ contract AssetTest is Test {
         bytes32 recipient = userBytes; // Default recipient is the user themselves
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
+        bytes memory userSignature =
+            createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
-        
+
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = recipient;
         uint256[] memory expireTimes = new uint256[](1);
@@ -825,7 +814,7 @@ contract AssetTest is Test {
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         // Execute batch withdraw - should now work with correct signature
         vm.startPrank(withdrawOperator);
         // Note: Approval events may be emitted before CrossChainWithdraw due to forceApprove
@@ -833,13 +822,23 @@ contract AssetTest is Test {
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
-        
+
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
         uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             // On Base, user receives USDC directly
             assertEq(userBalanceAfter - userBalanceBefore, 500);
@@ -870,7 +869,7 @@ contract AssetTest is Test {
         for (uint256 i = 0; i < users.length; i++) {
             bUsers[i] = bytes32(uint256(uint160(users[i])));
         }
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -889,21 +888,32 @@ contract AssetTest is Test {
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        bytes memory wrongSignature = createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, 999);
+        bytes memory wrongSignature =
+            createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, 999);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = wrongSignature;
-        
+
         bytes32[] memory recipients = createRecipients(bUsers);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, expireTime);
-        
+
         // Execute batch withdraw - should fail with invalid signature
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(bUsers);
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidUserSignature.selector));
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
     }
 
@@ -912,7 +922,7 @@ contract AssetTest is Test {
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
-        
+
         // Setup small user balance
         address[] memory usersForBalance = new address[](1);
         usersForBalance[0] = testUser;
@@ -922,7 +932,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -934,7 +944,7 @@ contract AssetTest is Test {
         // Prepare batch withdraw for more than user has
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(testUser)));
         amounts[0] = 500; // More than user has
@@ -944,21 +954,32 @@ contract AssetTest is Test {
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
+        bytes memory userSignature =
+            createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
-        
+
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, expireTime);
-        
+
         // Execute batch withdraw - should fail with insufficient balance
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 100, 500));
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
     }
 
@@ -970,22 +991,22 @@ contract AssetTest is Test {
         uint256[] memory setupAmounts = new uint256[](2);
         setupAmounts[0] = 1000;
         setupAmounts[1] = 1000;
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
         asset.batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
-        
+
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](2);
         users[0] = bytes32(uint256(uint160(user1)));
         users[1] = bytes32(uint256(uint160(user2)));
-        
+
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 500;
-        
+
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = new bytes(65);
 
@@ -996,7 +1017,17 @@ contract AssetTest is Test {
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
     }
 
@@ -1006,21 +1037,21 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
         uint256[] memory setupAmounts = new uint256[](1);
         setupAmounts[0] = 1000;
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
         asset.batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
-        
+
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(user1)));
-        
+
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 500;
-        
+
         bytes[] memory signatures = new bytes[](2);
         signatures[0] = new bytes(65);
         signatures[1] = new bytes(65);
@@ -1032,7 +1063,17 @@ contract AssetTest is Test {
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
     }
 
@@ -1043,21 +1084,21 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
         uint256[] memory setupAmounts = new uint256[](1);
         setupAmounts[0] = 1000;
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
         asset.batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
-        
+
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(user1)));
-        
+
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 500;
-        
+
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = new bytes(65);
 
@@ -1069,7 +1110,17 @@ contract AssetTest is Test {
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
     }
 
@@ -1084,7 +1135,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1109,7 +1160,9 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
+        assertBalanceChange(
+            user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore
+        );
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
@@ -1124,7 +1177,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1137,7 +1190,7 @@ contract AssetTest is Test {
         uint256 beforeBal = USDC.balanceOf(user1);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         vm.startPrank(user1);
         // Use ED25519 enum to cover that path (isForce skips signature logic)
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
@@ -1161,7 +1214,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1181,14 +1234,14 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
         uint256[] memory setupAmounts = new uint256[](1);
         setupAmounts[0] = 0;
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
         asset.batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
-        
+
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
-        
+
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
@@ -1207,7 +1260,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1234,12 +1287,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
@@ -1260,15 +1313,8 @@ contract AssetTest is Test {
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
-        
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
+
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
@@ -1297,14 +1343,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](1);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAllSignersLength.selector));
-        asset.emergencyWithdraw(
-            address(USDC),
-            user1,
-            500,
-            expireTime,
-            allSigners,
-            signatures
-        );
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
     }
 
     function test_emergencyWithdraw_signatureLengthMismatch() public {
@@ -1315,14 +1354,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](3);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSignaturesLength.selector));
-        asset.emergencyWithdraw(
-            address(USDC),
-            user1,
-            500,
-            expireTime,
-            allSigners,
-            signatures
-        );
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
     }
 
     function test_emergencyWithdraw_sameSigner() public {
@@ -1333,14 +1365,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](2);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.SameSigner.selector));
-        asset.emergencyWithdraw(
-            address(USDC),
-            user1,
-            500,
-            expireTime,
-            allSigners,
-            signatures
-        );
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
     }
 
     function test_emergencyWithdraw_expiredTransaction() public {
@@ -1351,16 +1376,8 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](2);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
-        asset.emergencyWithdraw(
-            address(USDC),
-            user1,
-            500,
-            expireTime,
-            allSigners,
-            signatures
-        );
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
     }
-
 
     function test_emergencyWithdraw_invalidSigner() public {
         // Setup system balance
@@ -1372,7 +1389,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1380,13 +1397,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                user1, 
-                uint256(500), 
-                expireTime, 
-                address(asset), 
-                block.chainid
+                "EMERGENCY_WITHDRAW", address(USDC), user1, uint256(500), expireTime, address(asset), block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
@@ -1404,14 +1415,7 @@ contract AssetTest is Test {
         signatures[1] = correctSignature;
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
-        asset.emergencyWithdraw(
-            address(USDC),
-            user1,
-            500,
-            expireTime,
-            allSigners,
-            signatures
-        );
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
     }
 
     function test_emergencyWithdraw_notAllowedSigner() public {
@@ -1424,7 +1428,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1432,13 +1436,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                user1, 
-                uint256(500), 
-                expireTime, 
-                address(asset), 
-                block.chainid
+                "EMERGENCY_WITHDRAW", address(USDC), user1, uint256(500), expireTime, address(asset), block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
@@ -1458,20 +1456,13 @@ contract AssetTest is Test {
         signatures[1] = validSignature;
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedSigner.selector));
-        asset.emergencyWithdraw(
-            address(USDC),
-            user1,
-            500,
-            expireTime,
-            allSigners,
-            signatures
-        );
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
     }
 
     // Test admin functions
     function test_setSettlementAddress_success() public {
         address newSettlementAddress = address(0x888);
-        
+
         vm.startPrank(owner);
         vm.expectEmit(address(asset));
         emit IAsset.SettlementAddressUpdated(newSettlementAddress);
@@ -1483,7 +1474,7 @@ contract AssetTest is Test {
 
     function test_setSettlementAddress_onlyOwner() public {
         address newSettlementAddress = address(0x888);
-        
+
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
         asset.setSettlementAddress(newSettlementAddress);
@@ -1501,7 +1492,7 @@ contract AssetTest is Test {
         address[] memory newSigners = new address[](2);
         newSigners[0] = address(0x111);
         newSigners[1] = address(0x222);
-        
+
         vm.startPrank(owner);
         vm.expectEmit(address(asset));
         emit IAsset.SignersUpdated(newSigners);
@@ -1516,7 +1507,7 @@ contract AssetTest is Test {
     function test_setSigners_onlyOwner() public {
         address[] memory newSigners = new address[](1);
         newSigners[0] = address(0x111);
-        
+
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
         asset.setSigners(newSigners);
@@ -1525,7 +1516,7 @@ contract AssetTest is Test {
 
     function test_setSigners_emptyArray() public {
         address[] memory emptySigners = new address[](0);
-        
+
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         asset.setSigners(emptySigners);
@@ -1536,7 +1527,7 @@ contract AssetTest is Test {
         address[] memory invalidSigners = new address[](2);
         invalidSigners[0] = address(0x111);
         invalidSigners[1] = address(0); // Zero address
-        
+
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         asset.setSigners(invalidSigners);
@@ -1545,7 +1536,7 @@ contract AssetTest is Test {
 
     function test_setWithdrawOperator_success() public {
         address newWithdrawOperator = address(0x777);
-        
+
         vm.startPrank(owner);
         vm.expectEmit(address(asset));
         emit IAsset.WithdrawOperatorUpdated(newWithdrawOperator);
@@ -1557,7 +1548,7 @@ contract AssetTest is Test {
 
     function test_setWithdrawOperator_onlyOwner() public {
         address newWithdrawOperator = address(0x777);
-        
+
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
         asset.setWithdrawOperator(newWithdrawOperator);
@@ -1573,7 +1564,7 @@ contract AssetTest is Test {
 
     function test_setStargateWithdraw_success() public {
         address newStargateWithdraw = address(0x999);
-        
+
         vm.startPrank(owner);
         vm.expectEmit(address(asset));
         emit IAsset.StargateWithdrawUpdated(newStargateWithdraw);
@@ -1585,7 +1576,7 @@ contract AssetTest is Test {
 
     function test_setStargateWithdraw_onlyOwner() public {
         address newStargateWithdraw = address(0x999);
-        
+
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
         asset.setStargateWithdraw(newStargateWithdraw);
@@ -1631,7 +1622,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1661,7 +1652,7 @@ contract AssetTest is Test {
         // The contract uses ReentrancyGuard, so reentrancy should be prevented
         // This is automatically tested by the modifier, but we can verify
         // that the functions have the nonReentrant modifier applied
-        
+
         // Setup user balance
         address[] memory users = new address[](1);
         users[0] = user1;
@@ -1671,7 +1662,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1687,7 +1678,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 days;
         asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
-        
+
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
@@ -1699,7 +1690,7 @@ contract AssetTest is Test {
         uint256 user2PrivateKey = 0x2222222222222222222222222222222222222222222222222222222222222222;
         address testUser1 = vm.addr(user1PrivateKey);
         address testUser2 = vm.addr(user2PrivateKey);
-        
+
         // Setup user balances
         address[] memory usersForBalance = new address[](2);
         usersForBalance[0] = testUser1;
@@ -1712,7 +1703,7 @@ contract AssetTest is Test {
         bytes32[] memory bUsers = new bytes32[](2);
         bUsers[0] = bytes32(uint256(uint160(testUser1)));
         bUsers[1] = bytes32(uint256(uint160(testUser2)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1725,7 +1716,7 @@ contract AssetTest is Test {
         uint256[] memory clientOrderIds = new uint256[](2);
         clientOrderIds[0] = 123;
         clientOrderIds[1] = 456;
-        
+
         bytes32[] memory users = new bytes32[](2);
         users[0] = bytes32(uint256(uint160(testUser1)));
         users[1] = bytes32(uint256(uint160(testUser2)));
@@ -1739,16 +1730,18 @@ contract AssetTest is Test {
         bytes32 recipient2 = user2Bytes;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        
+
         bytes[] memory signatures = new bytes[](2);
-        signatures[0] = createWithdrawSignature(123, user1Bytes, recipient1, 500, 0, expireTime, dstChainId, user1PrivateKey);
-        signatures[1] = createWithdrawSignature(456, user2Bytes, recipient2, 800, 0, expireTime, dstChainId, user2PrivateKey);
+        signatures[0] =
+            createWithdrawSignature(123, user1Bytes, recipient1, 500, 0, expireTime, dstChainId, user1PrivateKey);
+        signatures[1] =
+            createWithdrawSignature(456, user2Bytes, recipient2, 800, 0, expireTime, dstChainId, user2PrivateKey);
 
         uint256 user1BalanceBefore = USDC.balanceOf(testUser1);
         uint256 user2BalanceBefore = USDC.balanceOf(testUser2);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         // Execute batch withdraw for both users
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
@@ -1756,14 +1749,24 @@ contract AssetTest is Test {
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
-        
+
         uint256 user1BalanceAfter = USDC.balanceOf(testUser1);
         uint256 user2BalanceAfter = USDC.balanceOf(testUser2);
         uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             // On Arbitrum, users receive USDC directly
             assertEq(user1BalanceAfter - user1BalanceBefore, 500);
@@ -1791,7 +1794,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1807,12 +1810,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
@@ -1836,19 +1839,11 @@ contract AssetTest is Test {
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
-        
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
+
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        
     }
 
     // Test edge cases and boundary conditions
@@ -1862,7 +1857,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1887,7 +1882,7 @@ contract AssetTest is Test {
         for (uint256 i = 0; i < numUsers; i++) {
             bUsers[i] = bytes32(uint256(uint160(users[i])));
         }
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -1907,23 +1902,23 @@ contract AssetTest is Test {
         uint256[] memory setupAmounts = new uint256[](2);
         setupAmounts[0] = 1000;
         setupAmounts[1] = 1000;
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
         asset.batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
-        
+
         uint256[] memory clientOrderIds = new uint256[](1); // Shorter than users array
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](2);
         users[0] = bytes32(uint256(uint160(user1)));
         users[1] = bytes32(uint256(uint160(user2)));
-        
+
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 500;
         amounts[1] = 600;
-        
+
         bytes[] memory signatures = new bytes[](2);
         signatures[0] = new bytes(65);
         signatures[1] = new bytes(65);
@@ -1935,7 +1930,17 @@ contract AssetTest is Test {
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
     }
 
     // Test isAllowedSigner with empty signers array
@@ -1987,7 +1992,7 @@ contract AssetTest is Test {
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
-        
+
         // Setup user balances first
         address[] memory usersForBalance = new address[](1);
         usersForBalance[0] = testUser;
@@ -1997,7 +2002,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2005,7 +2010,7 @@ contract AssetTest is Test {
         // Prepare batch withdraw with zero amount
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(testUser)));
         amounts[0] = 0; // Zero amount
@@ -2015,11 +2020,12 @@ contract AssetTest is Test {
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 0, 0, expireTime, dstChainId, userPrivateKey);
+        bytes memory userSignature =
+            createWithdrawSignature(123, userBytes, recipient, 0, 0, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
-        
+
         // Execute batch withdraw - should fail with zero amount
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
@@ -2028,7 +2034,17 @@ contract AssetTest is Test {
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
     }
 
@@ -2043,7 +2059,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2059,12 +2075,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
@@ -2083,18 +2099,11 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-         // Should be exactly 0
+        // Should be exactly 0
     }
 
     // Test assertion failure scenarios (this is tricky as assert will halt execution)
@@ -2103,7 +2112,7 @@ contract AssetTest is Test {
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
-        
+
         // Setup user balances first
         address[] memory usersForBalance = new address[](1);
         usersForBalance[0] = testUser;
@@ -2113,7 +2122,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2124,11 +2133,11 @@ contract AssetTest is Test {
 
         // Get contract balance before
         uint256 contractBalanceBefore = USDC.balanceOf(address(asset));
-        
+
         // Prepare batch withdraw
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(testUser)));
         amounts[0] = 500;
@@ -2138,7 +2147,8 @@ contract AssetTest is Test {
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
+        bytes memory userSignature =
+            createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
@@ -2150,9 +2160,19 @@ contract AssetTest is Test {
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
-        
+
         // Verify balance change is exactly what was expected
         uint256 contractBalanceAfter = USDC.balanceOf(address(asset));
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
@@ -2169,7 +2189,7 @@ contract AssetTest is Test {
 
     // Test validTime modifier (though it's not currently used in the contract)
     // We can't directly test it since it's not used, but we can verify the modifier exists
-    
+
     // Test with multiple signers but checking different signer combinations
     function test_emergencyWithdraw_differentSignerCombinations() public {
         // Setup system balance
@@ -2181,7 +2201,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2197,12 +2217,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
@@ -2220,16 +2240,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature3;
 
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
-
-        
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
     }
 
     // Test emergencyWithdraw with more than 3 signers to ensure loop coverage
@@ -2260,7 +2271,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         assetWith4Signers.batchUpdate(1, 0, 1, batchData);
         vm.stopPrank();
@@ -2275,12 +2286,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(assetWith4Signers), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(assetWith4Signers),
                 block.chainid
             )
         );
@@ -2304,16 +2315,13 @@ contract AssetTest is Test {
         signatures[3] = signature4;
 
         assetWith4Signers.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
+            address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures
         );
 
-        console.log("assetWith4Signers.availableAmount(systemAddress):", assetWith4Signers.availableAmount(bytes32(uint256(uint160(systemAddress)))));
-        
+        console.log(
+            "assetWith4Signers.availableAmount(systemAddress):",
+            assetWith4Signers.availableAmount(bytes32(uint256(uint160(systemAddress))))
+        );
     }
 
     // Test edge case with zero user balance force withdraw (should fail)
@@ -2323,14 +2331,14 @@ contract AssetTest is Test {
         users[0] = user1;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 0; // Zero balance
-        
+
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
-        
+
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
         vm.startPrank(user1);
@@ -2355,7 +2363,7 @@ contract AssetTest is Test {
         assertTrue(asset.isAllowedSigner(signer1)); // First in array
         assertTrue(asset.isAllowedSigner(signer2)); // Middle in array
         assertTrue(asset.isAllowedSigner(signer3)); // Last in array
-        
+
         // Test with non-signer
         assertFalse(asset.isAllowedSigner(address(0xdead)));
     }
@@ -2365,7 +2373,7 @@ contract AssetTest is Test {
         address[] memory users = new address[](2);
         users[0] = user1;
         users[1] = user2;
-        
+
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 0; // Zero amount
         amounts[1] = 0; // Zero amount
@@ -2374,7 +2382,7 @@ contract AssetTest is Test {
         bytes32[] memory bUsers = new bytes32[](2);
         bUsers[0] = bytes32(uint256(uint160(user1)));
         bUsers[1] = bytes32(uint256(uint160(user2)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2395,7 +2403,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2411,12 +2419,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
@@ -2433,18 +2441,8 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
-
-        
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
     }
-
 
     function test_recover_address() public {
         // Use a known private key to generate the test user address
@@ -2463,64 +2461,76 @@ contract AssetTest is Test {
 
         // Create user signature with the correct private key for the test user
         // Updated hash format includes dstChainId and address(this)
-        bytes32 operationHash = keccak256(abi.encodePacked("USER_WITHDRAW", clientOrderID, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), amount, block.timestamp + 1 days, dstChainId, chainID, address(asset)));
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "USER_WITHDRAW",
+                clientOrderID,
+                bytes32(uint256(uint160(testUser))),
+                bytes32(uint256(uint160(testUser))),
+                amount,
+                block.timestamp + 1 days,
+                dstChainId,
+                chainID,
+                address(asset)
+            )
+        );
         console.log("operationHash before toEthSignedMessageHash:");
         console.logBytes32(operationHash);
-        
+
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
         console.log("operationHash after toEthSignedMessageHash:");
         console.logBytes32(operationHash);
-        
+
         // Generate signature using the private key
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(testPrivateKey, operationHash);
         bytes memory signatures = abi.encodePacked(r, s, v);
         console.log("signatures length:", signatures.length);
-        
+
         address recoveredAddress = ECDSA.recover(operationHash, signatures);
         console.log("recoveredAddress:", recoveredAddress);
         console.log("Expected testUser:", testUser);
         console.log("Addresses match:", recoveredAddress == testUser);
-        
+
         assertEq(recoveredAddress, testUser);
     }
-    
+
     // ============ Additional Comprehensive Tests ============
-    
+
     function testSetEd25519Oracle() public {
         address newOracle = address(0x123);
-        
+
         vm.startPrank(owner);
         vm.expectEmit(address(asset));
         emit IAsset.Ed25519OracleUpdated(newOracle);
         asset.setEd25519Oracle(newOracle);
         vm.stopPrank();
-        
+
         assertEq(address(asset.ed25519Oracle()), newOracle);
     }
-    
+
     function testSetEd25519OracleOnlyOwner() public {
         address newOracle = address(0x123);
-        
+
         vm.startPrank(user1);
         vm.expectRevert();
         asset.setEd25519Oracle(newOracle);
         vm.stopPrank();
     }
-    
+
     function testSetEd25519OracleZeroAddress() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         asset.setEd25519Oracle(address(0));
         vm.stopPrank();
     }
-    
+
     function testForceWithdrawWithEd25519Oracle() public {
         // Set up oracle
         address oracleAddress = address(0x123);
         vm.startPrank(owner);
         asset.setEd25519Oracle(oracleAddress);
         vm.stopPrank();
-        
+
         // Setup user balance
         address[] memory users = new address[](1);
         users[0] = user1;
@@ -2530,7 +2540,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2555,16 +2565,18 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
+        assertBalanceChange(
+            user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore
+        );
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
-    
+
     function testBatchWithdrawWithEd25519Signature() public {
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
-        
+
         // Setup user balances first
         address[] memory usersForBalance = new address[](1);
         usersForBalance[0] = testUser;
@@ -2574,7 +2586,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2586,7 +2598,7 @@ contract AssetTest is Test {
         // Prepare batch withdraw
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(testUser)));
         amounts[0] = 500;
@@ -2596,13 +2608,14 @@ contract AssetTest is Test {
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
+        bytes memory userSignature =
+            createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
 
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
-        
+
         // Configure mock Ed25519 oracle to approve
         MockEd25519Oracle mock = new MockEd25519Oracle();
         mock.setResult(true);
@@ -2614,33 +2627,49 @@ contract AssetTest is Test {
         vm.startPrank(withdrawOperator);
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, BASE_MAINNET);
+            emit IAsset.UserWithdraw(
+                123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, BASE_MAINNET
+            );
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(
+                123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, getDstChainId()
+            );
         }
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ED25519);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ED25519
+        );
         vm.stopPrank();
-        
+
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
-        assertBalanceChange(testUser, userBalanceBefore, userBalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
+        assertBalanceChange(
+            testUser, userBalanceBefore, userBalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore
+        );
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
     }
-    
+
     function testBatchWithdrawInvalidSignatureType() public {
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
-        
+
         // Setup user balances first
         address[] memory usersForBalance = new address[](1);
         usersForBalance[0] = testUser;
@@ -2650,7 +2679,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2662,7 +2691,7 @@ contract AssetTest is Test {
         // Prepare batch withdraw
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(testUser)));
         amounts[0] = 500;
@@ -2672,11 +2701,12 @@ contract AssetTest is Test {
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
+        bytes memory userSignature =
+            createWithdrawSignature(123, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
-        
+
         // Configure mock Ed25519 oracle to reject
         MockEd25519Oracle mock = new MockEd25519Oracle();
         mock.setResult(false);
@@ -2692,17 +2722,27 @@ contract AssetTest is Test {
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ED25519);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ED25519
+        );
         vm.stopPrank();
     }
-    
+
     function testEmergencyWithdrawWithEd25519Oracle() public {
         // Set up oracle
         address oracleAddress = address(0x123);
         vm.startPrank(owner);
         asset.setEd25519Oracle(oracleAddress);
         vm.stopPrank();
-        
+
         // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
@@ -2712,7 +2752,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2728,12 +2768,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
@@ -2754,32 +2794,24 @@ contract AssetTest is Test {
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
-        
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
+
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        
     }
-    
+
     function testUserBalanceWithZeroAddress() public {
         // Test userBalance with zero address
         assertEq(asset.availableAmount(bytes32(0)), 0);
     }
-    
+
     function testUserBalanceWithMaxAddress() public {
         // Test userBalance with max address
         bytes32 maxAddress = bytes32(type(uint256).max);
         assertEq(asset.availableAmount(maxAddress), 0);
     }
-    
+
     function testUpdateUserBalancesWithMaxBatchId() public {
         address[] memory users = new address[](1);
         users[0] = user1;
@@ -2791,12 +2823,12 @@ contract AssetTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(type(uint256).max, 0, 100, batchData);
         vm.stopPrank();
     }
-    
+
     function testUpdateUserBalancesWithMaxAmount() public {
         address[] memory users = new address[](1);
         users[0] = user1;
@@ -2806,20 +2838,20 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), uint256(uint64(type(int64).max)));
     }
-    
+
     function testUpdateUserBalancesWithMaxUsers() public {
         // Test with maximum number of users (limited by gas)
         uint256 numUsers = 100; // Reasonable limit for testing
         address[] memory users = new address[](numUsers);
         uint256[] memory amounts = new uint256[](numUsers);
-        
+
         for (uint256 i = 0; i < numUsers; i++) {
             users[i] = address(uint160(i + 1000)); // Generate unique addresses
             amounts[i] = (i + 1) * 100; // Different amounts for each user
@@ -2830,7 +2862,7 @@ contract AssetTest is Test {
         for (uint256 i = 0; i < numUsers; i++) {
             bUsers[i] = bytes32(uint256(uint160(users[i])));
         }
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2839,15 +2871,15 @@ contract AssetTest is Test {
         for (uint256 i = 0; i < numUsers; i++) {
             assertEq(asset.availableAmount(bytes32(uint256(uint160(users[i])))), amounts[i]);
         }
-        
+
         assertEq(asset.lastBatchId(), 2);
     }
-    
+
     function testBatchWithdrawWithMaxAmount() public {
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
-        
+
         // Setup user balances with max amount allowed by int64
         uint256 maxAmount = uint256(uint64(type(int64).max));
         address[] memory usersForBalance = new address[](1);
@@ -2858,7 +2890,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2870,7 +2902,7 @@ contract AssetTest is Test {
         // Prepare batch withdraw with max amount
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(testUser)));
         amounts[0] = maxAmount;
@@ -2880,39 +2912,60 @@ contract AssetTest is Test {
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        bytes memory userSignature = createWithdrawSignature(123, userBytes, recipient, maxAmount, 0, expireTime, dstChainId, userPrivateKey);
+        bytes memory userSignature =
+            createWithdrawSignature(123, userBytes, recipient, maxAmount, 0, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
 
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
-        
+
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.UserWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), maxAmount, BASE_MAINNET);
+            emit IAsset.UserWithdraw(
+                123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), maxAmount, BASE_MAINNET
+            );
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), maxAmount, getDstChainId());
+            emit IAsset.CrossChainWithdraw(
+                123,
+                bytes32(uint256(uint160(testUser))),
+                bytes32(uint256(uint160(testUser))),
+                maxAmount,
+                getDstChainId()
+            );
         }
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
-        
+
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
-        assertBalanceChange(testUser, userBalanceBefore, userBalanceAfter, maxAmount, assetBalanceBefore, mockStargateBalanceBefore);
+        assertBalanceChange(
+            testUser, userBalanceBefore, userBalanceAfter, maxAmount, assetBalanceBefore, mockStargateBalanceBefore
+        );
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), maxAmount);
     }
-    
+
     function testForceWithdrawWithMaxAmount() public {
         // Setup user balance with max amount allowed by int64
         uint256 maxAmount = uint256(uint64(type(int64).max));
@@ -2924,7 +2977,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2941,25 +2994,33 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), maxAmount, BASE_MAINNET);
+            emit IAsset.ForceWithdraw(
+                bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), maxAmount, BASE_MAINNET
+            );
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), maxAmount, getDstChainId());
+            emit IAsset.CrossChainWithdraw(
+                0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), maxAmount, getDstChainId()
+            );
         }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, maxAmount, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(
+            subaccountId, maxAmount, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId()
+        );
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, maxAmount, assetBalanceBefore, mockStargateBalanceBefore);
+        assertBalanceChange(
+            user1, user1BalanceBefore, user1BalanceAfter, maxAmount, assetBalanceBefore, mockStargateBalanceBefore
+        );
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), maxAmount);
     }
-    
+
     function testEmergencyWithdrawWithMaxAmount() public {
         // Setup system balance with max amount
         address[] memory users = new address[](1);
@@ -2970,7 +3031,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -2986,12 +3047,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
@@ -3012,21 +3073,13 @@ contract AssetTest is Test {
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
-        
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
+
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        
     }
-    
+
     function testEmergencyWithdrawWithMaxExpireTime() public {
         // Setup system balance
         address[] memory users = new address[](1);
@@ -3037,7 +3090,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -3053,12 +3106,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
@@ -3079,21 +3132,13 @@ contract AssetTest is Test {
 
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
-        
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
+
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        
     }
-    
+
     function testEmergencyWithdrawWithZeroExpireTime() public {
         // Setup system balance
         address[] memory users = new address[](1);
@@ -3104,7 +3149,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -3120,12 +3165,12 @@ contract AssetTest is Test {
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
@@ -3144,21 +3189,14 @@ contract AssetTest is Test {
 
         // Should fail with expired transaction
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
     }
-    
+
     function testBatchWithdrawWithMaxClientOrderId() public {
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
-        
+
         // Setup user balances first
         address[] memory usersForBalance = new address[](1);
         usersForBalance[0] = testUser;
@@ -3168,7 +3206,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(testUser)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -3180,7 +3218,7 @@ contract AssetTest is Test {
         // Prepare batch withdraw with max client order ID
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = type(uint256).max;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = bytes32(uint256(uint160(testUser)));
         amounts[0] = 500;
@@ -3190,39 +3228,65 @@ contract AssetTest is Test {
         bytes32 recipient = userBytes;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        bytes memory userSignature = createWithdrawSignature(type(uint256).max, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
+        bytes memory userSignature = createWithdrawSignature(
+            type(uint256).max, userBytes, recipient, 500, 0, expireTime, dstChainId, userPrivateKey
+        );
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
 
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
-        
+
         // Execute batch withdraw
         vm.startPrank(withdrawOperator);
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.UserWithdraw(type(uint256).max, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, BASE_MAINNET);
+            emit IAsset.UserWithdraw(
+                type(uint256).max,
+                bytes32(uint256(uint160(testUser))),
+                bytes32(uint256(uint160(testUser))),
+                500,
+                BASE_MAINNET
+            );
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(type(uint256).max, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(
+                type(uint256).max,
+                bytes32(uint256(uint160(testUser))),
+                bytes32(uint256(uint160(testUser))),
+                500,
+                getDstChainId()
+            );
         }
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint64[] memory dstChainIds = createDstChainIds(clientOrderIds.length);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         bytes32[] memory recipients = createRecipients(users);
         uint256[] memory expireTimes = createExpireTimes(clientOrderIds.length, block.timestamp + 1 days);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
-        
+
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
-        assertBalanceChange(testUser, userBalanceBefore, userBalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
+        assertBalanceChange(
+            testUser, userBalanceBefore, userBalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore
+        );
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
     }
-    
+
     function testForceWithdrawWithMaxTimeLock() public {
         // Setup user balance
         address[] memory users = new address[](1);
@@ -3233,7 +3297,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -3253,17 +3317,19 @@ contract AssetTest is Test {
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         uint256 expireTime = block.timestamp + 1 days;
         asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
+        assertBalanceChange(
+            user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore
+        );
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
-    
+
     function testForceWithdrawWithExactTimeLock() public {
         // Setup user balance
         address[] memory users = new address[](1);
@@ -3274,7 +3340,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         uint256 lastBatchTimeAfterUpdate = asset.lastBatchTime();
@@ -3294,7 +3360,7 @@ contract AssetTest is Test {
         asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
     }
-    
+
     function testForceWithdrawWithOneSecondAfterTimeLock() public {
         // Setup user balance
         address[] memory users = new address[](1);
@@ -3305,7 +3371,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
@@ -3322,21 +3388,27 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
-            emit IAsset.ForceWithdraw(bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, BASE_MAINNET);
+            emit IAsset.ForceWithdraw(
+                bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, BASE_MAINNET
+            );
         } else {
             vm.expectEmit(address(asset));
-            emit IAsset.CrossChainWithdraw(0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, getDstChainId());
+            emit IAsset.CrossChainWithdraw(
+                0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, getDstChainId()
+            );
         }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
-        
+
         uint256 expireTime = block.timestamp + 1 days;
         asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
-        assertBalanceChange(user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore);
+        assertBalanceChange(
+            user1, user1BalanceBefore, user1BalanceAfter, 500, assetBalanceBefore, mockStargateBalanceBefore
+        );
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 1000);
     }
@@ -3370,11 +3442,7 @@ contract AssetTest is Test {
         // Set up coin with ID 2
         vm.startPrank(settlementOperator);
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](1);
-        coinUpdates[0] = MarginAsset.Coin({
-            id: 2,
-            symbol: "USDT",
-            stepSizeScale: 6
-        });
+        coinUpdates[0] = MarginAsset.Coin({id: 2, symbol: "USDT", stepSizeScale: 6});
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: coinUpdates,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -3398,11 +3466,7 @@ contract AssetTest is Test {
         // Set up coin with ID 2
         vm.startPrank(settlementOperator);
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](1);
-        coinUpdates[0] = MarginAsset.Coin({
-            id: 2,
-            symbol: "USDT",
-            stepSizeScale: 6
-        });
+        coinUpdates[0] = MarginAsset.Coin({id: 2, symbol: "USDT", stepSizeScale: 6});
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: coinUpdates,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -3427,20 +3491,16 @@ contract AssetTest is Test {
 
     function test_availableAmount_withExplicitCollateralCoinId() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         // First, set up user with perpetual asset (from setUp there's already user1 with 1000)
         // But let's ensure it exists
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
-        
+
         // Set up coinId 2
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](1);
-        coinUpdates[0] = MarginAsset.Coin({
-            id: 2,
-            symbol: "USDT",
-            stepSizeScale: 6
-        });
+        coinUpdates[0] = MarginAsset.Coin({id: 2, symbol: "USDT", stepSizeScale: 6});
         Asset.BatchUpdateData memory coinSetupData = Asset.BatchUpdateData({
             coinUpdates: coinUpdates,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -3451,12 +3511,12 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(3, 0, 3, coinSetupData);
         vm.stopPrank();
-        
+
         // Test with explicit collateralCoinId
         uint256 amount1 = asset.availableAmount(user, 1);
         // For coinId 2, if there's no perpetual asset, it will return 0
         uint256 amount2 = asset.availableAmount(user, 2);
-        
+
         // Both should work even if defaultCollateralCoinId is different
         assertEq(amount1, 1000); // From batchUpdate
         assertEq(amount2, 0); // No perpetual asset for coinId 2
@@ -3464,19 +3524,15 @@ contract AssetTest is Test {
 
     function test_availableAmountBySubAccountId_withExplicitCollateralCoinId() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         // First, set up user with perpetual asset
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
-        
+
         // Set up coinId 2
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](1);
-        coinUpdates[0] = MarginAsset.Coin({
-            id: 2,
-            symbol: "USDT",
-            stepSizeScale: 6
-        });
+        coinUpdates[0] = MarginAsset.Coin({id: 2, symbol: "USDT", stepSizeScale: 6});
         Asset.BatchUpdateData memory coinSetupData = Asset.BatchUpdateData({
             coinUpdates: coinUpdates,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -3487,15 +3543,15 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(3, 0, 3, coinSetupData);
         vm.stopPrank();
-        
+
         // Get subaccountId after batchUpdate
         uint64 subaccountId = getSubaccountId(user);
-        
+
         // Test with explicit collateralCoinId
         uint256 amount1 = asset.availableAmountBySubAccountId(subaccountId, 1);
         // For coinId 2, if there's no perpetual asset, it will return 0
         uint256 amount2 = asset.availableAmountBySubAccountId(subaccountId, 2);
-        
+
         assertEq(amount1, 1000); // From batchUpdate
         assertEq(amount2, 0); // No perpetual asset for coinId 2
     }
@@ -3505,11 +3561,11 @@ contract AssetTest is Test {
     function test_upgradeTo_newImplementation() public {
         // Deploy new implementation
         Asset newImplementation = new Asset();
-        
+
         vm.startPrank(owner);
         asset.upgradeToAndCall(address(newImplementation), "");
         vm.stopPrank();
-        
+
         // Verify upgrade succeeded (check that we can still call functions)
         assertEq(asset.owner(), owner);
         assertEq(address(asset.USDC()), address(USDC));
@@ -3517,7 +3573,7 @@ contract AssetTest is Test {
 
     function test_upgradeTo_onlyOwner() public {
         Asset newImplementation = new Asset();
-        
+
         vm.startPrank(user1);
         vm.expectRevert();
         asset.upgradeToAndCall(address(newImplementation), "");
@@ -3554,7 +3610,7 @@ contract AssetTest is Test {
 
     function test_availableAmount_coinNotFound() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         // First, set up a user with a perpetual asset that uses a non-existent coinId
         // We need to add positions to trigger the coin check
         vm.startPrank(settlementOperator);
@@ -3564,16 +3620,12 @@ contract AssetTest is Test {
         // Add a position to trigger coin check in _calculateAvailableAmount
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](1);
         positions[0] = MarginAsset.Position({
-            exchangeId: 1,
-            openSize: 1000,
-            openValue: 50000,
-            isolatedCollateralAmount: 0,
-            cacheFundingIndex: 0
+            exchangeId: 1, openSize: 1000, openValue: 50000, isolatedCollateralAmount: 0, cacheFundingIndex: 0
         });
         batchData.perpetualAssetUpdates[0].positions = positions;
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Now try to get available amount - should revert with CoinNotFound
         // because the perpetualAsset references coinId 99999 which doesn't exist
         vm.expectRevert(abi.encodeWithSelector(IAsset.CoinNotFound.selector));
@@ -3582,7 +3634,7 @@ contract AssetTest is Test {
 
     function test_availableAmountBySubAccountId_coinNotFound() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         // First, set up a user with a perpetual asset that uses a non-existent coinId
         // We need to add positions to trigger the coin check
         vm.startPrank(settlementOperator);
@@ -3592,19 +3644,15 @@ contract AssetTest is Test {
         // Add a position to trigger coin check in _calculateAvailableAmount
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](1);
         positions[0] = MarginAsset.Position({
-            exchangeId: 1,
-            openSize: 1000,
-            openValue: 50000,
-            isolatedCollateralAmount: 0,
-            cacheFundingIndex: 0
+            exchangeId: 1, openSize: 1000, openValue: 50000, isolatedCollateralAmount: 0, cacheFundingIndex: 0
         });
         batchData.perpetualAssetUpdates[0].positions = positions;
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Get subaccountId after batchUpdate
         uint64 subaccountId = getSubaccountId(user);
-        
+
         // Now try to get available amount - should revert with CoinNotFound
         // because the perpetualAsset references coinId 99999 which doesn't exist
         vm.expectRevert(abi.encodeWithSelector(IAsset.CoinNotFound.selector));
@@ -3617,10 +3665,10 @@ contract AssetTest is Test {
         users[0] = bytes32(uint256(uint160(user1)));
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 1000;
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(users, amounts);
         asset.batchUpdate(2, 0, 2, batchData);
-        
+
         // Try to update with same seqInBatch
         vm.expectRevert();
         asset.batchUpdate(2, 0, 2, batchData);
@@ -3633,10 +3681,10 @@ contract AssetTest is Test {
         users[0] = bytes32(uint256(uint160(user1)));
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 1000;
-        
+
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(users, amounts);
         asset.batchUpdate(2, 0, 2, batchData);
-        
+
         // Update with different seqInBatch but same antxChainHeight should fail
         // Different seqInBatch requires different antxChainHeight
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
@@ -3648,37 +3696,29 @@ contract AssetTest is Test {
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
-        
+
         uint256 clientOrderId = 12345;
         bytes32 user = bytes32(uint256(uint160(testUser)));
         bytes32 recipient = bytes32(uint256(uint160(testUser)));
         uint256 amount = 100;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        
+
         // Set up user with balance
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Fund the contract
         USDC.transfer(address(asset), amount);
         fundAssetWithETH();
-        
+
         // First withdraw
         vm.startPrank(withdrawOperator);
-        bytes memory signature = createWithdrawSignature(
-            clientOrderId,
-            user,
-            recipient,
-            amount,
-            0,
-            expireTime,
-            dstChainId,
-            userPrivateKey
-        );
-        
+        bytes memory signature =
+            createWithdrawSignature(clientOrderId, user, recipient, amount, 0, expireTime, dstChainId, userPrivateKey);
+
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = clientOrderId;
         uint64[] memory subaccountIds = new uint64[](1);
@@ -3693,7 +3733,7 @@ contract AssetTest is Test {
         signatures[0] = signature;
         uint64[] memory dstChainIds = new uint64[](1);
         dstChainIds[0] = dstChainId;
-        
+
         uint256[] memory fees = createFees(clientOrderIds.length);
         asset.batchWithdraw(
             clientOrderIds,
@@ -3706,7 +3746,7 @@ contract AssetTest is Test {
             dstChainIds,
             IAsset.SignatureType.ECDSA
         );
-        
+
         // Try to use same clientOrderId again
         vm.expectRevert(abi.encodeWithSelector(IAsset.ClientOrderIdAlreadyUsed.selector));
         asset.batchWithdraw(
@@ -3730,30 +3770,22 @@ contract AssetTest is Test {
         uint256 amount = 100;
         uint256 expireTime = block.timestamp - 1; // Already expired
         uint64 dstChainId = getDstChainId();
-        
+
         // Set up user with balance
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Fund the contract
         USDC.transfer(address(asset), amount);
         fundAssetWithETH();
-        
+
         vm.startPrank(withdrawOperator);
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
-        bytes memory signature = createWithdrawSignature(
-            clientOrderId,
-            user,
-            recipient,
-            amount,
-            0,
-            expireTime,
-            dstChainId,
-            userPrivateKey
-        );
-        
+        bytes memory signature =
+            createWithdrawSignature(clientOrderId, user, recipient, amount, 0, expireTime, dstChainId, userPrivateKey);
+
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = clientOrderId;
         uint64[] memory subaccountIds = new uint64[](1);
@@ -3768,7 +3800,7 @@ contract AssetTest is Test {
         signatures[0] = signature;
         uint64[] memory dstChainIds = new uint64[](1);
         dstChainIds[0] = dstChainId;
-        
+
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
         uint256[] memory fees = createFees(clientOrderIds.length);
         asset.batchWithdraw(
@@ -3789,20 +3821,20 @@ contract AssetTest is Test {
         bytes32 user = bytes32(uint256(uint160(user1)));
         uint256 amount = 100;
         uint256 expireTime = block.timestamp - 1; // Expired, but should still work for force withdraw
-        
+
         // Set up user with balance
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Fund the contract
         USDC.transfer(address(asset), amount);
         fundAssetWithETH();
-        
+
         // Advance time to pass time lock
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
-        
+
         vm.startPrank(user1);
         // Get subaccountId after batchUpdate
         uint64 subaccountId = getSubaccountId(user);
@@ -3818,7 +3850,7 @@ contract AssetTest is Test {
     function testFuzz_setDefaultCollateralCoinId(uint64 coinId) public {
         vm.assume(coinId > 0);
         vm.assume(coinId <= type(uint64).max);
-        
+
         vm.startPrank(owner);
         asset.setDefaultCollateralCoinId(coinId);
         assertEq(asset.defaultCollateralCoinId(), coinId);
@@ -3839,8 +3871,7 @@ contract AssetTest is Test {
         } catch (bytes memory error) {
             // UserNotFound is expected for non-existent subaccounts
             require(
-                keccak256(error) == keccak256(abi.encodeWithSelector(IAsset.UserNotFound.selector)),
-                "Unexpected error"
+                keccak256(error) == keccak256(abi.encodeWithSelector(IAsset.UserNotFound.selector)), "Unexpected error"
             );
         }
     }
@@ -3851,19 +3882,12 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         MarginAsset.Exchange[] memory exchangeUpdates = new MarginAsset.Exchange[](1);
         MarginAsset.RiskTier[] memory riskTiers = new MarginAsset.RiskTier[](1);
-        riskTiers[0] = MarginAsset.RiskTier({
-            maxLeverage: 10,
-            maintenanceMarginRatioPpm: 5000,
-            positionValueUpperBound: 1000000
-        });
+        riskTiers[0] =
+            MarginAsset.RiskTier({maxLeverage: 10, maintenanceMarginRatioPpm: 5000, positionValueUpperBound: 1000000});
         exchangeUpdates[0] = MarginAsset.Exchange({
-            exchangeId: 1,
-            symbol: "BTC",
-            stepSizeScale: 3,
-            tickSizeScale: 2,
-            riskTiers: riskTiers
+            exchangeId: 1, symbol: "BTC", stepSizeScale: 3, tickSizeScale: 2, riskTiers: riskTiers
         });
-        
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: exchangeUpdates,
@@ -3872,12 +3896,12 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        
+
         vm.expectEmit(address(asset));
         emit IAsset.ExchangeInfoUpdated(1, 3, 2, 0, 0, riskTiers);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         (uint64 exchangeId, string memory symbol, uint32 stepSizeScale, uint32 tickSizeScale) = asset.exchanges(1);
         assertEq(exchangeId, 1);
         assertEq(symbol, "BTC");
@@ -3886,12 +3910,9 @@ contract AssetTest is Test {
     function test_batchUpdate_fundingIndexUpdates() public {
         vm.startPrank(settlementOperator);
         MarginAsset.FundingIndex[] memory fundingIndexUpdates = new MarginAsset.FundingIndex[](1);
-        fundingIndexUpdates[0] = MarginAsset.FundingIndex({
-            exchangeId: 1,
-            fundingIndex: 1000000,
-            fundingIndexTime: uint64(block.timestamp)
-        });
-        
+        fundingIndexUpdates[0] =
+            MarginAsset.FundingIndex({exchangeId: 1, fundingIndex: 1000000, fundingIndexTime: uint64(block.timestamp)});
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -3900,12 +3921,12 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        
+
         vm.expectEmit(address(asset));
         emit IAsset.FundingIndexUpdated(1, 1000000);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         (uint64 exchangeId, int256 fundingIndex, uint64 fundingIndexTime) = asset.fundingIndexes(1);
         assertEq(exchangeId, 1);
         assertEq(fundingIndex, 1000000);
@@ -3914,12 +3935,9 @@ contract AssetTest is Test {
     function test_batchUpdate_oraclePriceUpdates() public {
         vm.startPrank(settlementOperator);
         MarginAsset.OraclePrice[] memory oraclePriceUpdates = new MarginAsset.OraclePrice[](1);
-        oraclePriceUpdates[0] = MarginAsset.OraclePrice({
-            exchangeId: 1,
-            oraclePrice: 50000,
-            oracleTime: uint64(block.timestamp)
-        });
-        
+        oraclePriceUpdates[0] =
+            MarginAsset.OraclePrice({exchangeId: 1, oraclePrice: 50000, oracleTime: uint64(block.timestamp)});
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -3928,12 +3946,12 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        
+
         vm.expectEmit(address(asset));
         emit IAsset.OraclePriceUpdated(1, 50000, uint64(block.timestamp));
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         (uint64 exchangeId, uint256 oraclePrice, uint64 oracleTime) = asset.oraclePrices(1);
         assertEq(exchangeId, 1);
         assertEq(oraclePrice, 50000);
@@ -3943,11 +3961,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         // First, add coin with id 1
         MarginAsset.Coin[] memory coinUpdates1 = new MarginAsset.Coin[](1);
-        coinUpdates1[0] = MarginAsset.Coin({
-            id: 1,
-            symbol: "USDC",
-            stepSizeScale: 6
-        });
+        coinUpdates1[0] = MarginAsset.Coin({id: 1, symbol: "USDC", stepSizeScale: 6});
         Asset.BatchUpdateData memory batchData1 = Asset.BatchUpdateData({
             coinUpdates: coinUpdates1,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -3957,14 +3971,10 @@ contract AssetTest is Test {
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
         asset.batchUpdate(2, 0, 2, batchData1);
-        
+
         // Try to add the same coin again - should not duplicate in coinIds array
         MarginAsset.Coin[] memory coinUpdates2 = new MarginAsset.Coin[](1);
-        coinUpdates2[0] = MarginAsset.Coin({
-            id: 1,
-            symbol: "USDC",
-            stepSizeScale: 6
-        });
+        coinUpdates2[0] = MarginAsset.Coin({id: 1, symbol: "USDC", stepSizeScale: 6});
         Asset.BatchUpdateData memory batchData2 = Asset.BatchUpdateData({
             coinUpdates: coinUpdates2,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -3975,7 +3985,7 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
-        
+
         // Verify coinIds array still has only one entry
         // Note: We can't directly access coinIds array, but we can verify the coin exists
         (uint64 id, string memory symbol, uint32 stepSizeScale) = asset.coins(1);
@@ -3984,20 +3994,12 @@ contract AssetTest is Test {
 
     function test_availableAmount_autoFindCollateralCoinId() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         // Set up multiple coins
         vm.startPrank(settlementOperator);
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](2);
-        coinUpdates[0] = MarginAsset.Coin({
-            id: 2,
-            symbol: "USDT",
-            stepSizeScale: 6
-        });
-        coinUpdates[1] = MarginAsset.Coin({
-            id: 3,
-            symbol: "BTC",
-            stepSizeScale: 3
-        });
+        coinUpdates[0] = MarginAsset.Coin({id: 2, symbol: "USDT", stepSizeScale: 6});
+        coinUpdates[1] = MarginAsset.Coin({id: 3, symbol: "BTC", stepSizeScale: 3});
         Asset.BatchUpdateData memory coinData = Asset.BatchUpdateData({
             coinUpdates: coinUpdates,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4007,13 +4009,13 @@ contract AssetTest is Test {
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
         asset.batchUpdate(2, 0, 2, coinData);
-        
+
         // Set up user with perpetual asset using coinId 2
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         batchData.perpetualAssetUpdates[0].collateralCoinId = 2;
         asset.batchUpdate(3, 0, 3, batchData);
         vm.stopPrank();
-        
+
         // Test auto-find (collateralCoinId = 0) should find coinId 2
         uint256 amount = asset.availableAmount(user, 0);
         assertEq(amount, 1000);
@@ -4021,53 +4023,36 @@ contract AssetTest is Test {
 
     function test_availableAmount_withPositions() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Add positions to trigger the full calculation path
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](1);
         positions[0] = MarginAsset.Position({
-            exchangeId: 1,
-            openSize: 1000,
-            openValue: 50000,
-            isolatedCollateralAmount: 0,
-            cacheFundingIndex: 0
+            exchangeId: 1, openSize: 1000, openValue: 50000, isolatedCollateralAmount: 0, cacheFundingIndex: 0
         });
         batchData.perpetualAssetUpdates[0].positions = positions;
-        
+
         // Set up exchange and other required data for calculation
         MarginAsset.Exchange[] memory exchangeUpdates = new MarginAsset.Exchange[](1);
         MarginAsset.RiskTier[] memory riskTiers = new MarginAsset.RiskTier[](1);
-        riskTiers[0] = MarginAsset.RiskTier({
-            maxLeverage: 10,
-            maintenanceMarginRatioPpm: 5000,
-            positionValueUpperBound: 1000000
-        });
+        riskTiers[0] =
+            MarginAsset.RiskTier({maxLeverage: 10, maintenanceMarginRatioPpm: 5000, positionValueUpperBound: 1000000});
         exchangeUpdates[0] = MarginAsset.Exchange({
-            exchangeId: 1,
-            symbol: "BTC",
-            stepSizeScale: 3,
-            tickSizeScale: 2,
-            riskTiers: riskTiers
+            exchangeId: 1, symbol: "BTC", stepSizeScale: 3, tickSizeScale: 2, riskTiers: riskTiers
         });
         batchData.exchangeUpdates = exchangeUpdates;
-        
+
         MarginAsset.FundingIndex[] memory fundingIndexUpdates = new MarginAsset.FundingIndex[](1);
-        fundingIndexUpdates[0] = MarginAsset.FundingIndex({
-            exchangeId: 1,
-            fundingIndex: 1000000,
-            fundingIndexTime: uint64(block.timestamp)
-        });
+        fundingIndexUpdates[0] =
+            MarginAsset.FundingIndex({exchangeId: 1, fundingIndex: 1000000, fundingIndexTime: uint64(block.timestamp)});
         batchData.fundingIndexUpdates = fundingIndexUpdates;
-        
+
         MarginAsset.OraclePrice[] memory oraclePriceUpdates = new MarginAsset.OraclePrice[](1);
-        oraclePriceUpdates[0] = MarginAsset.OraclePrice({
-            exchangeId: 1,
-            oraclePrice: 50000,
-            oracleTime: uint64(block.timestamp)
-        });
+        oraclePriceUpdates[0] =
+            MarginAsset.OraclePrice({exchangeId: 1, oraclePrice: 50000, oracleTime: uint64(block.timestamp)});
         batchData.oraclePriceUpdates = oraclePriceUpdates;
-        
+
         // Add trade settings to subaccount
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
         tradeSettings[0] = MarginAsset.TradeSetting({
@@ -4076,10 +4061,10 @@ contract AssetTest is Test {
             marginMode: 1 // cross-margin
         });
         batchData.subaccountUpdates[0].tradeSettings = tradeSettings;
-        
+
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Test availableAmount with positions - should use MarginAssetCalculator
         uint256 amount = asset.availableAmount(user);
         assertGe(amount, 0); // Should return a valid amount
@@ -4087,14 +4072,14 @@ contract AssetTest is Test {
 
     function test_availableAmount_negativeAmountReturnsZero() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set crossCollateralAmount to negative value
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = -500;
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // availableAmount should return 0 for negative amounts
         uint256 amount = asset.availableAmount(user);
         assertEq(amount, 0);
@@ -4104,14 +4089,14 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
         bytes32 user2Bytes = bytes32(uint256(uint160(user2)));
-        
+
         Asset.BatchUpdateData memory batchData1 = createBatchUpdateData(user1Bytes, 1000);
         asset.batchUpdate(2, 0, 2, batchData1);
-        
+
         Asset.BatchUpdateData memory batchData2 = createBatchUpdateData(user2Bytes, 2000);
         asset.batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
-        
+
         // Verify both updates were applied
         assertEq(asset.availableAmount(user1Bytes), 1000);
         assertEq(asset.availableAmount(user2Bytes), 2000);
@@ -4122,22 +4107,10 @@ contract AssetTest is Test {
     function test_batchUpdate_multipleCoins() public {
         vm.startPrank(settlementOperator);
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](3);
-        coinUpdates[0] = MarginAsset.Coin({
-            id: 2,
-            symbol: "USDT",
-            stepSizeScale: 6
-        });
-        coinUpdates[1] = MarginAsset.Coin({
-            id: 3,
-            symbol: "BTC",
-            stepSizeScale: 3
-        });
-        coinUpdates[2] = MarginAsset.Coin({
-            id: 4,
-            symbol: "ETH",
-            stepSizeScale: 2
-        });
-        
+        coinUpdates[0] = MarginAsset.Coin({id: 2, symbol: "USDT", stepSizeScale: 6});
+        coinUpdates[1] = MarginAsset.Coin({id: 3, symbol: "BTC", stepSizeScale: 3});
+        coinUpdates[2] = MarginAsset.Coin({id: 4, symbol: "ETH", stepSizeScale: 2});
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: coinUpdates,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4146,14 +4119,14 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        
+
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Verify all coins were added
-        (uint64 id2, , ) = asset.coins(2);
-        (uint64 id3, , ) = asset.coins(3);
-        (uint64 id4, , ) = asset.coins(4);
+        (uint64 id2,,) = asset.coins(2);
+        (uint64 id3,,) = asset.coins(3);
+        (uint64 id4,,) = asset.coins(4);
         assertEq(id2, 2);
         assertEq(id3, 3);
         assertEq(id4, 4);
@@ -4163,27 +4136,16 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         MarginAsset.Exchange[] memory exchangeUpdates = new MarginAsset.Exchange[](2);
         MarginAsset.RiskTier[] memory riskTiers = new MarginAsset.RiskTier[](1);
-        riskTiers[0] = MarginAsset.RiskTier({
-            maxLeverage: 10,
-            maintenanceMarginRatioPpm: 5000,
-            positionValueUpperBound: 1000000
-        });
-        
+        riskTiers[0] =
+            MarginAsset.RiskTier({maxLeverage: 10, maintenanceMarginRatioPpm: 5000, positionValueUpperBound: 1000000});
+
         exchangeUpdates[0] = MarginAsset.Exchange({
-            exchangeId: 1,
-            symbol: "BTC",
-            stepSizeScale: 3,
-            tickSizeScale: 2,
-            riskTiers: riskTiers
+            exchangeId: 1, symbol: "BTC", stepSizeScale: 3, tickSizeScale: 2, riskTiers: riskTiers
         });
         exchangeUpdates[1] = MarginAsset.Exchange({
-            exchangeId: 2,
-            symbol: "ETH",
-            stepSizeScale: 2,
-            tickSizeScale: 2,
-            riskTiers: riskTiers
+            exchangeId: 2, symbol: "ETH", stepSizeScale: 2, tickSizeScale: 2, riskTiers: riskTiers
         });
-        
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: exchangeUpdates,
@@ -4192,24 +4154,24 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        
+
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
-        (uint64 exchangeId1, , , ) = asset.exchanges(1);
-        (uint64 exchangeId2, , , ) = asset.exchanges(2);
+
+        (uint64 exchangeId1,,,) = asset.exchanges(1);
+        (uint64 exchangeId2,,,) = asset.exchanges(2);
         assertEq(exchangeId1, 1);
         assertEq(exchangeId2, 2);
     }
 
     function test_availableAmount_zeroCollateralCoinIdAutoFind() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Test with collateralCoinId = 0 (auto-find)
         uint256 amount = asset.availableAmount(user, 0);
         assertEq(amount, 1000);
@@ -4217,12 +4179,12 @@ contract AssetTest is Test {
 
     function test_availableAmountBySubAccountId_zeroCollateralCoinId() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         uint64 subaccountId = getSubaccountId(user);
         // Test with collateralCoinId = 0 (auto-find)
         uint256 amount = asset.availableAmountBySubAccountId(subaccountId, 0);
@@ -4239,11 +4201,11 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        
+
         // Should succeed even with all empty arrays
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         assertEq(asset.lastBatchId(), 2);
     }
 
@@ -4252,7 +4214,7 @@ contract AssetTest is Test {
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
         bytes32 user = bytes32(uint256(uint160(testUser)));
-        
+
         // Setup user balances first
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
@@ -4266,7 +4228,7 @@ contract AssetTest is Test {
         // Prepare batch withdraw with native chain (dstChainId == block.chainid)
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = user;
         uint256[] memory amounts = new uint256[](1);
@@ -4275,12 +4237,13 @@ contract AssetTest is Test {
         bytes32 recipient = user;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = uint64(block.chainid); // Native chain
-        
-        bytes memory userSignature = createWithdrawSignature(123, user, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
+
+        bytes memory userSignature =
+            createWithdrawSignature(123, user, recipient, 500, 0, expireTime, dstChainId, userPrivateKey);
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = userSignature;
-        
+
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = recipient;
         uint256[] memory expireTimes = new uint256[](1);
@@ -4290,18 +4253,28 @@ contract AssetTest is Test {
 
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
         uint256 assetBalanceBefore = USDC.balanceOf(address(asset));
-        
+
         vm.startPrank(withdrawOperator);
         vm.expectEmit(address(asset));
         emit IAsset.UserWithdraw(123, user, recipient, 500, dstChainId);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ECDSA);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ECDSA
+        );
         vm.stopPrank();
-        
+
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
         uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
-        
+
         // On native chain, user should receive USDC directly
         assertEq(userBalanceAfter - userBalanceBefore, 500);
         assertEq(assetBalanceBefore - assetBalanceAfter, 500);
@@ -4311,16 +4284,16 @@ contract AssetTest is Test {
         // Deploy and set up Ed25519Oracle
         MockEd25519Oracle mockOracle = new MockEd25519Oracle();
         mockOracle.setResult(true);
-        
+
         vm.startPrank(owner);
         asset.setEd25519Oracle(address(mockOracle));
         vm.stopPrank();
-        
+
         // Use a specific private key and derive the user address from it
         uint256 userPrivateKey = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
         address testUser = vm.addr(userPrivateKey);
         bytes32 user = bytes32(uint256(uint160(testUser)));
-        
+
         // Setup user balances first
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
@@ -4334,7 +4307,7 @@ contract AssetTest is Test {
         // Prepare batch withdraw with Ed25519 signature
         uint256[] memory clientOrderIds = new uint256[](1);
         clientOrderIds[0] = 123;
-        
+
         bytes32[] memory users = new bytes32[](1);
         users[0] = user;
         uint256[] memory amounts = new uint256[](1);
@@ -4343,13 +4316,13 @@ contract AssetTest is Test {
         bytes32 recipient = user;
         uint256 expireTime = block.timestamp + 1 days;
         uint64 dstChainId = getDstChainId();
-        
+
         // Mock Ed25519 signature (the oracle will return true)
         bytes memory ed25519Signature = new bytes(64); // Dummy signature
 
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = ed25519Signature;
-        
+
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = recipient;
         uint256[] memory expireTimes = new uint256[](1);
@@ -4358,15 +4331,25 @@ contract AssetTest is Test {
         dstChainIds[0] = dstChainId;
 
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
-        
+
         vm.startPrank(withdrawOperator);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint256[] memory fees = createFees(clientOrderIds.length);
-        asset.batchWithdraw(clientOrderIds, subaccountIds, recipients, expireTimes, amounts, fees, signatures, dstChainIds, IAsset.SignatureType.ED25519);
+        asset.batchWithdraw(
+            clientOrderIds,
+            subaccountIds,
+            recipients,
+            expireTimes,
+            amounts,
+            fees,
+            signatures,
+            dstChainIds,
+            IAsset.SignatureType.ED25519
+        );
         vm.stopPrank();
-        
+
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
-        
+
         // Verify balance changed (either direct transfer or cross-chain)
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             assertEq(userBalanceAfter - userBalanceBefore, 500);
@@ -4380,55 +4363,38 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         // Create a batch update with multiple types of updates
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](1);
-        coinUpdates[0] = MarginAsset.Coin({
-            id: 2,
-            symbol: "USDT",
-            stepSizeScale: 6
-        });
-        
+        coinUpdates[0] = MarginAsset.Coin({id: 2, symbol: "USDT", stepSizeScale: 6});
+
         MarginAsset.Exchange[] memory exchangeUpdates = new MarginAsset.Exchange[](1);
         MarginAsset.RiskTier[] memory riskTiers = new MarginAsset.RiskTier[](1);
-        riskTiers[0] = MarginAsset.RiskTier({
-            maxLeverage: 10,
-            maintenanceMarginRatioPpm: 5000,
-            positionValueUpperBound: 1000000
-        });
+        riskTiers[0] =
+            MarginAsset.RiskTier({maxLeverage: 10, maintenanceMarginRatioPpm: 5000, positionValueUpperBound: 1000000});
         exchangeUpdates[0] = MarginAsset.Exchange({
-            exchangeId: 1,
-            symbol: "BTC",
-            stepSizeScale: 3,
-            tickSizeScale: 2,
-            riskTiers: riskTiers
+            exchangeId: 1, symbol: "BTC", stepSizeScale: 3, tickSizeScale: 2, riskTiers: riskTiers
         });
-        
+
         MarginAsset.FundingIndex[] memory fundingIndexUpdates = new MarginAsset.FundingIndex[](1);
-        fundingIndexUpdates[0] = MarginAsset.FundingIndex({
-            exchangeId: 1,
-            fundingIndex: 1000000,
-            fundingIndexTime: uint64(block.timestamp)
-        });
-        
+        fundingIndexUpdates[0] =
+            MarginAsset.FundingIndex({exchangeId: 1, fundingIndex: 1000000, fundingIndexTime: uint64(block.timestamp)});
+
         MarginAsset.OraclePrice[] memory oraclePriceUpdates = new MarginAsset.OraclePrice[](1);
-        oraclePriceUpdates[0] = MarginAsset.OraclePrice({
-            exchangeId: 1,
-            oraclePrice: 50000,
-            oracleTime: uint64(block.timestamp)
-        });
-        
+        oraclePriceUpdates[0] =
+            MarginAsset.OraclePrice({exchangeId: 1, oraclePrice: 50000, oracleTime: uint64(block.timestamp)});
+
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         batchData.coinUpdates = coinUpdates;
         batchData.exchangeUpdates = exchangeUpdates;
         batchData.fundingIndexUpdates = fundingIndexUpdates;
         batchData.oraclePriceUpdates = oraclePriceUpdates;
-        
+
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Verify all updates were applied
-        (uint64 coinId, , ) = asset.coins(2);
+        (uint64 coinId,,) = asset.coins(2);
         assertEq(coinId, 2);
-        (uint64 exchangeId, , , ) = asset.exchanges(1);
+        (uint64 exchangeId,,,) = asset.exchanges(1);
         assertEq(exchangeId, 1);
         assertEq(asset.availableAmount(user), 1000);
     }
@@ -4438,52 +4404,34 @@ contract AssetTest is Test {
         bytes32 user1Bytes = bytes32(uint256(uint160(user1)));
         bytes32 user2Bytes = bytes32(uint256(uint160(user2)));
         bytes32 user3Bytes = bytes32(uint256(uint160(address(0x123))));
-        
+
         // Create batch update with multiple subaccounts
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](3);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
-        
+
         subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: 10,
-            chainAddress: user1Bytes,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
+            id: 10, chainAddress: user1Bytes, clientAccountId: "", tradeSettings: tradeSettings
         });
         subaccountUpdates[1] = MarginAsset.Subaccount({
-            id: 20,
-            chainAddress: user2Bytes,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
+            id: 20, chainAddress: user2Bytes, clientAccountId: "", tradeSettings: tradeSettings
         });
         subaccountUpdates[2] = MarginAsset.Subaccount({
-            id: 30,
-            chainAddress: user3Bytes,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
+            id: 30, chainAddress: user3Bytes, clientAccountId: "", tradeSettings: tradeSettings
         });
-        
+
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](3);
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
-        
+
         perpetualAssetUpdates[0] = MarginAsset.PerpetualAsset({
-            subaccountId: 10,
-            collateralCoinId: 1,
-            crossCollateralAmount: 1000,
-            positions: positions
+            subaccountId: 10, collateralCoinId: 1, crossCollateralAmount: 1000, positions: positions
         });
         perpetualAssetUpdates[1] = MarginAsset.PerpetualAsset({
-            subaccountId: 20,
-            collateralCoinId: 1,
-            crossCollateralAmount: 2000,
-            positions: positions
+            subaccountId: 20, collateralCoinId: 1, crossCollateralAmount: 2000, positions: positions
         });
         perpetualAssetUpdates[2] = MarginAsset.PerpetualAsset({
-            subaccountId: 30,
-            collateralCoinId: 1,
-            crossCollateralAmount: 3000,
-            positions: positions
+            subaccountId: 30, collateralCoinId: 1, crossCollateralAmount: 3000, positions: positions
         });
-        
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4492,10 +4440,10 @@ contract AssetTest is Test {
             subaccountUpdates: subaccountUpdates,
             perpetualAssetUpdates: perpetualAssetUpdates
         });
-        
+
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Verify all subaccounts were created
         assertEq(asset.availableAmount(user1Bytes), 1000);
         assertEq(asset.availableAmount(user2Bytes), 2000);
@@ -4504,25 +4452,13 @@ contract AssetTest is Test {
 
     function test_availableAmount_autoFindSecondCoin() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         // Set up multiple coins
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](3);
-        coinUpdates[0] = MarginAsset.Coin({
-            id: 2,
-            symbol: "USDT",
-            stepSizeScale: 6
-        });
-        coinUpdates[1] = MarginAsset.Coin({
-            id: 3,
-            symbol: "BTC",
-            stepSizeScale: 3
-        });
-        coinUpdates[2] = MarginAsset.Coin({
-            id: 4,
-            symbol: "ETH",
-            stepSizeScale: 2
-        });
+        coinUpdates[0] = MarginAsset.Coin({id: 2, symbol: "USDT", stepSizeScale: 6});
+        coinUpdates[1] = MarginAsset.Coin({id: 3, symbol: "BTC", stepSizeScale: 3});
+        coinUpdates[2] = MarginAsset.Coin({id: 4, symbol: "ETH", stepSizeScale: 2});
         Asset.BatchUpdateData memory coinData = Asset.BatchUpdateData({
             coinUpdates: coinUpdates,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4532,13 +4468,13 @@ contract AssetTest is Test {
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
         asset.batchUpdate(2, 0, 2, coinData);
-        
+
         // Set up user with perpetual asset using coinId 3 (second coin)
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         batchData.perpetualAssetUpdates[0].collateralCoinId = 3;
         asset.batchUpdate(3, 0, 3, batchData);
         vm.stopPrank();
-        
+
         // Test auto-find (collateralCoinId = 0) should find coinId 3
         uint256 amount = asset.availableAmount(user, 0);
         assertEq(amount, 1000);
@@ -4546,81 +4482,69 @@ contract AssetTest is Test {
 
     function test_emergencyWithdraw_threeSigners() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Fund the contract
         uint256 withdrawAmount = 500;
         USDC.transfer(address(asset), withdrawAmount);
         fundAssetWithETH();
-        
+
         // Prepare emergency withdraw with 3 signers
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
-        
+
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
+
         bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
         bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
         bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
-        
+
         address[] memory allSigners = new address[](3);
         allSigners[0] = signer1;
         allSigners[1] = signer2;
         allSigners[2] = signer3;
-        
+
         bytes[] memory signatures = new bytes[](3);
         signatures[0] = signature1;
         signatures[1] = signature2;
         signatures[2] = signature3;
-        
+
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
-        
+
         vm.expectEmit(address(asset));
         emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
-        
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
-        
+
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
     }
 
-
     function test_availableAmount_noPerpetualAsset() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         // Create subaccount but no perpetual asset
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
-        subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: 100,
-            chainAddress: user,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
-        });
-        
+        subaccountUpdates[0] =
+            MarginAsset.Subaccount({id: 100, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4631,7 +4555,7 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // availableAmount should return 0 when no perpetual asset exists
         uint256 amount = asset.availableAmount(user);
         assertEq(amount, 0);
@@ -4639,14 +4563,14 @@ contract AssetTest is Test {
 
     function test_availableAmount_zeroCrossCollateralAmount() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set crossCollateralAmount to 0
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = 0;
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // availableAmount should return 0 for zero crossCollateralAmount
         uint256 amount = asset.availableAmount(user);
         assertEq(amount, 0);
@@ -4675,7 +4599,7 @@ contract AssetTest is Test {
         // Actually, this case is hard to create because batchUpdate always sets subaccount.id
         // But we can test by querying a subaccountId that doesn't exist in subaccounts mapping
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         // Create subaccount mapping but don't create the subaccount itself
         // This is actually not possible with current batchUpdate logic
@@ -4684,7 +4608,7 @@ contract AssetTest is Test {
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = 0;
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         uint256 amount = asset.availableAmount(user);
         assertEq(amount, 0);
     }
@@ -4692,18 +4616,14 @@ contract AssetTest is Test {
     function test_calculateAvailableAmount_autoFindNoMatch() public {
         // Test branch: if (!foundPerpetualAsset) return 0; in auto-find path
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         // Create subaccount but no perpetual asset
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
-        subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: 200,
-            chainAddress: user,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
-        });
-        
+        subaccountUpdates[0] =
+            MarginAsset.Subaccount({id: 200, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4714,7 +4634,7 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Test auto-find (collateralCoinId = 0) - should return 0
         uint256 amount = asset.availableAmount(user, 0);
         assertEq(amount, 0);
@@ -4723,13 +4643,13 @@ contract AssetTest is Test {
     function test_calculateAvailableAmount_explicitCollateralCoinIdNoMatch() public {
         // Test branch: if (!foundPerpetualAsset) return 0; in explicit collateralCoinId path
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Use collateralCoinId 1, but query for collateralCoinId 999 (non-existent)
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Query with non-existent collateralCoinId - should return 0
         uint256 amount = asset.availableAmount(user, 999);
         assertEq(amount, 0);
@@ -4739,18 +4659,14 @@ contract AssetTest is Test {
         // Test branch: if (perpetualAsset.subaccountId == subaccountId && pa.collateralCoinId > 0)
         // when subaccountId doesn't match
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         // Create a perpetual asset with mismatched subaccountId
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
-        subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: 300,
-            chainAddress: user,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
-        });
-        
+        subaccountUpdates[0] =
+            MarginAsset.Subaccount({id: 300, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](1);
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
         // Set subaccountId to different value (mismatch)
@@ -4760,7 +4676,7 @@ contract AssetTest is Test {
             crossCollateralAmount: 1000,
             positions: positions
         });
-        
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4771,7 +4687,7 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Should return 0 because subaccountId mismatch
         uint256 amount = asset.availableAmount(user);
         assertEq(amount, 0);
@@ -4781,14 +4697,14 @@ contract AssetTest is Test {
         // Test branch: if (perpetualAsset.subaccountId == subaccountId && pa.collateralCoinId > 0)
         // when collateralCoinId == 0
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set collateralCoinId to 0
         batchData.perpetualAssetUpdates[0].collateralCoinId = 0;
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Should return 0 because collateralCoinId == 0
         uint256 amount = asset.availableAmount(user);
         assertEq(amount, 0);
@@ -4797,14 +4713,14 @@ contract AssetTest is Test {
     function test_availableAmount_negativeAmount() public {
         // Test branch: if (userAvailableAmount < 0) return 0;
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set crossCollateralAmount to negative value
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = -1000;
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // availableAmount should return 0 for negative amounts
         uint256 amount = asset.availableAmount(user);
         assertEq(amount, 0);
@@ -4816,12 +4732,12 @@ contract AssetTest is Test {
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData1 = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData1);
-        
+
         // Use same batchId with different seqInBatch
         Asset.BatchUpdateData memory batchData2 = createBatchUpdateData(user, 2000);
         asset.batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
-        
+
         assertEq(asset.lastBatchId(), 2);
         assertTrue(asset.batchSeqIds(2, 0));
         assertTrue(asset.batchSeqIds(2, 1));
@@ -4832,7 +4748,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        
+
         // Try to use batchId 5 when lastBatchId is 1
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
         asset.batchUpdate(5, 0, 2, batchData);
@@ -4844,11 +4760,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         // First, add coin with id 1
         MarginAsset.Coin[] memory coinUpdates1 = new MarginAsset.Coin[](1);
-        coinUpdates1[0] = MarginAsset.Coin({
-            id: 1,
-            symbol: "USDC",
-            stepSizeScale: 6
-        });
+        coinUpdates1[0] = MarginAsset.Coin({id: 1, symbol: "USDC", stepSizeScale: 6});
         Asset.BatchUpdateData memory batchData1 = Asset.BatchUpdateData({
             coinUpdates: coinUpdates1,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4858,14 +4770,10 @@ contract AssetTest is Test {
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
         asset.batchUpdate(2, 0, 2, batchData1);
-        
+
         // Update the same coin again - should not duplicate in coinIds array
         MarginAsset.Coin[] memory coinUpdates2 = new MarginAsset.Coin[](1);
-        coinUpdates2[0] = MarginAsset.Coin({
-            id: 1,
-            symbol: "USDC_UPDATED",
-            stepSizeScale: 6
-        });
+        coinUpdates2[0] = MarginAsset.Coin({id: 1, symbol: "USDC_UPDATED", stepSizeScale: 6});
         Asset.BatchUpdateData memory batchData2 = Asset.BatchUpdateData({
             coinUpdates: coinUpdates2,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4876,9 +4784,9 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
-        
+
         // Verify coin was updated
-        (uint64 id, string memory symbol, ) = asset.coins(1);
+        (uint64 id, string memory symbol,) = asset.coins(1);
         assertEq(id, 1);
         assertEq(symbol, "USDC_UPDATED");
     }
@@ -4897,11 +4805,11 @@ contract AssetTest is Test {
         // Set withdraw operator
         newAsset.setWithdrawOperator(withdrawOperator);
         vm.stopPrank();
-        
+
         vm.startPrank(settlementOperator);
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        
+
         // Try batchUpdate - should fail because marginAsset is zero
         // The check order is: batchId -> antxChainHeight -> marginAsset
         // newAsset.lastBatchId() is 0 (newly deployed), so batchId should be 1 (lastBatchId + 1)
@@ -4917,7 +4825,7 @@ contract AssetTest is Test {
         // But we can add a specific test for failure case
         // Note: The existing testBatchWithdrawWithEd25519Signature uses a mock oracle that returns true
         // We need to test the case where oracle returns false
-        
+
         // Since this branch is complex to test (requires proper oracle setup),
         // and the Ed25519 signature path is already tested in testBatchWithdrawWithEd25519Signature,
         // we'll skip this specific failure test to avoid complexity
@@ -4935,20 +4843,16 @@ contract AssetTest is Test {
         newAsset.setWithdrawOperator(withdrawOperator);
         newAsset.setMarginAsset(address(marginAssetCalculator));
         vm.stopPrank();
-        
+
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         // Create subaccount but no coins (coinIds array will be empty for newAsset)
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
-        subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: 500,
-            chainAddress: user,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
-        });
-        
+        subaccountUpdates[0] =
+            MarginAsset.Subaccount({id: 500, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](1);
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
         perpetualAssetUpdates[0] = MarginAsset.PerpetualAsset({
@@ -4957,7 +4861,7 @@ contract AssetTest is Test {
             crossCollateralAmount: 1000,
             positions: positions
         });
-        
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0), // No coins added
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -4968,7 +4872,7 @@ contract AssetTest is Test {
         });
         newAsset.batchUpdate(1, 0, 1, batchData);
         vm.stopPrank();
-        
+
         // Auto-find (collateralCoinId = 0) should return 0 because coinIds array is empty
         uint256 amount = newAsset.availableAmount(user, 0);
         assertEq(amount, 0);
@@ -4977,58 +4881,41 @@ contract AssetTest is Test {
     function test_calculateAvailableAmount_emptyTradeSettings() public {
         // Test branch: for (uint256 i = 0; i < tradeSettingsLength; i++) when tradeSettings is empty
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Ensure tradeSettings is empty (it already is in createBatchUpdateData)
         // Add positions to trigger the full calculation path
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](1);
         positions[0] = MarginAsset.Position({
-            exchangeId: 1,
-            openSize: 1000,
-            openValue: 50000,
-            isolatedCollateralAmount: 0,
-            cacheFundingIndex: 0
+            exchangeId: 1, openSize: 1000, openValue: 50000, isolatedCollateralAmount: 0, cacheFundingIndex: 0
         });
         batchData.perpetualAssetUpdates[0].positions = positions;
-        
+
         // Set up exchange and other required data
         MarginAsset.Exchange[] memory exchangeUpdates = new MarginAsset.Exchange[](1);
         MarginAsset.RiskTier[] memory riskTiers = new MarginAsset.RiskTier[](1);
-        riskTiers[0] = MarginAsset.RiskTier({
-            maxLeverage: 10,
-            maintenanceMarginRatioPpm: 5000,
-            positionValueUpperBound: 1000000
-        });
+        riskTiers[0] =
+            MarginAsset.RiskTier({maxLeverage: 10, maintenanceMarginRatioPpm: 5000, positionValueUpperBound: 1000000});
         exchangeUpdates[0] = MarginAsset.Exchange({
-            exchangeId: 1,
-            symbol: "BTC",
-            stepSizeScale: 3,
-            tickSizeScale: 2,
-            riskTiers: riskTiers
+            exchangeId: 1, symbol: "BTC", stepSizeScale: 3, tickSizeScale: 2, riskTiers: riskTiers
         });
         batchData.exchangeUpdates = exchangeUpdates;
-        
+
         MarginAsset.FundingIndex[] memory fundingIndexUpdates = new MarginAsset.FundingIndex[](1);
-        fundingIndexUpdates[0] = MarginAsset.FundingIndex({
-            exchangeId: 1,
-            fundingIndex: 1000000,
-            fundingIndexTime: uint64(block.timestamp)
-        });
+        fundingIndexUpdates[0] =
+            MarginAsset.FundingIndex({exchangeId: 1, fundingIndex: 1000000, fundingIndexTime: uint64(block.timestamp)});
         batchData.fundingIndexUpdates = fundingIndexUpdates;
-        
+
         MarginAsset.OraclePrice[] memory oraclePriceUpdates = new MarginAsset.OraclePrice[](1);
-        oraclePriceUpdates[0] = MarginAsset.OraclePrice({
-            exchangeId: 1,
-            oraclePrice: 50000,
-            oracleTime: uint64(block.timestamp)
-        });
+        oraclePriceUpdates[0] =
+            MarginAsset.OraclePrice({exchangeId: 1, oraclePrice: 50000, oracleTime: uint64(block.timestamp)});
         batchData.oraclePriceUpdates = oraclePriceUpdates;
-        
+
         // Ensure tradeSettings is empty (already empty in createBatchUpdateData)
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         // Should work even with empty tradeSettings
         uint256 amount = asset.availableAmount(user);
         assertGe(amount, 0);
@@ -5059,7 +4946,7 @@ contract AssetTest is Test {
         Asset newAsset = AssetDeployer.deployAsset(address(USDC), owner);
         // Don't set signers, so signers array is empty
         vm.stopPrank();
-        
+
         // Should return false for any signer when signers array is empty
         assertFalse(newAsset.isAllowedSigner(signer1));
         assertFalse(newAsset.isAllowedSigner(address(0x123)));
@@ -5070,54 +4957,47 @@ contract AssetTest is Test {
         // When i=0, j loop runs once (j=1)
         // When i=1, j loop doesn't run (j starts at 2, but 2 >= 2)
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         uint256 withdrawAmount = 500;
         USDC.transfer(address(asset), withdrawAmount);
         fundAssetWithETH();
-        
+
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
-        
+
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
+
         bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
         bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-        
+
         address[] memory allSigners = new address[](2);
         allSigners[0] = signer1;
         allSigners[1] = signer2;
-        
+
         bytes[] memory signatures = new bytes[](2);
         signatures[0] = signature1;
         signatures[1] = signature2;
-        
+
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
-        
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
-        
+
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
     }
@@ -5130,7 +5010,7 @@ contract AssetTest is Test {
         coinUpdates[0] = MarginAsset.Coin({id: 2, symbol: "USDT", stepSizeScale: 6});
         coinUpdates[1] = MarginAsset.Coin({id: 3, symbol: "BTC", stepSizeScale: 3});
         coinUpdates[2] = MarginAsset.Coin({id: 4, symbol: "ETH", stepSizeScale: 2});
-        
+
         Asset.BatchUpdateData memory batchData1 = Asset.BatchUpdateData({
             coinUpdates: coinUpdates,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -5140,11 +5020,11 @@ contract AssetTest is Test {
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
         asset.batchUpdate(2, 0, 2, batchData1);
-        
+
         // Now try to add coin 2 again - should not duplicate (existCoin should be true)
         MarginAsset.Coin[] memory coinUpdates2 = new MarginAsset.Coin[](1);
         coinUpdates2[0] = MarginAsset.Coin({id: 2, symbol: "USDT_UPDATED", stepSizeScale: 6});
-        
+
         Asset.BatchUpdateData memory batchData2 = Asset.BatchUpdateData({
             coinUpdates: coinUpdates2,
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -5155,9 +5035,9 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
-        
+
         // Verify coin was updated but not duplicated
-        (uint64 id, string memory symbol, ) = asset.coins(2);
+        (uint64 id, string memory symbol,) = asset.coins(2);
         assertEq(id, 2);
         assertEq(symbol, "USDT_UPDATED");
     }
@@ -5165,7 +5045,7 @@ contract AssetTest is Test {
     function test_calculateAvailableAmount_autoFindLoopNoMatch() public {
         // Test branch: for loop completes without finding a match
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         // Set up coins but no matching perpetual asset
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](2);
@@ -5180,17 +5060,13 @@ contract AssetTest is Test {
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
         asset.batchUpdate(2, 0, 2, coinData);
-        
+
         // Create subaccount but perpetual asset uses coinId 999 (not in coinIds)
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
-        subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: 600,
-            chainAddress: user,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
-        });
-        
+        subaccountUpdates[0] =
+            MarginAsset.Subaccount({id: 600, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](1);
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
         perpetualAssetUpdates[0] = MarginAsset.PerpetualAsset({
@@ -5199,7 +5075,7 @@ contract AssetTest is Test {
             crossCollateralAmount: 1000,
             positions: positions
         });
-        
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -5210,7 +5086,7 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(3, 0, 3, batchData);
         vm.stopPrank();
-        
+
         // Auto-find should iterate through coinIds but not find a match
         uint256 amount = asset.availableAmount(user, 0);
         assertEq(amount, 0);
@@ -5222,7 +5098,7 @@ contract AssetTest is Test {
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
-        
+
         // Try to update with same antxChainHeight
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
         asset.batchUpdate(3, 0, 2, batchData); // antxChainHeight = 2, but lastAntxChainHeight is 2
@@ -5236,7 +5112,7 @@ contract AssetTest is Test {
         signersWithZero[0] = signer1;
         signersWithZero[1] = address(0); // Zero address
         signersWithZero[2] = signer2;
-        
+
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
         asset.setSigners(signersWithZero);
         vm.stopPrank();
@@ -5245,65 +5121,58 @@ contract AssetTest is Test {
     function test_emergencyWithdraw_signerMismatch() public {
         // Test branch: if (signer != allSigners[index])
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         uint256 withdrawAmount = 500;
         USDC.transfer(address(asset), withdrawAmount);
         fundAssetWithETH();
-        
+
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
-        
+
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", 
-                address(USDC), 
-                recipient, 
-                withdrawAmount, 
-                expireTime, 
-                address(asset), 
+                "EMERGENCY_WITHDRAW",
+                address(USDC),
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
                 block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-        
+
         bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
         bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-        
+
         address[] memory allSigners = new address[](2);
         allSigners[0] = signer1;
         allSigners[1] = signer3; // Wrong signer (should be signer2)
-        
+
         bytes[] memory signatures = new bytes[](2);
         signatures[0] = signature1;
         signatures[1] = signature2; // Signature from signer2, but allSigners[1] is signer3
-        
+
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
-        asset.emergencyWithdraw(
-            address(USDC),
-            recipient,
-            withdrawAmount,
-            expireTime,
-            allSigners,
-            signatures
-        );
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
     }
 
     function test_availableAmountBySubAccountId_negativeAmount() public {
         // Test branch: if (subaccountAvailableAmount < 0) return 0;
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set crossCollateralAmount to negative value
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = -500;
         asset.batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
-        
+
         uint64 subaccountId = getSubaccountId(user);
         // availableAmountBySubAccountId should return 0 for negative amounts
         uint256 amount = asset.availableAmountBySubAccountId(subaccountId);
@@ -5316,7 +5185,7 @@ contract AssetTest is Test {
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         asset.batchUpdate(2, 0, 2, batchData);
-        
+
         // Try to use same batchId and seqInBatch
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
         asset.batchUpdate(2, 0, 3, batchData);
@@ -5326,7 +5195,7 @@ contract AssetTest is Test {
     function test_calculateAvailableAmount_autoFindMultipleCoinsFirstMatch() public {
         // Test branch: break in auto-find loop when first match is found
         bytes32 user = bytes32(uint256(uint160(user1)));
-        
+
         vm.startPrank(settlementOperator);
         // Set up multiple coins
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](3);
@@ -5342,38 +5211,25 @@ contract AssetTest is Test {
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
         asset.batchUpdate(2, 0, 2, coinData);
-        
+
         // Create perpetual assets for multiple coins, but first one should be found
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
-        subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: 400,
-            chainAddress: user,
-            clientAccountId: "",
-            tradeSettings: tradeSettings
-        });
-        
+        subaccountUpdates[0] =
+            MarginAsset.Subaccount({id: 400, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](3);
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
         perpetualAssetUpdates[0] = MarginAsset.PerpetualAsset({
-            subaccountId: 400,
-            collateralCoinId: 2,
-            crossCollateralAmount: 1000,
-            positions: positions
+            subaccountId: 400, collateralCoinId: 2, crossCollateralAmount: 1000, positions: positions
         });
         perpetualAssetUpdates[1] = MarginAsset.PerpetualAsset({
-            subaccountId: 400,
-            collateralCoinId: 3,
-            crossCollateralAmount: 2000,
-            positions: positions
+            subaccountId: 400, collateralCoinId: 3, crossCollateralAmount: 2000, positions: positions
         });
         perpetualAssetUpdates[2] = MarginAsset.PerpetualAsset({
-            subaccountId: 400,
-            collateralCoinId: 4,
-            crossCollateralAmount: 3000,
-            positions: positions
+            subaccountId: 400, collateralCoinId: 4, crossCollateralAmount: 3000, positions: positions
         });
-        
+
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
             exchangeUpdates: new MarginAsset.Exchange[](0),
@@ -5384,7 +5240,7 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(3, 0, 3, batchData);
         vm.stopPrank();
-        
+
         // Auto-find should find the first match (coinId 2)
         uint256 amount = asset.availableAmount(user, 0);
         assertEq(amount, 1000);
@@ -5394,7 +5250,7 @@ contract AssetTest is Test {
         // This test demonstrates the uint64 encoding mismatch between Go and Solidity
         // Go code uses: common.LeftPadBytes(dstChainIdInt.Bytes(), 32) - 32 bytes
         // Solidity uses: abi.encodePacked(uint64) - 8 bytes
-        
+
         uint256 clientOrderId = 1766405823826;
         address user_james = 0xC6B7926Ad8d58b95C23cAE9E92854532ff775678;
         uint256 amount = 1100000;
@@ -5410,7 +5266,7 @@ contract AssetTest is Test {
         console.log("abi.encodePacked(uint64) length:", encodedUint64.length);
         console.log("abi.encodePacked(uint64) bytes:");
         console.logBytes(encodedUint64);
-        
+
         // Check how abi.encodePacked encodes uint256
         bytes memory encodedUint256 = abi.encodePacked(uint256(dstChainId));
         console.log("abi.encodePacked(uint256) length:", encodedUint256.length);
@@ -5418,40 +5274,44 @@ contract AssetTest is Test {
         console.logBytes(encodedUint256);
 
         // Solidity way: abi.encodePacked with uint64 (8 bytes)
-        bytes32 solidityHash = keccak256(abi.encodePacked(
-            "USER_WITHDRAW",
-            clientOrderId,
-            user,
-            recipient,
-            amount,
-            expireTime,
-            dstChainId,  // uint64 encodes as 8 bytes in abi.encodePacked
-            chainId,     // uint64 encodes as 8 bytes in abi.encodePacked
-            assetAddr    // address encodes as 20 bytes
-        ));
+        bytes32 solidityHash = keccak256(
+            abi.encodePacked(
+                "USER_WITHDRAW",
+                clientOrderId,
+                user,
+                recipient,
+                amount,
+                expireTime,
+                dstChainId, // uint64 encodes as 8 bytes in abi.encodePacked
+                chainId, // uint64 encodes as 8 bytes in abi.encodePacked
+                assetAddr // address encodes as 20 bytes
+            )
+        );
 
         // Go way: manual encoding with uint64 padded to 32 bytes
-        bytes32 goHash = keccak256(abi.encodePacked(
-            "USER_WITHDRAW",
-            clientOrderId,
-            user,
-            recipient,
-            amount,
-            expireTime,
-            uint256(dstChainId),  // uint64 padded to 32 bytes (like Go's LeftPadBytes)
-            uint256(chainId),    // uint64 padded to 32 bytes
-            assetAddr             // address as 20 bytes (fixed)
-        ));
+        bytes32 goHash = keccak256(
+            abi.encodePacked(
+                "USER_WITHDRAW",
+                clientOrderId,
+                user,
+                recipient,
+                amount,
+                expireTime,
+                uint256(dstChainId), // uint64 padded to 32 bytes (like Go's LeftPadBytes)
+                uint256(chainId), // uint64 padded to 32 bytes
+                assetAddr // address as 20 bytes (fixed)
+            )
+        );
 
         console.log("Solidity hash (8 bytes uint64):");
         console.logBytes32(solidityHash);
         console.log("Go hash (32 bytes uint64):");
         console.logBytes32(goHash);
-        
+
         // These hashes will be different!
         // assertEq(solidityHash, goHash, "Hashes should match but they don't due to uint64 encoding difference");
     }
-    
+
     function test_hashUserWithdraw_AllFieldsEncoding() public {
         // Comprehensive test to check encoding of ALL fields
         uint256 clientOrderId = 1766405823826;
@@ -5463,60 +5323,60 @@ contract AssetTest is Test {
         bytes32 recipient = bytes32(uint256(uint160(user_james)));
         address assetAddr = 0x871bD685AcE3E8f5383BDbC4bfD98a31559AA8F4;
         uint256 chainId = 11155111; // block.chainid is uint256
-        
+
         // Check encoding of each field individually
         console.log("=== Field Encoding Check ===");
-        
+
         bytes memory encoded;
-        
+
         // 1. "USER_WITHDRAW" string
         encoded = abi.encodePacked("USER_WITHDRAW");
         console.log("'USER_WITHDRAW' length:", encoded.length);
-        
+
         // 2. clientOrderId (uint256)
         encoded = abi.encodePacked(clientOrderId);
         console.log("clientOrderId (uint256) length:", encoded.length);
         assertEq(encoded.length, 32, "clientOrderId should be 32 bytes");
-        
+
         // 3. user (bytes32)
         encoded = abi.encodePacked(user);
         console.log("user (bytes32) length:", encoded.length);
         assertEq(encoded.length, 32, "user should be 32 bytes");
-        
+
         // 4. recipient (bytes32)
         encoded = abi.encodePacked(recipient);
         console.log("recipient (bytes32) length:", encoded.length);
         assertEq(encoded.length, 32, "recipient should be 32 bytes");
-        
+
         // 5. amount (uint256)
         encoded = abi.encodePacked(amount);
         console.log("amount (uint256) length:", encoded.length);
         assertEq(encoded.length, 32, "amount should be 32 bytes");
-        
+
         // 6. expireTime (uint256)
         encoded = abi.encodePacked(expireTime);
         console.log("expireTime (uint256) length:", encoded.length);
         assertEq(encoded.length, 32, "expireTime should be 32 bytes");
-        
+
         // 7. dstChainId (uint64) - THIS IS THE PROBLEM - needs to be 8 bytes!
         encoded = abi.encodePacked(dstChainId);
         console.log("dstChainId (uint64) length:", encoded.length);
         console.log("dstChainId (uint64) bytes:");
         console.logBytes(encoded);
         assertEq(encoded.length, 8, "dstChainId should be 8 bytes, not 32!");
-        
+
         // 8. block.chainid (uint256)
         encoded = abi.encodePacked(block.chainid);
         console.log("block.chainid (uint256) length:", encoded.length);
         assertEq(encoded.length, 32, "block.chainid should be 32 bytes");
-        
+
         // 9. address (address)
         encoded = abi.encodePacked(assetAddr);
         console.log("assetAddr (address) length:", encoded.length);
         console.log("assetAddr (address) bytes:");
         console.logBytes(encoded);
         assertEq(encoded.length, 20, "address should be 20 bytes, not 32!");
-        
+
         console.log("=== Summary ===");
         console.log("[OK] clientOrderId: 32 bytes (uint256)");
         console.log("[OK] user: 32 bytes (bytes32)");
@@ -5526,25 +5386,23 @@ contract AssetTest is Test {
         console.log("[FIX] dstChainId: 8 bytes (uint64) - Go uses 32 bytes!");
         console.log("[OK] block.chainid: 32 bytes (uint256)");
         console.log("[OK] address: 20 bytes (address) - Go fixed to 20 bytes");
-        
+
         // Final hash with correct encoding (as Solidity does)
-        bytes32 correctHash = keccak256(abi.encodePacked(
-            "USER_WITHDRAW",
-            clientOrderId,    // 32 bytes ✅
-            user,             // 32 bytes ✅
-            recipient,        // 32 bytes ✅
-            amount,           // 32 bytes ✅
-            expireTime,       // 32 bytes ✅
-            dstChainId,       // 8 bytes (Go uses 32 bytes - NEEDS FIX)
-            block.chainid,    // 32 bytes ✅
-            assetAddr         // 20 bytes ✅ (Go fixed)
-        ));
-        
+        bytes32 correctHash = keccak256(
+            abi.encodePacked(
+                "USER_WITHDRAW",
+                clientOrderId, // 32 bytes ✅
+                user, // 32 bytes ✅
+                recipient, // 32 bytes ✅
+                amount, // 32 bytes ✅
+                expireTime, // 32 bytes ✅
+                dstChainId, // 8 bytes (Go uses 32 bytes - NEEDS FIX)
+                block.chainid, // 32 bytes ✅
+                assetAddr // 20 bytes ✅ (Go fixed)
+            )
+        );
+
         console.log("Correct hash (all fields properly encoded):");
         console.logBytes32(correctHash);
     }
-    
-
-
-  
 }

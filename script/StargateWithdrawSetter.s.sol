@@ -11,15 +11,14 @@ import {StargateWithdraw} from "../src/stargate/StargateWithdraw.sol";
  */
 contract StargateWithdrawSetterScript is Script {
     function setUp() public {}
-    
+
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        
+
         console.log("Configuring StargateWithdraw with account:", deployer);
-        
+
         vm.startBroadcast(deployerPrivateKey);
-        
 
         string memory currentEnv = vm.envString("CURRENT_ENV");
         address stargateWithdrawAddress;
@@ -31,7 +30,7 @@ contract StargateWithdrawSetterScript is Script {
             stargateWithdrawAddress = vm.envAddress("MAINNET_STARGATE_WITHDRAW_ADDRESS");
         }
         StargateWithdraw stargateWithdraw = StargateWithdraw(payable(stargateWithdrawAddress));
-        
+
         console.log("StargateWithdraw contract:", stargateWithdrawAddress);
         console.log("Current owner:", stargateWithdraw.owner());
 
@@ -40,7 +39,7 @@ contract StargateWithdrawSetterScript is Script {
         uint32 arbitrumSepoliaEndpointId = 40231;
         stargateWithdraw.setChainEndpoint(arbitrumSepoliaChainId, arbitrumSepoliaEndpointId);
         stargateWithdraw.setChainSupport(arbitrumSepoliaChainId, true);
-        
+
         console.log("Configuration completed!");
         vm.stopBroadcast();
     }

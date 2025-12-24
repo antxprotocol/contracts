@@ -6,39 +6,45 @@ import {StargateWithdraw} from "../src/stargate/StargateWithdraw.sol";
 import {MockToken} from "../src/mock/MockToken.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {SendParam, OFTReceipt, OFTLimit, OFTFeeDetail} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
-import {MessagingFee, MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
+import {
+    SendParam,
+    OFTReceipt,
+    OFTLimit,
+    OFTFeeDetail
+} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
+import {
+    MessagingFee,
+    MessagingReceipt
+} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import {Ticket, IStargate, StargateType} from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
 
 // Mock Stargate contract for testing
 contract MockStargate is IStargate {
     using SafeERC20 for IERC20;
-    
+
     IERC20 public tokenContract;
     bool public shouldRevert;
     bool public shouldRevertOnQuote;
     uint256 public lastAmount;
     address public lastRefundAddress;
-    
+
     constructor(address _token) {
         tokenContract = IERC20(_token);
     }
-    
+
     function setShouldRevert(bool _shouldRevert) external {
         shouldRevert = _shouldRevert;
     }
-    
+
     function setShouldRevertOnQuote(bool _shouldRevert) external {
         shouldRevertOnQuote = _shouldRevert;
     }
-    
-    function quoteOFT(
-        SendParam calldata sendParam
-    ) external view returns (
-        OFTLimit memory limit,
-        OFTFeeDetail[] memory oftFeeDetails,
-        OFTReceipt memory receipt
-    ) {
+
+    function quoteOFT(SendParam calldata sendParam)
+        external
+        view
+        returns (OFTLimit memory limit, OFTFeeDetail[] memory oftFeeDetails, OFTReceipt memory receipt)
+    {
         if (shouldRevertOnQuote) {
             revert("MockStargate: quote failed");
         }
@@ -48,74 +54,64 @@ contract MockStargate is IStargate {
         // Return empty limit and empty array for simplicity
         return (limit, oftFeeDetails, receipt);
     }
-    
-    function quoteSend(
-        SendParam calldata sendParam,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory) {
-        return MessagingFee({
-            nativeFee: 0.001 ether,
-            lzTokenFee: 0
-        });
+
+    function quoteSend(SendParam calldata sendParam, bool payInLzToken) external view returns (MessagingFee memory) {
+        return MessagingFee({nativeFee: 0.001 ether, lzTokenFee: 0});
     }
-    
-    function sendToken(
-        SendParam calldata sendParam,
-        MessagingFee calldata messagingFee,
-        address refundAddress
-    ) external payable returns (
-        MessagingReceipt memory msgReceipt,
-        OFTReceipt memory oftReceipt,
-        Ticket memory ticket
-    ) {
+
+    function sendToken(SendParam calldata sendParam, MessagingFee calldata messagingFee, address refundAddress)
+        external
+        payable
+        returns (MessagingReceipt memory msgReceipt, OFTReceipt memory oftReceipt, Ticket memory ticket)
+    {
         if (shouldRevert) {
             revert("MockStargate: sendToken failed");
         }
-        
+
         // Transfer tokens from caller
         tokenContract.safeTransferFrom(msg.sender, address(this), sendParam.amountLD);
-        
+
         lastAmount = sendParam.amountLD;
         lastRefundAddress = refundAddress;
-        
+
         msgReceipt.guid = keccak256(abi.encodePacked(block.timestamp, msg.sender, sendParam.amountLD, sendParam.dstEid));
         msgReceipt.fee.nativeFee = messagingFee.nativeFee;
         msgReceipt.fee.lzTokenFee = messagingFee.lzTokenFee;
-        
+
         oftReceipt.amountReceivedLD = sendParam.amountLD * 99 / 100;
-        
+
         // Ticket structure is opaque, just return empty struct
         // The actual fields will be set by the Stargate contract
     }
-    
+
     // Add token() function that returns the token address
     // This is needed for prepareRideBus to check if token is address(0)
     function token() external view returns (address) {
         return address(tokenContract);
     }
-    
+
     // Required IStargate interface functions
     function approvalRequired() external pure returns (bool) {
         return true;
     }
-    
+
     function oftVersion() external pure returns (bytes4 interfaceId, uint64 version) {
         return (bytes4(0), 0);
     }
-    
+
     function sharedDecimals() external pure returns (uint8) {
         return 6;
     }
-    
+
     function stargateType() external pure returns (StargateType) {
         return StargateType.OFT;
     }
-    
-    function send(
-        SendParam calldata sendParam,
-        MessagingFee calldata fee,
-        address refundAddress
-    ) external payable returns (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt) {
+
+    function send(SendParam calldata sendParam, MessagingFee calldata fee, address refundAddress)
+        external
+        payable
+        returns (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt)
+    {
         // Not used in tests, but required by interface
         revert("MockStargate: send not implemented");
     }
@@ -127,132 +123,114 @@ contract StargateWithdrawTest is Test {
     MockStargate public mockStargate;
     address public owner;
     address public user;
-    
+
     uint256 constant CHAIN_ID_1 = 1; // Ethereum
     uint256 constant CHAIN_ID_2 = 42161; // Arbitrum
     uint256 constant CHAIN_ID_3 = 8453; // Base
     uint32 constant ENDPOINT_ID_1 = 30101;
     uint32 constant ENDPOINT_ID_2 = 30110;
-    
+
     function setUp() public {
         owner = address(this);
         user = makeAddr("user");
-        
+
         // Deploy mock USDC
         USDC = new MockToken("USDC", "USDC");
-        
+
         // Deploy mock Stargate
         mockStargate = new MockStargate(address(USDC));
-        
+
         // Deploy StargateWithdraw
-        stargateWithdraw = new StargateWithdraw(
-            address(USDC),
-            address(mockStargate),
-            owner
-        );
-        
+        stargateWithdraw = new StargateWithdraw(address(USDC), address(mockStargate), owner);
+
         // Setup chain endpoints
         stargateWithdraw.setChainEndpoint(CHAIN_ID_1, ENDPOINT_ID_1);
         stargateWithdraw.setChainEndpoint(CHAIN_ID_2, ENDPOINT_ID_2);
-        
+
         // Enable chains
         stargateWithdraw.setChainSupport(CHAIN_ID_1, true);
         stargateWithdraw.setChainSupport(CHAIN_ID_2, true);
-        
+
         // Mint USDC to user
         USDC.mint(user, 10000 ether);
         vm.prank(user);
         USDC.approve(address(stargateWithdraw), type(uint256).max);
     }
-    
+
     // ============ Constructor Tests ============
-    
+
     function test_constructor_success() public {
         assertEq(address(stargateWithdraw.USDC()), address(USDC));
         assertEq(address(stargateWithdraw.stargate()), address(mockStargate));
         assertEq(stargateWithdraw.owner(), owner);
     }
-    
+
     function test_constructor_zeroUSDC() public {
         vm.expectRevert(StargateWithdraw.InvalidChainId.selector);
         new StargateWithdraw(address(0), address(mockStargate), owner);
     }
-    
+
     function test_constructor_zeroStargate() public {
         vm.expectRevert(StargateWithdraw.InvalidStargatePool.selector);
         new StargateWithdraw(address(USDC), address(0), owner);
     }
-    
+
     // ============ Cross-Chain Withdraw Tests ============
-    
+
     function test_crossChainWithdraw_success() public {
         uint256 amount = 1000 ether;
         bytes32 userBytes = bytes32(uint256(uint160(user)));
         bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
-        
+
         // Prepare send parameters
-        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = 
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
             stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), amount, dstAddress);
-        
+
         // Fund user with ETH (needed for stargate.sendToken)
         vm.deal(user, valueToSend);
-        
+
         vm.prank(user);
-        bytes32 guid = stargateWithdraw.crossChainWithdraw{value: valueToSend}(
-            12345,
-            userBytes,
-            amount,
-            CHAIN_ID_1,
-            dstAddress,
-            user,
-            sendParam,
-            messagingFee
-        );
-        
+        bytes32 guid = stargateWithdraw.crossChainWithdraw{
+            value: valueToSend
+        }(12345, userBytes, amount, CHAIN_ID_1, dstAddress, user, sendParam, messagingFee);
+
         assertTrue(guid != bytes32(0));
         assertEq(USDC.balanceOf(user), 10000 ether - amount);
         assertEq(USDC.balanceOf(address(mockStargate)), amount);
     }
-    
+
     function test_crossChainWithdraw_failureAndRefund() public {
         uint256 amount = 1000 ether;
         bytes32 userBytes = bytes32(uint256(uint160(user)));
         bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
-        
+
         // Make Stargate revert
         mockStargate.setShouldRevert(true);
-        
+
         uint256 balanceBefore = USDC.balanceOf(user);
-        
+
         // Prepare send parameters
-        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = 
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
             stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), amount, dstAddress);
-        
+
         // Fund user with ETH (needed for stargate.sendToken)
         vm.deal(user, valueToSend);
-        
+
         vm.prank(user);
-        bytes32 guid = stargateWithdraw.crossChainWithdraw{value: valueToSend}(
-            12345,
-            userBytes,
-            amount,
-            CHAIN_ID_1,
-            dstAddress,
-            user,
-            sendParam,
-            messagingFee
-        );
-        
+        bytes32 guid = stargateWithdraw.crossChainWithdraw{
+            value: valueToSend
+        }(12345, userBytes, amount, CHAIN_ID_1, dstAddress, user, sendParam, messagingFee);
+
         // Should return zero GUID and refund
         assertEq(guid, bytes32(0));
         assertEq(USDC.balanceOf(user), balanceBefore); // Full refund
         assertEq(USDC.balanceOf(address(stargateWithdraw)), 0);
     }
-    
+
     function test_crossChainWithdraw_invalidChainId() public {
         SendParam memory dummySendParam;
         MessagingFee memory dummyMessagingFee;
-        
+
         vm.prank(user);
         vm.expectRevert(StargateWithdraw.InvalidChainId.selector);
         stargateWithdraw.crossChainWithdraw(
@@ -266,11 +244,11 @@ contract StargateWithdrawTest is Test {
             dummyMessagingFee
         );
     }
-    
+
     function test_crossChainWithdraw_sameChainId() public {
         SendParam memory dummySendParam;
         MessagingFee memory dummyMessagingFee;
-        
+
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(StargateWithdraw.CrossChainNotSupported.selector, block.chainid));
         stargateWithdraw.crossChainWithdraw(
@@ -284,11 +262,11 @@ contract StargateWithdrawTest is Test {
             dummyMessagingFee
         );
     }
-    
+
     function test_crossChainWithdraw_chainNotSupported() public {
         SendParam memory dummySendParam;
         MessagingFee memory dummyMessagingFee;
-        
+
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(StargateWithdraw.CrossChainNotSupported.selector, CHAIN_ID_3));
         stargateWithdraw.crossChainWithdraw(
@@ -302,14 +280,14 @@ contract StargateWithdrawTest is Test {
             dummyMessagingFee
         );
     }
-    
+
     function test_crossChainWithdraw_invalidEndpointId() public {
         // Set chain support but no endpoint
         stargateWithdraw.setChainSupport(CHAIN_ID_3, true);
-        
+
         SendParam memory dummySendParam;
         MessagingFee memory dummyMessagingFee;
-        
+
         vm.prank(user);
         vm.expectRevert(StargateWithdraw.InvalidEndpointId.selector);
         stargateWithdraw.crossChainWithdraw(
@@ -323,19 +301,21 @@ contract StargateWithdrawTest is Test {
             dummyMessagingFee
         );
     }
-    
+
     function test_crossChainWithdraw_insufficientBalance() public {
         // User has no balance
         address poorUser = makeAddr("poorUser");
         bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
-        
-        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = 
+
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
             stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), 1000 ether, dstAddress);
-        
+
         vm.deal(poorUser, valueToSend);
         vm.prank(poorUser);
         vm.expectRevert();
-        stargateWithdraw.crossChainWithdraw{value: valueToSend}(
+        stargateWithdraw.crossChainWithdraw{
+            value: valueToSend
+        }(
             12345,
             bytes32(uint256(uint160(poorUser))),
             1000 ether,
@@ -346,19 +326,19 @@ contract StargateWithdrawTest is Test {
             messagingFee
         );
     }
-    
+
     function test_crossChainWithdraw_emitsEvent() public {
         uint256 amount = 1000 ether;
         bytes32 userBytes = bytes32(uint256(uint160(user)));
         bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
-        
+
         // Prepare send parameters
-        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = 
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
             stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), amount, dstAddress);
-        
+
         // Fund user with ETH (needed for stargate.sendToken)
         vm.deal(user, valueToSend);
-        
+
         vm.prank(user);
         // Don't check GUID in event expectation as it's generated dynamically
         vm.expectEmit(true, true, false, false);
@@ -371,147 +351,128 @@ contract StargateWithdrawTest is Test {
             dstAddress,
             bytes32(0) // GUID will be generated, we'll check it's non-zero
         );
-        bytes32 guid = stargateWithdraw.crossChainWithdraw{value: valueToSend}(
-            12345,
-            userBytes,
-            amount,
-            CHAIN_ID_1,
-            dstAddress,
-            user,
-            sendParam,
-            messagingFee
-        );
+        bytes32 guid = stargateWithdraw.crossChainWithdraw{
+            value: valueToSend
+        }(12345, userBytes, amount, CHAIN_ID_1, dstAddress, user, sendParam, messagingFee);
         assertTrue(guid != bytes32(0));
     }
-    
+
     function test_crossChainWithdraw_failureEmitsEvent() public {
         uint256 amount = 1000 ether;
         bytes32 userBytes = bytes32(uint256(uint160(user)));
         bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
-        
+
         mockStargate.setShouldRevert(true);
-        
+
         // Fund user with ETH for gas fees
         vm.deal(user, 1 ether);
-        
+
         // Prepare send parameters
-        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = 
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
             stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), amount, dstAddress);
-        
+
         // Fund user with ETH (needed for stargate.sendToken)
         vm.deal(user, valueToSend);
-        
+
         vm.prank(user);
         vm.expectEmit(true, true, false, true);
-        emit StargateWithdraw.CrossChainWithdrawFailed(
-            12345,
-            userBytes,
-            amount,
-            user
-        );
-        
-        stargateWithdraw.crossChainWithdraw{value: valueToSend}(
-            12345,
-            userBytes,
-            amount,
-            CHAIN_ID_1,
-            dstAddress,
-            user,
-            sendParam,
-            messagingFee
-        );
+        emit StargateWithdraw.CrossChainWithdrawFailed(12345, userBytes, amount, user);
+
+        stargateWithdraw.crossChainWithdraw{
+            value: valueToSend
+        }(12345, userBytes, amount, CHAIN_ID_1, dstAddress, user, sendParam, messagingFee);
     }
-    
+
     // ============ Admin Function Tests ============
-    
+
     function test_setStargatePool_success() public {
         MockStargate newStargate = new MockStargate(address(USDC));
-        
+
         vm.expectEmit(true, true, false, false);
         emit StargateWithdraw.StargatePoolUpdated(address(mockStargate), address(newStargate));
-        
+
         stargateWithdraw.setStargatePool(address(newStargate));
         assertEq(address(stargateWithdraw.stargate()), address(newStargate));
     }
-    
+
     function test_setStargatePool_zeroAddress() public {
         vm.expectRevert(StargateWithdraw.InvalidStargatePool.selector);
         stargateWithdraw.setStargatePool(address(0));
     }
-    
+
     function test_setStargatePool_onlyOwner() public {
         vm.prank(user);
         vm.expectRevert();
         stargateWithdraw.setStargatePool(address(mockStargate));
     }
-    
+
     function test_setChainEndpoint_success() public {
         vm.expectEmit(true, false, false, false);
         emit StargateWithdraw.ChainEndpointUpdated(CHAIN_ID_3, ENDPOINT_ID_1);
-        
+
         stargateWithdraw.setChainEndpoint(CHAIN_ID_3, ENDPOINT_ID_1);
         assertEq(stargateWithdraw.chainIdToEndpointId(CHAIN_ID_3), ENDPOINT_ID_1);
     }
-    
+
     function test_setChainEndpoint_onlyOwner() public {
         vm.prank(user);
         vm.expectRevert();
         stargateWithdraw.setChainEndpoint(CHAIN_ID_3, ENDPOINT_ID_1);
     }
-    
+
     function test_setChainSupport_enable() public {
         vm.expectEmit(true, false, false, false);
         emit StargateWithdraw.ChainSupportUpdated(CHAIN_ID_3, true);
-        
+
         stargateWithdraw.setChainSupport(CHAIN_ID_3, true);
         assertTrue(stargateWithdraw.supportedChains(CHAIN_ID_3));
     }
-    
+
     function test_setChainSupport_disable() public {
         // First enable
         stargateWithdraw.setChainSupport(CHAIN_ID_3, true);
         assertTrue(stargateWithdraw.supportedChains(CHAIN_ID_3));
-        
+
         // Then disable
         vm.expectEmit(true, false, false, false);
         emit StargateWithdraw.ChainSupportUpdated(CHAIN_ID_3, false);
-        
+
         stargateWithdraw.setChainSupport(CHAIN_ID_3, false);
         assertFalse(stargateWithdraw.supportedChains(CHAIN_ID_3));
     }
-    
+
     function test_setChainSupport_sameChainId() public {
         vm.expectRevert(abi.encodeWithSelector(StargateWithdraw.CrossChainNotSupported.selector, block.chainid));
         stargateWithdraw.setChainSupport(block.chainid, true);
     }
-    
+
     function test_setChainSupport_onlyOwner() public {
         vm.prank(user);
         vm.expectRevert();
         stargateWithdraw.setChainSupport(CHAIN_ID_3, true);
     }
-    
+
     function test_emergencyWithdraw_success() public {
         // Send some tokens to contract
         USDC.mint(address(stargateWithdraw), 1000 ether);
-        
+
         address recipient = makeAddr("recipient");
         uint256 amount = 500 ether;
-        
+
         stargateWithdraw.emergencyWithdraw(address(USDC), recipient, amount);
-        
+
         assertEq(USDC.balanceOf(recipient), amount);
         assertEq(USDC.balanceOf(address(stargateWithdraw)), 1000 ether - amount);
     }
-    
+
     function test_emergencyWithdraw_onlyOwner() public {
         vm.prank(user);
         vm.expectRevert();
         stargateWithdraw.emergencyWithdraw(address(USDC), user, 100 ether);
     }
-    
+
     // ============ Reentrancy Tests ============
-    
+
     function test_crossChainWithdraw_reentrancyProtection() public {
         // This test ensures nonReentrant modifier works
         // In a real scenario, we'd need a malicious contract that tries to reenter
@@ -519,108 +480,80 @@ contract StargateWithdrawTest is Test {
         uint256 amount = 1000 ether;
         bytes32 userBytes = bytes32(uint256(uint160(user)));
         bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
-        
+
         // Prepare send parameters
-        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = 
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
             stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), amount, dstAddress);
-        
+
         // Fund user with ETH (needed for stargate.sendToken)
         vm.deal(user, valueToSend);
-        
+
         vm.prank(user);
-        bytes32 guid = stargateWithdraw.crossChainWithdraw{value: valueToSend}(
-            12345,
-            userBytes,
-            amount,
-            CHAIN_ID_1,
-            dstAddress,
-            user,
-            sendParam,
-            messagingFee
-        );
-        
+        bytes32 guid = stargateWithdraw.crossChainWithdraw{
+            value: valueToSend
+        }(12345, userBytes, amount, CHAIN_ID_1, dstAddress, user, sendParam, messagingFee);
+
         assertTrue(guid != bytes32(0));
     }
-    
+
     // ============ Edge Cases ============
-    
+
     function test_crossChainWithdraw_maxAmount() public {
         uint256 maxAmount = 1000000 ether; // Use reasonable max amount to avoid overflow
         USDC.mint(user, maxAmount);
-        
+
         vm.prank(user);
         USDC.approve(address(stargateWithdraw), type(uint256).max);
-        
+
         bytes32 userBytes = bytes32(uint256(uint160(user)));
         bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
-        
+
         // Prepare send parameters
-        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = 
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
             stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), maxAmount, dstAddress);
-        
+
         // Fund user with ETH (needed for stargate.sendToken)
         vm.deal(user, valueToSend);
-        
+
         vm.prank(user);
-        bytes32 guid = stargateWithdraw.crossChainWithdraw{value: valueToSend}(
-            12345,
-            userBytes,
-            maxAmount,
-            CHAIN_ID_1,
-            dstAddress,
-            user,
-            sendParam,
-            messagingFee
-        );
-        
+        bytes32 guid = stargateWithdraw.crossChainWithdraw{
+            value: valueToSend
+        }(12345, userBytes, maxAmount, CHAIN_ID_1, dstAddress, user, sendParam, messagingFee);
+
         assertTrue(guid != bytes32(0));
     }
-    
+
     function test_crossChainWithdraw_multipleChains() public {
         uint256 amount = 1000 ether;
         bytes32 userBytes = bytes32(uint256(uint160(user)));
         bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
-        
+
         // Prepare send parameters for chain 1
-        (uint256 valueToSend1, SendParam memory sendParam1, MessagingFee memory messagingFee1) = 
+        (uint256 valueToSend1, SendParam memory sendParam1, MessagingFee memory messagingFee1) =
             stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), amount, dstAddress);
-        
+
         // Prepare send parameters for chain 2
-        (uint256 valueToSend2, SendParam memory sendParam2, MessagingFee memory messagingFee2) = 
+        (uint256 valueToSend2, SendParam memory sendParam2, MessagingFee memory messagingFee2) =
             stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_2), amount, dstAddress);
-        
+
         // Fund user with ETH (needed for stargate.sendToken)
         vm.deal(user, valueToSend1 + valueToSend2);
-        
+
         // Withdraw to chain 1
         vm.prank(user);
-        bytes32 guid1 = stargateWithdraw.crossChainWithdraw{value: valueToSend1}(
-            1,
-            userBytes,
-            amount,
-            CHAIN_ID_1,
-            dstAddress,
-            user,
-            sendParam1,
-            messagingFee1
-        );
-        
+        bytes32 guid1 = stargateWithdraw.crossChainWithdraw{
+            value: valueToSend1
+        }(1, userBytes, amount, CHAIN_ID_1, dstAddress, user, sendParam1, messagingFee1);
+
         // Mint more USDC for second withdrawal
         USDC.mint(user, amount);
-        
+
         // Withdraw to chain 2
         vm.prank(user);
-        bytes32 guid2 = stargateWithdraw.crossChainWithdraw{value: valueToSend2}(
-            2,
-            userBytes,
-            amount,
-            CHAIN_ID_2,
-            dstAddress,
-            user,
-            sendParam2,
-            messagingFee2
-        );
-        
+        bytes32 guid2 = stargateWithdraw.crossChainWithdraw{
+            value: valueToSend2
+        }(2, userBytes, amount, CHAIN_ID_2, dstAddress, user, sendParam2, messagingFee2);
+
         assertTrue(guid1 != bytes32(0));
         assertTrue(guid2 != bytes32(0));
         assertTrue(guid1 != guid2);

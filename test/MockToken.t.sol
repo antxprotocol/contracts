@@ -31,7 +31,7 @@ contract MockTokenTest is Test {
         vm.startPrank(owner);
         token.mint(user1, 1000);
         vm.stopPrank();
-        
+
         assertEq(token.balanceOf(user1), 1000);
     }
 
@@ -39,7 +39,7 @@ contract MockTokenTest is Test {
         vm.startPrank(owner);
         token.transfer(user1, 1000);
         vm.stopPrank();
-        
+
         assertEq(token.balanceOf(owner), 1000000000000000000000000 - 1000);
         assertEq(token.balanceOf(user1), 1000);
     }
@@ -48,11 +48,11 @@ contract MockTokenTest is Test {
         vm.startPrank(owner);
         // Set transfers to fail
         token.setFailTransfers(true);
-        
+
         // Transfer should return false but not revert
         bool success = token.transfer(user1, 1000);
         assertFalse(success);
-        
+
         // Balance should not change
         assertEq(token.balanceOf(owner), 1000000000000000000000000);
         assertEq(token.balanceOf(user1), 0);
@@ -64,16 +64,16 @@ contract MockTokenTest is Test {
         // Transfer some tokens to user1
         token.transfer(user1, 1000);
         vm.stopPrank();
-        
+
         // User1 approves user2 to spend tokens
         vm.startPrank(user1);
         token.approve(user2, 500);
         vm.stopPrank();
-        
+
         // User2 transfers tokens from user1 to themselves
         vm.startPrank(user2);
         bool success = token.transferFrom(user1, user2, 500);
-        
+
         assertTrue(success);
         assertEq(token.balanceOf(user1), 500);
         assertEq(token.balanceOf(user2), 500);
@@ -87,16 +87,16 @@ contract MockTokenTest is Test {
         // Set transfers to fail
         token.setFailTransfers(true);
         vm.stopPrank();
-        
+
         // User1 approves user2 to spend tokens
         vm.startPrank(user1);
         token.approve(user2, 500);
         vm.stopPrank();
-        
+
         // User2 tries to transfer tokens from user1 to themselves
         vm.startPrank(user2);
         bool success = token.transferFrom(user1, user2, 500);
-        
+
         assertFalse(success);
         assertEq(token.balanceOf(user1), 1000);
         assertEq(token.balanceOf(user2), 0);
@@ -106,19 +106,19 @@ contract MockTokenTest is Test {
     function test_setFailTransfers() public {
         // Initially should be false
         assertFalse(token.shouldFailTransfers());
-        
+
         // Set to true
         vm.startPrank(owner);
         token.setFailTransfers(true);
         vm.stopPrank();
-        
+
         assertTrue(token.shouldFailTransfers());
-        
+
         // Set back to false
         vm.startPrank(owner);
         token.setFailTransfers(false);
         vm.stopPrank();
-        
+
         assertFalse(token.shouldFailTransfers());
     }
-} 
+}

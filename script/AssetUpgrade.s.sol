@@ -8,18 +8,18 @@ pragma solidity ^0.8.22;
  * 1. Deploys a new Asset implementation contract
  * 2. Upgrades the existing proxy to point to the new implementation
  * 3. Verifies the upgrade was successful
- * 
+ *
  * Usage:
  * 1. Set environment variables:
  *    - PRIVATE_KEY: Private key of the owner account
  *    - ASSET_PROXY_ADDRESS: Address of the deployed Asset proxy contract
- * 
+ *
  * 2. Run the script:
  *    forge script script/AssetUpgrade.s.sol:AssetUpgradeScript --rpc-url <RPC_URL> --broadcast --verify
- * 
+ *
  * 3. For simulation (dry-run):
  *    forge script script/AssetUpgrade.s.sol:AssetUpgradeScript --rpc-url <RPC_URL>
- * 
+ *
  * Important Notes:
  * - Only the owner of the Asset contract can execute upgrades
  * - The new implementation must be compatible with the existing storage layout
@@ -65,7 +65,7 @@ contract AssetUpgradeScript is Script {
         bytes memory upgradeData = "";
         asset.upgradeToAndCall(address(newImplementation), upgradeData);
         console.log("Upgrade completed successfully!");
-        
+
         // Verify the upgrade
         address newImplementationAddress = _getImplementation(proxyAddress);
         console.log("New implementation address:", newImplementationAddress);

@@ -29,109 +29,65 @@ contract MarginAssetTest is Test {
 
     function setUp() public {
         // 初始化币种信息
-        usdtCoin = MarginAsset.Coin({
-            id: 1000,
-            symbol: "USDT",
-            stepSizeScale: 6
-        });
+        usdtCoin = MarginAsset.Coin({id: 1000, symbol: "USDT", stepSizeScale: 6});
 
-        btcCoin = MarginAsset.Coin({
-            id: 1001,
-            symbol: "BTC",
-            stepSizeScale: 3
-        });
+        btcCoin = MarginAsset.Coin({id: 1001, symbol: "BTC", stepSizeScale: 3});
 
-        ethCoin = MarginAsset.Coin({
-            id: 1002,
-            symbol: "ETH",
-            stepSizeScale: 2
-        });
+        ethCoin = MarginAsset.Coin({id: 1002, symbol: "ETH", stepSizeScale: 2});
 
         // 初始化BTC交易所
         MarginAsset.RiskTier[] memory btcRiskTiers = new MarginAsset.RiskTier[](6);
         btcRiskTiers[0] = MarginAsset.RiskTier({
-            maxLeverage: 50,
-            maintenanceMarginRatioPpm: 10000,
-            positionValueUpperBound: 500000000000
+            maxLeverage: 50, maintenanceMarginRatioPpm: 10000, positionValueUpperBound: 500000000000
         });
         btcRiskTiers[1] = MarginAsset.RiskTier({
-            maxLeverage: 25,
-            maintenanceMarginRatioPpm: 20000,
-            positionValueUpperBound: 1000000000000
+            maxLeverage: 25, maintenanceMarginRatioPpm: 20000, positionValueUpperBound: 1000000000000
         });
         btcRiskTiers[2] = MarginAsset.RiskTier({
-            maxLeverage: 20,
-            maintenanceMarginRatioPpm: 25000,
-            positionValueUpperBound: 2000000000000
+            maxLeverage: 20, maintenanceMarginRatioPpm: 25000, positionValueUpperBound: 2000000000000
         });
         btcRiskTiers[3] = MarginAsset.RiskTier({
-            maxLeverage: 10,
-            maintenanceMarginRatioPpm: 50000,
-            positionValueUpperBound: 4000000000000
+            maxLeverage: 10, maintenanceMarginRatioPpm: 50000, positionValueUpperBound: 4000000000000
         });
         btcRiskTiers[4] = MarginAsset.RiskTier({
-            maxLeverage: 5,
-            maintenanceMarginRatioPpm: 100000,
-            positionValueUpperBound: 10000000000000
+            maxLeverage: 5, maintenanceMarginRatioPpm: 100000, positionValueUpperBound: 10000000000000
         });
         btcRiskTiers[5] = MarginAsset.RiskTier({
-            maxLeverage: 2,
-            maintenanceMarginRatioPpm: 250000,
-            positionValueUpperBound: 20000000000000
+            maxLeverage: 2, maintenanceMarginRatioPpm: 250000, positionValueUpperBound: 20000000000000
         });
 
         btcExchange = MarginAsset.Exchange({
-            exchangeId: 200001,
-            symbol: "BTCUSDT",
-            stepSizeScale: 3,
-            tickSizeScale: 1,
-            riskTiers: btcRiskTiers
+            exchangeId: 200001, symbol: "BTCUSDT", stepSizeScale: 3, tickSizeScale: 1, riskTiers: btcRiskTiers
         });
 
         // 初始化ETH交易所
         MarginAsset.RiskTier[] memory ethRiskTiers = new MarginAsset.RiskTier[](6);
         ethRiskTiers[0] = MarginAsset.RiskTier({
-            maxLeverage: 50,
-            maintenanceMarginRatioPpm: 10000,
-            positionValueUpperBound: 500000000000
+            maxLeverage: 50, maintenanceMarginRatioPpm: 10000, positionValueUpperBound: 500000000000
         });
         ethRiskTiers[1] = MarginAsset.RiskTier({
-            maxLeverage: 25,
-            maintenanceMarginRatioPpm: 20000,
-            positionValueUpperBound: 1000000000000
+            maxLeverage: 25, maintenanceMarginRatioPpm: 20000, positionValueUpperBound: 1000000000000
         });
         ethRiskTiers[2] = MarginAsset.RiskTier({
-            maxLeverage: 20,
-            maintenanceMarginRatioPpm: 25000,
-            positionValueUpperBound: 2000000000000
+            maxLeverage: 20, maintenanceMarginRatioPpm: 25000, positionValueUpperBound: 2000000000000
         });
         ethRiskTiers[3] = MarginAsset.RiskTier({
-            maxLeverage: 10,
-            maintenanceMarginRatioPpm: 50000,
-            positionValueUpperBound: 4000000000000
+            maxLeverage: 10, maintenanceMarginRatioPpm: 50000, positionValueUpperBound: 4000000000000
         });
         ethRiskTiers[4] = MarginAsset.RiskTier({
-            maxLeverage: 5,
-            maintenanceMarginRatioPpm: 100000,
-            positionValueUpperBound: 10000000000000
+            maxLeverage: 5, maintenanceMarginRatioPpm: 100000, positionValueUpperBound: 10000000000000
         });
         ethRiskTiers[5] = MarginAsset.RiskTier({
-            maxLeverage: 2,
-            maintenanceMarginRatioPpm: 250000,
-            positionValueUpperBound: 20000000000000
+            maxLeverage: 2, maintenanceMarginRatioPpm: 250000, positionValueUpperBound: 20000000000000
         });
 
         ethExchange = MarginAsset.Exchange({
-            exchangeId: 200002,
-            symbol: "ETHUSDT",
-            stepSizeScale: 2,
-            tickSizeScale: 2,
-            riskTiers: ethRiskTiers
+            exchangeId: 200002, symbol: "ETHUSDT", stepSizeScale: 2, tickSizeScale: 2, riskTiers: ethRiskTiers
         });
 
         // 初始化Oracle价格
         oraclePriceMap[200001] = 1000000; // 100,000u (精度6)
-        oraclePriceMap[200002] = 300000;  // 3,000u (精度6)
+        oraclePriceMap[200002] = 300000; // 3,000u (精度6)
 
         // 初始化资金费率指数（可为负数，与Go代码保持一致）
         // Go代码中：btcExchange.Id: big.NewInt(-1000000), ethExchange.Id: big.NewInt(-2000000)
@@ -149,44 +105,33 @@ contract MarginAssetTest is Test {
         exchanges[1] = ethExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](2);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
-        oraclePrices[1] = MarginAsset.OraclePrice({
-            exchangeId: 200002,
-            oraclePrice: oraclePriceMap[200002],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
+        oraclePrices[1] =
+            MarginAsset.OraclePrice({exchangeId: 200002, oraclePrice: oraclePriceMap[200002], oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](2);
-        fundingIndices[0] = MarginAsset.FundingIndex({
-            exchangeId: 200001,
-            fundingIndex: fundingIndexMap[200001], fundingIndexTime: 0
-        });
-        fundingIndices[1] = MarginAsset.FundingIndex({
-            exchangeId: 200002,
-            fundingIndex: fundingIndexMap[200002], fundingIndexTime: 0
-        });
+        fundingIndices[0] =
+            MarginAsset.FundingIndex({exchangeId: 200001, fundingIndex: fundingIndexMap[200001], fundingIndexTime: 0});
+        fundingIndices[1] =
+            MarginAsset.FundingIndex({exchangeId: 200002, fundingIndex: fundingIndexMap[200002], fundingIndexTime: 0});
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](2);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 1 // MARGIN_MODE_CROSS
-        });
-        tradeSettings[1] = MarginAsset.TradeSetting({
-            exchangeId: 200002,
-            leverage: 10,
-            marginMode: 1 // MARGIN_MODE_CROSS
-        });
+        tradeSettings[0] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200001,
+                leverage: 20,
+                marginMode: 1 // MARGIN_MODE_CROSS
+            });
+        tradeSettings[1] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200002,
+                leverage: 10,
+                marginMode: 1 // MARGIN_MODE_CROSS
+            });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         MarginAsset.PerpetualAsset memory perpetualAsset = MarginAsset.PerpetualAsset({
@@ -196,14 +141,8 @@ contract MarginAssetTest is Test {
             positions: new MarginAsset.Position[](0)
         });
 
-        MarginAsset.Asset memory asset = MarginAsset.newAsset(
-            usdtCoin,
-            exchanges,
-            oraclePrices,
-            fundingIndices,
-            subaccount,
-            perpetualAsset
-        );
+        MarginAsset.Asset memory asset =
+            MarginAsset.newAsset(usdtCoin, exchanges, oraclePrices, fundingIndices, subaccount, perpetualAsset);
 
         // 验证初始化结果
         assertEq(asset.subaccountId, 123);
@@ -226,44 +165,33 @@ contract MarginAssetTest is Test {
         exchanges[1] = ethExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](2);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
-        oraclePrices[1] = MarginAsset.OraclePrice({
-            exchangeId: 200002,
-            oraclePrice: oraclePriceMap[200002],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
+        oraclePrices[1] =
+            MarginAsset.OraclePrice({exchangeId: 200002, oraclePrice: oraclePriceMap[200002], oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](2);
-        fundingIndices[0] = MarginAsset.FundingIndex({
-            exchangeId: 200001,
-            fundingIndex: fundingIndexMap[200001], fundingIndexTime: 0
-        });
-        fundingIndices[1] = MarginAsset.FundingIndex({
-            exchangeId: 200002,
-            fundingIndex: fundingIndexMap[200002], fundingIndexTime: 0
-        });
+        fundingIndices[0] =
+            MarginAsset.FundingIndex({exchangeId: 200001, fundingIndex: fundingIndexMap[200001], fundingIndexTime: 0});
+        fundingIndices[1] =
+            MarginAsset.FundingIndex({exchangeId: 200002, fundingIndex: fundingIndexMap[200002], fundingIndexTime: 0});
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](2);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 1 // MARGIN_MODE_CROSS
-        });
-        tradeSettings[1] = MarginAsset.TradeSetting({
-            exchangeId: 200002,
-            leverage: 10,
-            marginMode: 1 // MARGIN_MODE_CROSS
-        });
+        tradeSettings[0] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200001,
+                leverage: 20,
+                marginMode: 1 // MARGIN_MODE_CROSS
+            });
+        tradeSettings[1] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200002,
+                leverage: 10,
+                marginMode: 1 // MARGIN_MODE_CROSS
+            });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         // 初始抵押品：1000 USDT (精度6)
@@ -276,14 +204,8 @@ contract MarginAssetTest is Test {
             positions: new MarginAsset.Position[](0)
         });
 
-        MarginAsset.Asset memory asset = MarginAsset.newAsset(
-            usdtCoin,
-            exchanges,
-            oraclePrices,
-            fundingIndices,
-            subaccount,
-            perpetualAsset
-        );
+        MarginAsset.Asset memory asset =
+            MarginAsset.newAsset(usdtCoin, exchanges, oraclePrices, fundingIndices, subaccount, perpetualAsset);
 
         // 验证结果
         assertEq(asset.subaccountId, 123);
@@ -305,11 +227,8 @@ contract MarginAssetTest is Test {
         exchanges[0] = btcExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](1);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
         fundingIndices[0] = MarginAsset.FundingIndex({
@@ -319,17 +238,15 @@ contract MarginAssetTest is Test {
         });
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 1 // MARGIN_MODE_CROSS
-        });
+        tradeSettings[0] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200001,
+                leverage: 20,
+                marginMode: 1 // MARGIN_MODE_CROSS
+            });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         // 创建仓位：买入 0.1 BTC
@@ -354,38 +271,32 @@ contract MarginAssetTest is Test {
             positions: positions
         });
 
-        MarginAsset.Asset memory asset = MarginAsset.newAsset(
-            usdtCoin,
-            exchanges,
-            oraclePrices,
-            fundingIndices,
-            subaccount,
-            perpetualAsset
-        );
+        MarginAsset.Asset memory asset =
+            MarginAsset.newAsset(usdtCoin, exchanges, oraclePrices, fundingIndices, subaccount, perpetualAsset);
 
         // 验证结果
         assertEq(asset.subaccountId, 123);
         assertEq(asset.collateralCoinId, 1000);
         assertEq(asset.crossGroup.collateralAmount, int256(crossCollateralAmount));
-        
+
         // TV = collateralAmount * PRECISION_SCALE + PV
         // PV = openSize * oraclePrice = 0.1 * 1000000 = 10000000000000000 (精度6+6=12)
         // TV = -9006000500 * 1000000 + 10000000000000000 = 993999500000000
         int256 expectedTV = int256(crossCollateralAmount) * int256(PRECISION_SCALE) + int256(10000000000000000);
         assertEq(asset.crossGroup.tv, expectedTV);
-        
+
         // 验证仓位信息
         assertEq(asset.crossGroup.positions.length, 1);
         assertEq(asset.crossGroup.positions[0].openSize, 100);
         assertEq(asset.crossGroup.positions[0].openValue, 10005000000);
         assertEq(asset.crossGroup.positions[0].pv, int256(10000000000000000));
-        
+
         // IMR = positionValueAbs * initialMarginRatioPpm
         // positionValue = 0.1 * 1000000 = 100000 (精度6)
         // initialMarginRatioPpm = 1000000 / 20 = 50000
         // IMR = 100000 * 50000 = 500000000000000 (精度6+6=12)
         assertEq(asset.crossGroup.imr, 500000000000000);
-        
+
         // MMR = positionValueAbs * maintenanceMarginRatioPpm
         // positionValue计算：openSize * oraclePrice 做精度转换
         // openSize = 100 (精度3，即0.1 BTC)
@@ -401,7 +312,7 @@ contract MarginAssetTest is Test {
         // maintenanceMarginRatioPpm = 10000
         // MMR = 10000000000 * 10000 = 100000000000000 (精度12)
         assertEq(asset.crossGroup.mmr, 100000000000000);
-        
+
         assertEq(asset.isolatedGroups.length, 0);
     }
 
@@ -413,31 +324,22 @@ contract MarginAssetTest is Test {
         int256 tv = 993999500000000;
         uint256 imr = 500000000000000;
         uint256 orderFrozenAmount = 0;
-        
+
         // Calculate expected available amount
         // availableAmount = (TV - IMR - orderFrozenAmount) / PRECISION_SCALE
         // = (993999500000000 - 500000000000000 - 0) / 1000000
         // = 493999500000000 / 1000000
         // = 493999500
         int256 expectedAmount = 493999500;
-        
+
         // Create a CrossGroup for testing
         // Note: collateralAmount must be >= expectedAmount because the function limits
         // the result to collateralAmount + sum of positions' openValue
         MarginAsset.CrossGroup memory crossGroup = MarginAsset.CrossGroup({
-            collateralAmount: expectedAmount,
-            positions: new MarginAsset.AssetPosition[](0),
-            imr: imr,
-            mmr: 0,
-            tv: tv
+            collateralAmount: expectedAmount, positions: new MarginAsset.AssetPosition[](0), imr: imr, mmr: 0, tv: tv
         });
 
-        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
-            tv,
-            imr,
-            orderFrozenAmount,
-            crossGroup
-        );
+        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(tv, imr, orderFrozenAmount, crossGroup);
 
         // The result should be limited by collateralAmount, so it should equal expectedAmount
         assertEq(uint256(availableAmount), uint256(expectedAmount));
@@ -450,22 +352,13 @@ contract MarginAssetTest is Test {
         int256 tv = -1000000000000; // -1 USDT (精度12)
         uint256 imr = 500000000000000;
         uint256 orderFrozenAmount = 0;
-        
+
         // Create a minimal CrossGroup for testing
         MarginAsset.CrossGroup memory crossGroup = MarginAsset.CrossGroup({
-            collateralAmount: 0,
-            positions: new MarginAsset.AssetPosition[](0),
-            imr: imr,
-            mmr: 0,
-            tv: tv
+            collateralAmount: 0, positions: new MarginAsset.AssetPosition[](0), imr: imr, mmr: 0, tv: tv
         });
 
-        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
-            tv,
-            imr,
-            orderFrozenAmount,
-            crossGroup
-        );
+        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(tv, imr, orderFrozenAmount, crossGroup);
 
         // TV < IMR + orderFrozenAmount，应该返回0
         assertEq(availableAmount, 0);
@@ -480,30 +373,22 @@ contract MarginAssetTest is Test {
         exchanges[0] = btcExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](1);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
-        fundingIndices[0] = MarginAsset.FundingIndex({
-            exchangeId: 200001,
-            fundingIndex: 0, fundingIndexTime: 0
-        });
+        fundingIndices[0] = MarginAsset.FundingIndex({exchangeId: 200001, fundingIndex: 0, fundingIndexTime: 0});
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 2 // MARGIN_MODE_ISOLATED
-        });
+        tradeSettings[0] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200001,
+                leverage: 20,
+                marginMode: 2 // MARGIN_MODE_ISOLATED
+            });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         // 创建逐仓仓位：买入 0.1 BTC
@@ -523,14 +408,8 @@ contract MarginAssetTest is Test {
             positions: positions
         });
 
-        MarginAsset.Asset memory asset = MarginAsset.newAsset(
-            usdtCoin,
-            exchanges,
-            oraclePrices,
-            fundingIndices,
-            subaccount,
-            perpetualAsset
-        );
+        MarginAsset.Asset memory asset =
+            MarginAsset.newAsset(usdtCoin, exchanges, oraclePrices, fundingIndices, subaccount, perpetualAsset);
 
         // 验证结果
         assertEq(asset.subaccountId, 123);
@@ -551,31 +430,27 @@ contract MarginAssetTest is Test {
         exchanges[0] = btcExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](1);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
 
         // 使用负数 fundingIndex（与 Go 测试保持一致）
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
         fundingIndices[0] = MarginAsset.FundingIndex({
             exchangeId: 200001,
-            fundingIndex: fundingIndexMap[200001], fundingIndexTime: 0 // -1000000
+            fundingIndex: fundingIndexMap[200001],
+            fundingIndexTime: 0 // -1000000
         });
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 1 // MARGIN_MODE_CROSS
-        });
+        tradeSettings[0] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200001,
+                leverage: 20,
+                marginMode: 1 // MARGIN_MODE_CROSS
+            });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         // 创建仓位，cacheFundingIndex 为 0，fundingIndex 为 -1000000
@@ -590,20 +465,11 @@ contract MarginAssetTest is Test {
         });
 
         MarginAsset.PerpetualAsset memory perpetualAsset = MarginAsset.PerpetualAsset({
-            subaccountId: 123,
-            collateralCoinId: 1000,
-            crossCollateralAmount: 0,
-            positions: positions
+            subaccountId: 123, collateralCoinId: 1000, crossCollateralAmount: 0, positions: positions
         });
 
-        MarginAsset.Asset memory asset = MarginAsset.newAsset(
-            usdtCoin,
-            exchanges,
-            oraclePrices,
-            fundingIndices,
-            subaccount,
-            perpetualAsset
-        );
+        MarginAsset.Asset memory asset =
+            MarginAsset.newAsset(usdtCoin, exchanges, oraclePrices, fundingIndices, subaccount, perpetualAsset);
 
         // 验证资金费用已正确计算并添加到全仓抵押品中
         // 资金费用应该是正数（因为 cacheFundingIndex > fundingIndex）
@@ -619,30 +485,22 @@ contract MarginAssetTest is Test {
         exchanges[0] = btcExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](1);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
-        fundingIndices[0] = MarginAsset.FundingIndex({
-            exchangeId: 200001,
-            fundingIndex: 0, fundingIndexTime: 0
-        });
+        fundingIndices[0] = MarginAsset.FundingIndex({exchangeId: 200001, fundingIndex: 0, fundingIndexTime: 0});
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 1 // MARGIN_MODE_CROSS
-        });
+        tradeSettings[0] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200001,
+                leverage: 20,
+                marginMode: 1 // MARGIN_MODE_CROSS
+            });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         // 创建仓位，cacheFundingIndex 为负数
@@ -662,14 +520,8 @@ contract MarginAssetTest is Test {
             positions: positions
         });
 
-        MarginAsset.Asset memory asset = MarginAsset.newAsset(
-            usdtCoin,
-            exchanges,
-            oraclePrices,
-            fundingIndices,
-            subaccount,
-            perpetualAsset
-        );
+        MarginAsset.Asset memory asset =
+            MarginAsset.newAsset(usdtCoin, exchanges, oraclePrices, fundingIndices, subaccount, perpetualAsset);
 
         // 验证资金费用已正确计算（cacheFundingIndex - fundingIndex = -1000000 - 0 = -1000000）
         // 对于多仓（openSize > 0），负的资金费用会减少抵押品
@@ -700,21 +552,12 @@ contract MarginAssetTest is Test {
         int256 tv = 1000000000000;
         uint256 imr = type(uint256).max; // 最大uint256
         uint256 orderFrozenAmount = 1; // 会导致溢出
-        
+
         MarginAsset.CrossGroup memory crossGroup = MarginAsset.CrossGroup({
-            collateralAmount: 0,
-            positions: new MarginAsset.AssetPosition[](0),
-            imr: imr,
-            mmr: 0,
-            tv: tv
+            collateralAmount: 0, positions: new MarginAsset.AssetPosition[](0), imr: imr, mmr: 0, tv: tv
         });
 
-        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
-            tv,
-            imr,
-            orderFrozenAmount,
-            crossGroup
-        );
+        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(tv, imr, orderFrozenAmount, crossGroup);
 
         // 应该返回0因为溢出检查
         assertEq(availableAmount, 0);
@@ -727,7 +570,7 @@ contract MarginAssetTest is Test {
         int256 tv = 2000000000000; // 2 USDT (精度12)
         uint256 imr = 500000000000; // 0.5 USDT (精度12)
         uint256 orderFrozenAmount = 0;
-        
+
         // 创建一个collateralAmount较小的CrossGroup
         MarginAsset.CrossGroup memory crossGroup = MarginAsset.CrossGroup({
             collateralAmount: 1000000, // 1 USDT (精度6)，小于计算结果
@@ -739,12 +582,7 @@ contract MarginAssetTest is Test {
 
         // 计算结果应该是 (2000000000000 - 500000000000) / 1000000 = 1500000
         // 但会被限制为 collateralAmount = 1000000
-        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
-            tv,
-            imr,
-            orderFrozenAmount,
-            crossGroup
-        );
+        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(tv, imr, orderFrozenAmount, crossGroup);
 
         assertEq(availableAmount, 1000000);
     }
@@ -756,7 +594,7 @@ contract MarginAssetTest is Test {
         int256 tv = 100000000000; // 0.1 USDT (精度12)
         uint256 imr = 500000000000; // 0.5 USDT (精度12)
         uint256 orderFrozenAmount = 0;
-        
+
         MarginAsset.CrossGroup memory crossGroup = MarginAsset.CrossGroup({
             collateralAmount: -1000000, // -1 USDT (精度6)
             positions: new MarginAsset.AssetPosition[](0),
@@ -766,12 +604,7 @@ contract MarginAssetTest is Test {
         });
 
         // 计算结果应该是负数，但会被限制为0
-        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
-            tv,
-            imr,
-            orderFrozenAmount,
-            crossGroup
-        );
+        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(tv, imr, orderFrozenAmount, crossGroup);
 
         assertEq(availableAmount, 0);
     }
@@ -783,7 +616,7 @@ contract MarginAssetTest is Test {
         int256 tv = 2000000000000; // 2 USDT (精度12)
         uint256 imr = 500000000000; // 0.5 USDT (精度12)
         uint256 orderFrozenAmount = 0;
-        
+
         MarginAsset.AssetPosition[] memory positions = new MarginAsset.AssetPosition[](2);
         positions[0] = MarginAsset.AssetPosition({
             exchangeId: 200001,
@@ -801,7 +634,7 @@ contract MarginAssetTest is Test {
             mmr: 0,
             pv: 0
         });
-        
+
         MarginAsset.CrossGroup memory crossGroup = MarginAsset.CrossGroup({
             collateralAmount: 1000000, // 1 USDT (精度6)
             positions: positions,
@@ -813,12 +646,7 @@ contract MarginAssetTest is Test {
         // result = (2000000000000 - 500000000000) / 1000000 = 1500000 (精度6)
         // tmpValue = collateralAmount + sum(openValue) = 1000000 + 500000000 + 300000000 = 801000000 (精度6)
         // result (1500000) < tmpValue (801000000)，所以不会被限制，返回 result = 1500000
-        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(
-            tv,
-            imr,
-            orderFrozenAmount,
-            crossGroup
-        );
+        int256 availableAmount = MarginAsset.getCrossTransferOutAvailableAmount(tv, imr, orderFrozenAmount, crossGroup);
 
         // result 是 1500000，tmpValue 是 801000000，result < tmpValue，所以返回 result
         assertEq(availableAmount, 1500000);
@@ -839,18 +667,11 @@ contract MarginAssetTest is Test {
         exchanges[0] = btcExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](1);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
-        fundingIndices[0] = MarginAsset.FundingIndex({
-            exchangeId: 200001,
-            fundingIndex: 0,
-            fundingIndexTime: 0
-        });
+        fundingIndices[0] = MarginAsset.FundingIndex({exchangeId: 200001, fundingIndex: 0, fundingIndexTime: 0});
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
         tradeSettings[0] = MarginAsset.TradeSetting({
@@ -860,26 +681,16 @@ contract MarginAssetTest is Test {
         });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](1);
         positions[0] = MarginAsset.Position({
-            exchangeId: 200001,
-            openSize: 100,
-            openValue: 10005000000,
-            isolatedCollateralAmount: 0,
-            cacheFundingIndex: 0
+            exchangeId: 200001, openSize: 100, openValue: 10005000000, isolatedCollateralAmount: 0, cacheFundingIndex: 0
         });
 
         MarginAsset.PerpetualAsset memory perpetualAsset = MarginAsset.PerpetualAsset({
-            subaccountId: 123,
-            collateralCoinId: 1000,
-            crossCollateralAmount: 0,
-            positions: positions
+            subaccountId: 123, collateralCoinId: 1000, crossCollateralAmount: 0, positions: positions
         });
 
         // 零杠杆会在 newAsset 中先触发 "trade setting not valid"
@@ -896,17 +707,12 @@ contract MarginAssetTest is Test {
         uint32 stepSizeScale = 3;
         uint32 tickSizeScale = 3;
         uint32 coinStepSizeScale = 6;
-        
+
         // scaleDiff = 3 + 3 = 6, coinStepSizeScale = 6
         // scaleDiff == coinStepSizeScale，不需要调整
-        int256 positionValue = MarginAsset.calculatePositionValue(
-            openSize,
-            oraclePrice,
-            stepSizeScale,
-            tickSizeScale,
-            coinStepSizeScale
-        );
-        
+        int256 positionValue =
+            MarginAsset.calculatePositionValue(openSize, oraclePrice, stepSizeScale, tickSizeScale, coinStepSizeScale);
+
         // value = 1000 * 1000000 = 1000000000
         // 不需要调整，所以 positionValue = 1000000000
         assertEq(positionValue, 1000000000);
@@ -921,15 +727,10 @@ contract MarginAssetTest is Test {
         uint32 stepSizeScale = 3;
         uint32 tickSizeScale = 1;
         uint32 coinStepSizeScale = 6;
-        
-        int256 positionValue = MarginAsset.calculatePositionValue(
-            openSize,
-            oraclePrice,
-            stepSizeScale,
-            tickSizeScale,
-            coinStepSizeScale
-        );
-        
+
+        int256 positionValue =
+            MarginAsset.calculatePositionValue(openSize, oraclePrice, stepSizeScale, tickSizeScale, coinStepSizeScale);
+
         // 应该是负数
         assertLt(positionValue, 0);
         assertEq(uint256(-positionValue), 100000000000);
@@ -964,7 +765,7 @@ contract MarginAssetTest is Test {
         assertTrue(true); // 占位测试
         // 创建一个没有 riskTiers 的 exchange
         MarginAsset.RiskTier[] memory riskTiers = new MarginAsset.RiskTier[](0);
-        
+
         MarginAsset.Exchange memory exchange = MarginAsset.Exchange({
             exchangeId: 200001,
             symbol: "BTCUSDT",
@@ -972,52 +773,30 @@ contract MarginAssetTest is Test {
             tickSizeScale: 1,
             riskTiers: riskTiers // 空数组
         });
-        
+
         MarginAsset.Exchange[] memory exchanges = new MarginAsset.Exchange[](1);
         exchanges[0] = exchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](1);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: 1000000,
-            oracleTime: 0
-        });
+        oraclePrices[0] = MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: 1000000, oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
-        fundingIndices[0] = MarginAsset.FundingIndex({
-            exchangeId: 200001,
-            fundingIndex: 0,
-            fundingIndexTime: 0
-        });
+        fundingIndices[0] = MarginAsset.FundingIndex({exchangeId: 200001, fundingIndex: 0, fundingIndexTime: 0});
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 1
-        });
+        tradeSettings[0] = MarginAsset.TradeSetting({exchangeId: 200001, leverage: 20, marginMode: 1});
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](1);
         positions[0] = MarginAsset.Position({
-            exchangeId: 200001,
-            openSize: 100,
-            openValue: 10005000000,
-            isolatedCollateralAmount: 0,
-            cacheFundingIndex: 0
+            exchangeId: 200001, openSize: 100, openValue: 10005000000, isolatedCollateralAmount: 0, cacheFundingIndex: 0
         });
 
         MarginAsset.PerpetualAsset memory perpetualAsset = MarginAsset.PerpetualAsset({
-            subaccountId: 123,
-            collateralCoinId: 1000,
-            crossCollateralAmount: 0,
-            positions: positions
+            subaccountId: 123, collateralCoinId: 1000, crossCollateralAmount: 0, positions: positions
         });
 
         // 空 riskTiers 会在 newAsset 中先触发 "exchange not support perpetual"
@@ -1030,26 +809,18 @@ contract MarginAssetTest is Test {
      */
     function testFindPositionRiskTier_NotFound() public {
         MarginAsset.RiskTier[] memory riskTiers = new MarginAsset.RiskTier[](3);
-        riskTiers[0] = MarginAsset.RiskTier({
-            maxLeverage: 50,
-            maintenanceMarginRatioPpm: 10000,
-            positionValueUpperBound: 1000000
-        });
-        riskTiers[1] = MarginAsset.RiskTier({
-            maxLeverage: 25,
-            maintenanceMarginRatioPpm: 20000,
-            positionValueUpperBound: 5000000
-        });
+        riskTiers[0] =
+            MarginAsset.RiskTier({maxLeverage: 50, maintenanceMarginRatioPpm: 10000, positionValueUpperBound: 1000000});
+        riskTiers[1] =
+            MarginAsset.RiskTier({maxLeverage: 25, maintenanceMarginRatioPpm: 20000, positionValueUpperBound: 5000000});
         riskTiers[2] = MarginAsset.RiskTier({
-            maxLeverage: 10,
-            maintenanceMarginRatioPpm: 50000,
-            positionValueUpperBound: 10000000
+            maxLeverage: 10, maintenanceMarginRatioPpm: 50000, positionValueUpperBound: 10000000
         });
-        
+
         uint256 positionValueAbs = 20000000; // 大于所有upperBound
-        
+
         uint256 riskTierIndex = MarginAsset.findPositionRiskTier(riskTiers, positionValueAbs);
-        
+
         // 应该返回最后一个tier的索引
         assertEq(riskTierIndex, 2);
     }
@@ -1059,26 +830,18 @@ contract MarginAssetTest is Test {
      */
     function testFindPositionRiskTier_Found() public {
         MarginAsset.RiskTier[] memory riskTiers = new MarginAsset.RiskTier[](3);
-        riskTiers[0] = MarginAsset.RiskTier({
-            maxLeverage: 50,
-            maintenanceMarginRatioPpm: 10000,
-            positionValueUpperBound: 1000000
-        });
-        riskTiers[1] = MarginAsset.RiskTier({
-            maxLeverage: 25,
-            maintenanceMarginRatioPpm: 20000,
-            positionValueUpperBound: 5000000
-        });
+        riskTiers[0] =
+            MarginAsset.RiskTier({maxLeverage: 50, maintenanceMarginRatioPpm: 10000, positionValueUpperBound: 1000000});
+        riskTiers[1] =
+            MarginAsset.RiskTier({maxLeverage: 25, maintenanceMarginRatioPpm: 20000, positionValueUpperBound: 5000000});
         riskTiers[2] = MarginAsset.RiskTier({
-            maxLeverage: 10,
-            maintenanceMarginRatioPpm: 50000,
-            positionValueUpperBound: 10000000
+            maxLeverage: 10, maintenanceMarginRatioPpm: 50000, positionValueUpperBound: 10000000
         });
-        
+
         uint256 positionValueAbs = 3000000; // 在第二个tier的范围内
-        
+
         uint256 riskTierIndex = MarginAsset.findPositionRiskTier(riskTiers, positionValueAbs);
-        
+
         // 应该返回第二个tier的索引
         assertEq(riskTierIndex, 1);
     }
@@ -1093,18 +856,13 @@ contract MarginAssetTest is Test {
         uint32 stepSizeScale = 3;
         uint32 tickSizeScale = 3;
         uint32 coinStepSizeScale = 6;
-        
+
         // scaleDiff = 3 + 3 + 6 = 12, targetScale = 6 + 6 = 12
         // scaleDiff == targetScale，不需要调整
         int256 fundingAmount = MarginAsset.calculateFundingAmount(
-            openSize,
-            cacheFundingIndex,
-            fundingIndex,
-            stepSizeScale,
-            tickSizeScale,
-            coinStepSizeScale
+            openSize, cacheFundingIndex, fundingIndex, stepSizeScale, tickSizeScale, coinStepSizeScale
         );
-        
+
         // fundingDiff = 1000000 - 500000 = 500000
         // value = 1000 * 500000 = 500000000
         // 不需要调整，所以 fundingAmount = 500000000
@@ -1121,17 +879,12 @@ contract MarginAssetTest is Test {
         uint32 stepSizeScale = 3;
         uint32 tickSizeScale = 1;
         uint32 coinStepSizeScale = 6;
-        
+
         // openSize < 0, fundingDiff > 0, 所以 isNegative = true
         int256 fundingAmount = MarginAsset.calculateFundingAmount(
-            openSize,
-            cacheFundingIndex,
-            fundingIndex,
-            stepSizeScale,
-            tickSizeScale,
-            coinStepSizeScale
+            openSize, cacheFundingIndex, fundingIndex, stepSizeScale, tickSizeScale, coinStepSizeScale
         );
-        
+
         // 应该是负数
         assertLt(fundingAmount, 0);
     }
@@ -1146,17 +899,12 @@ contract MarginAssetTest is Test {
         uint32 stepSizeScale = 3;
         uint32 tickSizeScale = 1;
         uint32 coinStepSizeScale = 6;
-        
+
         // openSize > 0, fundingDiff < 0, 所以 isNegative = true
         int256 fundingAmount = MarginAsset.calculateFundingAmount(
-            openSize,
-            cacheFundingIndex,
-            fundingIndex,
-            stepSizeScale,
-            tickSizeScale,
-            coinStepSizeScale
+            openSize, cacheFundingIndex, fundingIndex, stepSizeScale, tickSizeScale, coinStepSizeScale
         );
-        
+
         // 应该是负数
         assertLt(fundingAmount, 0);
     }
@@ -1182,31 +930,22 @@ contract MarginAssetTest is Test {
         exchanges[0] = btcExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](1);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
-        fundingIndices[0] = MarginAsset.FundingIndex({
-            exchangeId: 200001,
-            fundingIndex: 0,
-            fundingIndexTime: 0
-        });
+        fundingIndices[0] = MarginAsset.FundingIndex({exchangeId: 200001, fundingIndex: 0, fundingIndexTime: 0});
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 2 // MARGIN_MODE_ISOLATED
-        });
+        tradeSettings[0] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200001,
+                leverage: 20,
+                marginMode: 2 // MARGIN_MODE_ISOLATED
+            });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         // cacheFundingIndex < fundingIndex，会产生负数funding
@@ -1225,20 +964,11 @@ contract MarginAssetTest is Test {
         });
 
         MarginAsset.PerpetualAsset memory perpetualAsset = MarginAsset.PerpetualAsset({
-            subaccountId: 123,
-            collateralCoinId: 1000,
-            crossCollateralAmount: 0,
-            positions: positions
+            subaccountId: 123, collateralCoinId: 1000, crossCollateralAmount: 0, positions: positions
         });
 
-        MarginAsset.Asset memory asset = MarginAsset.newAsset(
-            usdtCoin,
-            exchanges,
-            oraclePrices,
-            fundingIndices,
-            subaccount,
-            perpetualAsset
-        );
+        MarginAsset.Asset memory asset =
+            MarginAsset.newAsset(usdtCoin, exchanges, oraclePrices, fundingIndices, subaccount, perpetualAsset);
 
         // 验证isolated group的collateralAmount被正确计算（应该考虑余数）
         assertEq(asset.isolatedGroups.length, 1);
@@ -1265,31 +995,22 @@ contract MarginAssetTest is Test {
         exchanges[0] = btcExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](1);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
-        fundingIndices[0] = MarginAsset.FundingIndex({
-            exchangeId: 200001,
-            fundingIndex: 0,
-            fundingIndexTime: 0
-        });
+        fundingIndices[0] = MarginAsset.FundingIndex({exchangeId: 200001, fundingIndex: 0, fundingIndexTime: 0});
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 1 // MARGIN_MODE_CROSS
-        });
+        tradeSettings[0] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200001,
+                leverage: 20,
+                marginMode: 1 // MARGIN_MODE_CROSS
+            });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         // cacheFundingIndex == fundingIndex，fundingAmount = 0
@@ -1309,14 +1030,8 @@ contract MarginAssetTest is Test {
             positions: positions
         });
 
-        MarginAsset.Asset memory asset = MarginAsset.newAsset(
-            usdtCoin,
-            exchanges,
-            oraclePrices,
-            fundingIndices,
-            subaccount,
-            perpetualAsset
-        );
+        MarginAsset.Asset memory asset =
+            MarginAsset.newAsset(usdtCoin, exchanges, oraclePrices, fundingIndices, subaccount, perpetualAsset);
 
         // crossFundingAmount = 0，所以collateralAmount不应该改变
         assertEq(asset.crossGroup.collateralAmount, 1000000000);
@@ -1330,31 +1045,22 @@ contract MarginAssetTest is Test {
         exchanges[0] = btcExchange;
 
         MarginAsset.OraclePrice[] memory oraclePrices = new MarginAsset.OraclePrice[](1);
-        oraclePrices[0] = MarginAsset.OraclePrice({
-            exchangeId: 200001,
-            oraclePrice: oraclePriceMap[200001],
-            oracleTime: 0
-        });
+        oraclePrices[0] =
+            MarginAsset.OraclePrice({exchangeId: 200001, oraclePrice: oraclePriceMap[200001], oracleTime: 0});
 
         MarginAsset.FundingIndex[] memory fundingIndices = new MarginAsset.FundingIndex[](1);
-        fundingIndices[0] = MarginAsset.FundingIndex({
-            exchangeId: 200001,
-            fundingIndex: 0,
-            fundingIndexTime: 0
-        });
+        fundingIndices[0] = MarginAsset.FundingIndex({exchangeId: 200001, fundingIndex: 0, fundingIndexTime: 0});
 
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](1);
-        tradeSettings[0] = MarginAsset.TradeSetting({
-            exchangeId: 200001,
-            leverage: 20,
-            marginMode: 1 // MARGIN_MODE_CROSS
-        });
+        tradeSettings[0] =
+            MarginAsset.TradeSetting({
+                exchangeId: 200001,
+                leverage: 20,
+                marginMode: 1 // MARGIN_MODE_CROSS
+            });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123,
-            chainAddress: bytes32(0),
-            clientAccountId: "test",
-            tradeSettings: tradeSettings
+            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
         });
 
         // cacheFundingIndex < fundingIndex，会产生负数funding
@@ -1376,14 +1082,8 @@ contract MarginAssetTest is Test {
             positions: positions
         });
 
-        MarginAsset.Asset memory asset = MarginAsset.newAsset(
-            usdtCoin,
-            exchanges,
-            oraclePrices,
-            fundingIndices,
-            subaccount,
-            perpetualAsset
-        );
+        MarginAsset.Asset memory asset =
+            MarginAsset.newAsset(usdtCoin, exchanges, oraclePrices, fundingIndices, subaccount, perpetualAsset);
 
         // fundingAmount计算：
         // fundingDiff = -1000001 - 0 = -1000001

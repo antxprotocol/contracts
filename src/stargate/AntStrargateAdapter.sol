@@ -1,17 +1,24 @@
-// SPDX-License-Identifier: MIT 
-pragma solidity ^0.8.28; 
- 
-import { IStargate, StargateType, Ticket } from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
-import { MessagingFee, MessagingReceipt, OFTReceipt, SendParam, OFTLimit, OFTFeeDetail } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
 
-contract AntStrargateAdapter is IStargate{ 
+import {IStargate, StargateType, Ticket} from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
+import {
+    MessagingFee,
+    MessagingReceipt,
+    OFTReceipt,
+    SendParam,
+    OFTLimit,
+    OFTFeeDetail
+} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
+
+contract AntStrargateAdapter is IStargate {
     IStargate public immutable stargate;
 
-    constructor( 
-        address _stargate // local endpoint address 
+    constructor(
+        address _stargate // local endpoint address
     ) {
         stargate = IStargate(_stargate);
-    } 
+    }
 
     function approvalRequired() external view returns (bool) {
         return stargate.approvalRequired();
@@ -21,32 +28,35 @@ contract AntStrargateAdapter is IStargate{
         return stargate.oftVersion();
     }
 
-    function quoteOFT(
-        SendParam calldata _sendParam
-    ) external view returns (OFTLimit memory limit, OFTFeeDetail[] memory oftFeeDetails, OFTReceipt memory receipt) {
+    function quoteOFT(SendParam calldata _sendParam)
+        external
+        view
+        returns (OFTLimit memory limit, OFTFeeDetail[] memory oftFeeDetails, OFTReceipt memory receipt)
+    {
         return stargate.quoteOFT(_sendParam);
     }
 
-    function quoteSend(
-        SendParam calldata _sendParam, 
-        bool _payInLzToken
-    ) external view returns (MessagingFee memory fee) {
+    function quoteSend(SendParam calldata _sendParam, bool _payInLzToken)
+        external
+        view
+        returns (MessagingFee memory fee)
+    {
         return stargate.quoteSend(_sendParam, _payInLzToken);
     }
 
-    function send(
-        SendParam calldata _sendParam,
-        MessagingFee calldata _fee,
-        address _refundAddress
-    ) external payable returns (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt) {
+    function send(SendParam calldata _sendParam, MessagingFee calldata _fee, address _refundAddress)
+        external
+        payable
+        returns (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt)
+    {
         return stargate.send{value: msg.value}(_sendParam, _fee, _refundAddress);
     }
 
-    function sendToken(
-        SendParam calldata _sendParam,
-        MessagingFee calldata _fee,
-        address _refundAddress
-    ) external payable returns (MessagingReceipt memory msgReceipt, OFTReceipt memory oftReceipt, Ticket memory ticket) {
+    function sendToken(SendParam calldata _sendParam, MessagingFee calldata _fee, address _refundAddress)
+        external
+        payable
+        returns (MessagingReceipt memory msgReceipt, OFTReceipt memory oftReceipt, Ticket memory ticket)
+    {
         return stargate.sendToken{value: msg.value}(_sendParam, _fee, _refundAddress);
     }
 
@@ -62,11 +72,11 @@ contract AntStrargateAdapter is IStargate{
         return stargate.token();
     }
 
-    function prepareTakeTaxi(
-        uint32 _dstEid,
-        uint256 _amount,
-        address _receiver
-    ) external view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+    function prepareTakeTaxi(uint32 _dstEid, uint256 _amount, address _receiver)
+        external
+        view
+        returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee)
+    {
         sendParam = SendParam({
             dstEid: _dstEid,
             to: addressToBytes32(_receiver),
@@ -77,7 +87,7 @@ contract AntStrargateAdapter is IStargate{
             oftCmd: new bytes(0)
         });
 
-        (, , OFTReceipt memory receipt) = stargate.quoteOFT(sendParam);
+        (,, OFTReceipt memory receipt) = stargate.quoteOFT(sendParam);
         sendParam.minAmountLD = receipt.amountReceivedLD;
 
         messagingFee = stargate.quoteSend(sendParam, false);
@@ -88,11 +98,11 @@ contract AntStrargateAdapter is IStargate{
         }
     }
 
-    function prepareRideBus(
-        uint32 _dstEid,
-        uint256 _amount,
-        address _receiver
-    ) external view returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) {
+    function prepareRideBus(uint32 _dstEid, uint256 _amount, address _receiver)
+        external
+        view
+        returns (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee)
+    {
         sendParam = SendParam({
             dstEid: _dstEid,
             to: addressToBytes32(_receiver),
@@ -103,7 +113,7 @@ contract AntStrargateAdapter is IStargate{
             oftCmd: new bytes(1)
         });
 
-        (, , OFTReceipt memory receipt) = stargate.quoteOFT(sendParam);
+        (,, OFTReceipt memory receipt) = stargate.quoteOFT(sendParam);
         sendParam.minAmountLD = receipt.amountReceivedLD;
 
         messagingFee = stargate.quoteSend(sendParam, false);

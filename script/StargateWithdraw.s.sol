@@ -10,16 +10,15 @@ import {StargateWithdraw} from "../src/stargate/StargateWithdraw.sol";
  */
 contract StargateWithdrawScript is Script {
     function setUp() public {}
-    
+
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        
+
         console.log("Deploying StargateWithdraw with account:", deployer);
         console.log("Account balance:", deployer.balance);
-        
+
         vm.startBroadcast(deployerPrivateKey);
-        
 
         string memory currentEnv = vm.envString("CURRENT_ENV");
         address usdcAddress;
@@ -35,22 +34,18 @@ contract StargateWithdrawScript is Script {
             stargatePoolAddress = vm.envAddress("MAINNET_STARGATE_POOL_USDC_ADDRESS");
         }
         console.log("USDC address:", usdcAddress);
-        
+
         // Stargate Pool address - Update based on your network
         console.log("Stargate Pool address:", stargatePoolAddress);
-        
+
         // Deploy StargateWithdraw contract
-        StargateWithdraw stargateWithdraw = new StargateWithdraw(
-            usdcAddress,
-            stargatePoolAddress,
-            deployer
-        );
-        
+        StargateWithdraw stargateWithdraw = new StargateWithdraw(usdcAddress, stargatePoolAddress, deployer);
+
         console.log("StargateWithdraw deployed at:", address(stargateWithdraw));
         console.log("USDC token:", address(stargateWithdraw.USDC()));
         console.log("Stargate Pool:", address(stargateWithdraw.stargate()));
         console.log("Owner:", stargateWithdraw.owner());
-        
+
         vm.stopBroadcast();
     }
 }

@@ -25,7 +25,7 @@ contract AssetScript is Script {
         address withdrawOperator;
         address ed25519Oracle;
         address marginAssetCalculator;
-        address stargateWithdraw ;
+        address stargateWithdraw;
 
         if (keccak256(bytes(currentEnv)) == keccak256(bytes("devnet"))) {
             usdcAddress = vm.envAddress("DEVNET_USDC_ADDRESS"); // devnet
@@ -61,11 +61,7 @@ contract AssetScript is Script {
         console.log("Asset implementation deployed at:", address(implementation));
 
         // Encode initialize function call
-        bytes memory initData = abi.encodeWithSelector(
-            Asset.initialize.selector,
-            usdcAddress,
-            defaultCollateralCoinId
-        );
+        bytes memory initData = abi.encodeWithSelector(Asset.initialize.selector, usdcAddress, defaultCollateralCoinId);
 
         // Deploy proxy with implementation and initialize data
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);

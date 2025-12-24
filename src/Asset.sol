@@ -3,7 +3,9 @@ pragma solidity ^0.8.28;
 
 import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ReentrancyGuardUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
+import {
+    ReentrancyGuardUpgradeable
+} from "openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -23,8 +25,8 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         MarginAsset.Exchange[] exchangeUpdates;
         MarginAsset.FundingIndex[] fundingIndexUpdates;
         MarginAsset.OraclePrice[] oraclePriceUpdates;
-        MarginAsset.Subaccount []subaccountUpdates;
-        MarginAsset.PerpetualAsset []perpetualAssetUpdates;
+        MarginAsset.Subaccount[] subaccountUpdates;
+        MarginAsset.PerpetualAsset[] perpetualAssetUpdates;
     }
 
     IERC20 public USDC;
@@ -39,7 +41,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days;
     mapping(uint256 => bool) public usedClientOrderIds; // clientOrderId => used
     uint64 public defaultCollateralCoinId;
-    
+
     // Stargate cross-chain withdraw adapter
     StargateWithdraw public stargateWithdraw;
 
@@ -68,21 +70,21 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         _;
     }
 
-    function _validAmount(uint256 amount) internal pure{
+    function _validAmount(uint256 amount) internal pure {
         if (amount == 0) revert ZeroAmountNotAllowed();
     }
 
     modifier validTime(uint256 time) {
-       _validTime(time);
+        _validTime(time);
         _;
     }
 
-    function _validTime(uint256 time) internal pure{
+    function _validTime(uint256 time) internal pure {
         if (time == 0) revert InvalidTime(time);
     }
 
     modifier onlySettlementOperator() {
-       _onlySettlementOperator();
+        _onlySettlementOperator();
         _;
     }
 
@@ -90,12 +92,12 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         if (msg.sender != settlementOperator) revert OnlySettlementOperator();
     }
 
-   modifier onlyWithdrawOperator() {
+    modifier onlyWithdrawOperator() {
         _onlyWithdrawOperator();
         _;
     }
-            
-    function _onlyWithdrawOperator() internal view{
+
+    function _onlyWithdrawOperator() internal view {
         if (msg.sender != withdrawOperator) revert OnlyWithdrawOperator();
     }
 
@@ -111,19 +113,34 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
      */
     receive() external payable {}
 
-    function initialize(address _USDC,uint64 _defaultCollateralCoinId) external initializer validAddress(_USDC) validAmount(_defaultCollateralCoinId) {
+    function initialize(address _USDC, uint64 _defaultCollateralCoinId)
+        external
+        initializer
+        validAddress(_USDC)
+        validAmount(_defaultCollateralCoinId)
+    {
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
         USDC = IERC20(_USDC);
-        
+
         defaultCollateralCoinId = _defaultCollateralCoinId;
         emit DefaultCollateralCoinIdUpdated(_defaultCollateralCoinId);
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
-    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds,bytes32 []memory recipients,uint256 []memory expireTimes,uint256 []memory amounts,uint256 []memory fees,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
+    function batchWithdraw(
+        uint256[] memory clientOrderIds,
+        uint64[] memory subaccountIds,
+        bytes32[] memory recipients,
+        uint256[] memory expireTimes,
+        uint256[] memory amounts,
+        uint256[] memory fees,
+        bytes[] memory signatures,
+        uint64[] memory dstChainIds,
+        SignatureType signatureType
+    ) external nonReentrant onlyWithdrawOperator {
         if (clientOrderIds.length != subaccountIds.length) revert LengthNotMatch();
         if (clientOrderIds.length != recipients.length) revert LengthNotMatch();
         if (clientOrderIds.length != expireTimes.length) revert LengthNotMatch();
@@ -134,20 +151,49 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
         for (uint64 i = 0; i < subaccountIds.length; i++) {
             bytes32 user = subaccounts[subaccountIds[i]].chainAddress;
-            _userWithdraw(clientOrderIds[i],user,recipients[i],expireTimes[i],dstChainIds[i],amounts[i],fees[i],signatures[i],false,signatureType);
+            _userWithdraw(
+                clientOrderIds[i],
+                user,
+                recipients[i],
+                expireTimes[i],
+                dstChainIds[i],
+                amounts[i],
+                fees[i],
+                signatures[i],
+                false,
+                signatureType
+            );
         }
     }
 
-    function forceWithdraw(uint64 subaccountId,uint256 amount,uint256 expireTime,SignatureType signatureType,bytes memory signatures,uint64 dstChainId) external nonReentrant validAmount(amount) {
+    function forceWithdraw(
+        uint64 subaccountId,
+        uint256 amount,
+        uint256 expireTime,
+        SignatureType signatureType,
+        bytes memory signatures,
+        uint64 dstChainId
+    ) external nonReentrant validAmount(amount) {
         // check time lock
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
         // force withdraw
         bytes32 user = subaccounts[subaccountId].chainAddress;
-        _userWithdraw(0, user, user, expireTime, dstChainId, amount,0, signatures, true, signatureType);
+        _userWithdraw(0, user, user, expireTime, dstChainId, amount, 0, signatures, true, signatureType);
         emit ForceWithdraw(user, user, amount, dstChainId);
     }
 
-    function _userWithdraw(uint256 clientOrderId,bytes32 user,bytes32 recipient,uint256 expireTime,uint64 dstChainId, uint256 amount,uint256 fee,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
+    function _userWithdraw(
+        uint256 clientOrderId,
+        bytes32 user,
+        bytes32 recipient,
+        uint256 expireTime,
+        uint64 dstChainId,
+        uint256 amount,
+        uint256 fee,
+        bytes memory signatures,
+        bool isForce,
+        SignatureType signatureType
+    ) internal validAmount(amount) {
         if (!isForce) {
             // check if the clientOrderId is already used
             if (usedClientOrderIds[clientOrderId]) revert ClientOrderIdAlreadyUsed();
@@ -157,10 +203,13 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             if (expireTime < block.timestamp) revert ExpiredTransaction();
 
             // check user signature
-            bytes32 operationHash = _hashUserWithdraw(clientOrderId, user, recipient, amount,fee, expireTime, dstChainId);
+            bytes32 operationHash =
+                _hashUserWithdraw(clientOrderId, user, recipient, amount, fee, expireTime, dstChainId);
             operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
             if (signatureType == SignatureType.ECDSA) {
-                if (user != bytes32(uint256(uint160(ECDSA.recover(operationHash, signatures))))) revert InvalidUserSignature();
+                if (user != bytes32(uint256(uint160(ECDSA.recover(operationHash, signatures))))) {
+                    revert InvalidUserSignature();
+                }
             } else {
                 if (!ed25519Oracle.isVerified(user, operationHash, signatures)) revert InvalidUserSignature();
             }
@@ -172,36 +221,39 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
         // check if the dstChainId is native chain
         if (dstChainId == block.chainid) {
-           // Store balance before transfer
+            // Store balance before transfer
             uint256 preBalance = USDC.balanceOf(address(this));
-            
+
             // Execute transfer
             IERC20(USDC).safeTransfer(address(uint160(uint256(recipient))), amount);
-            
-            // Verify transfer happened correctly 
+
+            // Verify transfer happened correctly
             uint256 postBalance = USDC.balanceOf(address(this));
             assert(preBalance - postBalance == amount);
-             // emit event
-            emit UserWithdraw(clientOrderId, user,recipient, amount,dstChainId);
+            // emit event
+            emit UserWithdraw(clientOrderId, user, recipient, amount, dstChainId);
         } else {
             // cross-chain withdraw
             // Approve StargateWithdraw to spend USDC
             USDC.forceApprove(address(stargateWithdraw), amount);
 
             // Prepare send parameters
-            (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = stargateWithdraw.prepareTakeTaxi(dstChainId, amount, recipient);
-         
+            (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
+                stargateWithdraw.prepareTakeTaxi(dstChainId, amount, recipient);
+
             // Check if contract has sufficient ETH balance for cross-chain fees
             if (address(this).balance < valueToSend) {
                 revert InsufficientEthBalance(valueToSend, address(this).balance);
             }
-         
+
             // Execute cross-chain withdraw
-            stargateWithdraw.crossChainWithdraw{value: valueToSend}(clientOrderId, user, amount, dstChainId, recipient, address(this), sendParam, messagingFee);
-            
+            stargateWithdraw.crossChainWithdraw{
+                value: valueToSend
+            }(clientOrderId, user, amount, dstChainId, recipient, address(this), sendParam, messagingFee);
+
             // Reset approval
             USDC.forceApprove(address(stargateWithdraw), 0);
-            
+
             emit CrossChainWithdraw(clientOrderId, user, recipient, amount, dstChainId);
         }
     }
@@ -216,7 +268,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         // Directly find subaccountId through reverse mapping
         uint64 subaccountId = addressToSubaccountId[user];
         if (subaccountId == 0) return 0;
-        
+
         MarginAsset.Subaccount memory subaccount = subaccounts[subaccountId];
         if (subaccount.id == 0) return 0;
 
@@ -224,7 +276,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         MarginAsset.PerpetualAsset memory perpetualAsset;
         uint64 targetCollateralCoinId = collateralCoinId;
         bool foundPerpetualAsset = false;
-        
+
         if (collateralCoinId == 0) {
             // Auto-find: iterate through all possible collateralCoinIds
             for (uint256 i = 0; i < coinIds.length; i++) {
@@ -245,7 +297,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
                 foundPerpetualAsset = true;
             }
         }
-        
+
         if (!foundPerpetualAsset) return 0;
         if (perpetualAsset.crossCollateralAmount <= 0) return 0;
         if (perpetualAsset.positions.length == 0) return int256(int64(perpetualAsset.crossCollateralAmount));
@@ -259,7 +311,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         MarginAsset.Exchange[] memory exchangeArray = new MarginAsset.Exchange[](tradeSettingsLength);
         MarginAsset.OraclePrice[] memory oraclePriceArray = new MarginAsset.OraclePrice[](tradeSettingsLength);
         MarginAsset.FundingIndex[] memory fundingIndexArray = new MarginAsset.FundingIndex[](tradeSettingsLength);
-        
+
         // Single loop to populate all three arrays (optimized from 3 separate loops)
         for (uint256 i = 0; i < tradeSettingsLength; i++) {
             uint64 exchangeId = subaccount.tradeSettings[i].exchangeId;
@@ -276,15 +328,9 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             tradeSettings: subaccount.tradeSettings
         });
 
-
         MarginAssetCalculator calculator = MarginAssetCalculator(marginAsset);
         return calculator.getCrossTransferOutAvailableAmount(
-            collateralCoin,
-            exchangeArray,
-            oraclePriceArray,
-            fundingIndexArray,
-            subaccountForCalc,
-            perpetualAsset
+            collateralCoin, exchangeArray, oraclePriceArray, fundingIndexArray, subaccountForCalc, perpetualAsset
         );
     }
 
@@ -334,9 +380,9 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
     function emergencyWithdraw(
         address token,
-        address to, 
+        address to,
         uint256 amount,
-        uint256 expireTime, 
+        uint256 expireTime,
         address[] memory allSigners,
         bytes[] memory signatures
     ) external nonReentrant validAddress(to) validAmount(amount) {
@@ -361,10 +407,10 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             if (signer != allSigners[index]) revert InvalidSigner();
             if (!isAllowedSigner(signer)) revert NotAllowedSigner();
         }
-        
+
         // Store balance before transfer
         uint256 preBalance = IERC20(token).balanceOf(address(this));
-        
+
         // Execute transfer
         IERC20(token).safeTransfer(to, amount);
 
@@ -376,9 +422,9 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     }
 
     function emergencyWithdrawETH(
-        address to, 
+        address to,
         uint256 amount,
-        uint256 expireTime, 
+        uint256 expireTime,
         address[] memory allSigners,
         bytes[] memory signatures
     ) external nonReentrant validAddress(to) validAmount(amount) {
@@ -402,12 +448,12 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             if (signer != allSigners[index]) revert InvalidSigner();
             if (!isAllowedSigner(signer)) revert NotAllowedSigner();
         }
-        
+
         // Store balance before transfer
         uint256 preBalance = address(this).balance;
-        
+
         // Execute transfer
-        (bool success, ) = to.call{value: amount}("");
+        (bool success,) = to.call{value: amount}("");
         if (!success) revert TransferFailed();
 
         // Verify transfer happened correctly
@@ -441,9 +487,13 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         if (marginAsset == address(0)) revert ZeroAddressNotAllowed();
 
         if (batchUpdateData.coinUpdates.length > 0) {
-            for (uint256 i = 0; i < batchUpdateData.coinUpdates.length; i++) {  
+            for (uint256 i = 0; i < batchUpdateData.coinUpdates.length; i++) {
                 coins[batchUpdateData.coinUpdates[i].id] = batchUpdateData.coinUpdates[i];
-                emit CoinInfoUpdated(batchUpdateData.coinUpdates[i].id, batchUpdateData.coinUpdates[i].symbol, batchUpdateData.coinUpdates[i].stepSizeScale);
+                emit CoinInfoUpdated(
+                    batchUpdateData.coinUpdates[i].id,
+                    batchUpdateData.coinUpdates[i].symbol,
+                    batchUpdateData.coinUpdates[i].stepSizeScale
+                );
 
                 // Ensure coin id exists in coinIds array
                 bool existCoin = false;
@@ -459,34 +509,61 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         if (batchUpdateData.exchangeUpdates.length > 0) {
             for (uint256 i = 0; i < batchUpdateData.exchangeUpdates.length; i++) {
                 exchanges[batchUpdateData.exchangeUpdates[i].exchangeId] = batchUpdateData.exchangeUpdates[i];
-                emit ExchangeInfoUpdated(batchUpdateData.exchangeUpdates[i].exchangeId, batchUpdateData.exchangeUpdates[i].stepSizeScale, batchUpdateData.exchangeUpdates[i].tickSizeScale, 0, 0, batchUpdateData.exchangeUpdates[i].riskTiers);
+                emit ExchangeInfoUpdated(
+                    batchUpdateData.exchangeUpdates[i].exchangeId,
+                    batchUpdateData.exchangeUpdates[i].stepSizeScale,
+                    batchUpdateData.exchangeUpdates[i].tickSizeScale,
+                    0,
+                    0,
+                    batchUpdateData.exchangeUpdates[i].riskTiers
+                );
             }
         }
         if (batchUpdateData.fundingIndexUpdates.length > 0) {
             for (uint256 i = 0; i < batchUpdateData.fundingIndexUpdates.length; i++) {
-                fundingIndexes[batchUpdateData.fundingIndexUpdates[i].exchangeId] = batchUpdateData.fundingIndexUpdates[i];
-                emit FundingIndexUpdated(batchUpdateData.fundingIndexUpdates[i].exchangeId, batchUpdateData.fundingIndexUpdates[i].fundingIndex);
+                fundingIndexes[batchUpdateData.fundingIndexUpdates[i].exchangeId] =
+                    batchUpdateData.fundingIndexUpdates[i];
+                emit FundingIndexUpdated(
+                    batchUpdateData.fundingIndexUpdates[i].exchangeId,
+                    batchUpdateData.fundingIndexUpdates[i].fundingIndex
+                );
             }
         }
         if (batchUpdateData.oraclePriceUpdates.length > 0) {
             for (uint256 i = 0; i < batchUpdateData.oraclePriceUpdates.length; i++) {
                 oraclePrices[batchUpdateData.oraclePriceUpdates[i].exchangeId] = batchUpdateData.oraclePriceUpdates[i];
-                emit OraclePriceUpdated(batchUpdateData.oraclePriceUpdates[i].exchangeId, batchUpdateData.oraclePriceUpdates[i].oraclePrice, batchUpdateData.oraclePriceUpdates[i].oracleTime);
+                emit OraclePriceUpdated(
+                    batchUpdateData.oraclePriceUpdates[i].exchangeId,
+                    batchUpdateData.oraclePriceUpdates[i].oraclePrice,
+                    batchUpdateData.oraclePriceUpdates[i].oracleTime
+                );
             }
         }
-        
+
         if (batchUpdateData.subaccountUpdates.length > 0) {
             for (uint256 i = 0; i < batchUpdateData.subaccountUpdates.length; i++) {
-                addressToSubaccountId[batchUpdateData.subaccountUpdates[i].chainAddress] = batchUpdateData.subaccountUpdates[i].id;
+                addressToSubaccountId[batchUpdateData.subaccountUpdates[i].chainAddress] =
+                    batchUpdateData.subaccountUpdates[i].id;
                 subaccounts[batchUpdateData.subaccountUpdates[i].id] = batchUpdateData.subaccountUpdates[i];
-                emit SubaccountUpdated(batchUpdateData.subaccountUpdates[i].id, batchUpdateData.subaccountUpdates[i].chainAddress, batchUpdateData.subaccountUpdates[i].clientAccountId, batchUpdateData.subaccountUpdates[i].tradeSettings);
+                emit SubaccountUpdated(
+                    batchUpdateData.subaccountUpdates[i].id,
+                    batchUpdateData.subaccountUpdates[i].chainAddress,
+                    batchUpdateData.subaccountUpdates[i].clientAccountId,
+                    batchUpdateData.subaccountUpdates[i].tradeSettings
+                );
             }
         }
         if (batchUpdateData.perpetualAssetUpdates.length > 0) {
             for (uint256 i = 0; i < batchUpdateData.perpetualAssetUpdates.length; i++) {
                 uint64 collateralCoinId = batchUpdateData.perpetualAssetUpdates[i].collateralCoinId;
-                perpetualAssets[batchUpdateData.perpetualAssetUpdates[i].subaccountId][collateralCoinId] = batchUpdateData.perpetualAssetUpdates[i];
-                emit PerpetualAssetUpdated(batchUpdateData.perpetualAssetUpdates[i].subaccountId, collateralCoinId, batchUpdateData.perpetualAssetUpdates[i].crossCollateralAmount, batchUpdateData.perpetualAssetUpdates[i].positions);
+                perpetualAssets[batchUpdateData.perpetualAssetUpdates[i].subaccountId][collateralCoinId] =
+                    batchUpdateData.perpetualAssetUpdates[i];
+                emit PerpetualAssetUpdated(
+                    batchUpdateData.perpetualAssetUpdates[i].subaccountId,
+                    collateralCoinId,
+                    batchUpdateData.perpetualAssetUpdates[i].crossCollateralAmount,
+                    batchUpdateData.perpetualAssetUpdates[i].positions
+                );
             }
         }
 
@@ -498,7 +575,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     }
 
     function isAllowedSigner(address signer) public view returns (bool) {
-        for (uint i = 0; i < signers.length; i++) {
+        for (uint256 i = 0; i < signers.length; i++) {
             if (signers[i] == signer) {
                 return true;
             }
@@ -521,7 +598,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         emit Ed25519OracleUpdated(_ed25519Oracle);
     }
 
-    function setSigners(address[] memory _signers) external onlyOwner  {
+    function setSigners(address[] memory _signers) external onlyOwner {
         if (_signers.length == 0) revert ZeroAddressNotAllowed();
         for (uint256 i = 0; i < _signers.length; i++) {
             if (_signers[i] == address(0)) revert ZeroAddressNotAllowed();
@@ -561,55 +638,40 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         uint256 expireTime,
         uint64 dstChainId
     ) internal view returns (bytes32) {
-        return keccak256(abi.encodePacked(
-            "USER_WITHDRAW",
-            clientOrderId,
-            user,
-            recipient,
-            amount,
-            fee,
-            expireTime,
-            dstChainId,
-            block.chainid,
-            address(this)
-        ));
+        return keccak256(
+            abi.encodePacked(
+                "USER_WITHDRAW",
+                clientOrderId,
+                user,
+                recipient,
+                amount,
+                fee,
+                expireTime,
+                dstChainId,
+                block.chainid,
+                address(this)
+            )
+        );
     }
 
     /**
      * @dev Optimized hash function for EMERGENCY_WITHDRAW operation using inline assembly
      * Equivalent to: keccak256(abi.encodePacked("EMERGENCY_WITHDRAW", token, to, amount, expireTime, address(this), block.chainid))
      */
-    function _hashEmergencyWithdraw(
-        address token,
-        address to,
-        uint256 amount,
-        uint256 expireTime
-    ) internal view returns (bytes32) {
-        return keccak256(abi.encodePacked(
-            "EMERGENCY_WITHDRAW",
-            token,
-            to,
-            amount,
-            expireTime,
-            address(this),
-            block.chainid
-        ));
+    function _hashEmergencyWithdraw(address token, address to, uint256 amount, uint256 expireTime)
+        internal
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encodePacked("EMERGENCY_WITHDRAW", token, to, amount, expireTime, address(this), block.chainid)
+        );
     }
 
-    function _hashEmergencyWithdrawETH(
-        address to,
-        uint256 amount,
-        uint256 expireTime
-    ) internal view returns (bytes32) {
-        return keccak256(abi.encodePacked(
-            "EMERGENCY_WITHDRAW_ETH",
-            to,
-            amount,
-            expireTime,
-            address(this),
-            block.chainid
-        ));
+    function _hashEmergencyWithdrawETH(address to, uint256 amount, uint256 expireTime) internal view returns (bytes32) {
+        return
+            keccak256(abi.encodePacked("EMERGENCY_WITHDRAW_ETH", to, amount, expireTime, address(this), block.chainid));
     }
-    
+
     uint256[50] private __gap; // allow for future upgrades
 }

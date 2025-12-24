@@ -11,10 +11,10 @@ contract AssetSetterScript is Script {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(privateKey);
 
-         // Get proxy address from environment variable
+        // Get proxy address from environment variable
         address proxyAddress = vm.envAddress("ASSET_PROXY_ADDRESS");
         console.log("Asset proxy address:", proxyAddress);
-        Asset asset  = Asset(payable(proxyAddress));
+        Asset asset = Asset(payable(proxyAddress));
 
         // address settlementOperator = asset.settlementOperator();
         // console.log("settlement operator address at:", address(settlementOperator));
@@ -38,7 +38,7 @@ contract AssetSetterScript is Script {
         // settlementOperator = asset.settlementOperator();
         // console.log("settlement operator address at:", address(settlementOperator));
 
-        // 
+        //
         // address marginAsset = 0xC6B7926Ad8d58b95C23cAE9E92854532ff775678;
         // console.log("Margin asset address at:", address(marginAsset));
         // asset.setMarginAsset(marginAsset);
