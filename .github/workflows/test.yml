@@ -7,6 +7,7 @@ on:
 
 env:
   FOUNDRY_PROFILE: ci
+  FOUNDRY_DISABLE_NIGHTLY_WARNING: 1
 
 jobs:
   check:
@@ -44,9 +45,19 @@ jobs:
         run: |
           forge --version
 
+      - name: Verify project structure
+        run: |
+          echo "Checking project structure..."
+          ls -la src/ test/ script/ || true
+          echo "Foundry config:"
+          cat foundry.toml || true
+
       - name: Run Forge fmt
         run: |
-          forge fmt --check || (echo "Formatting check failed. Run 'forge fmt' locally to fix." && exit 1)
+          set -e
+          echo "Checking code formatting..."
+          forge fmt --check
+          echo "Formatting check passed!"
         id: fmt
 
       - name: Run Forge build
