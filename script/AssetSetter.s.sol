@@ -11,10 +11,10 @@ contract AssetSetterScript is Script {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(privateKey);
 
-        address assetDeployedAddress = 0x4ee398227391f1e7ddfd6D73056e7532dDe0e29a;
-        console.log("Asset address at:", address(assetDeployedAddress));
-
-        Asset asset  = Asset(payable(assetDeployedAddress));
+         // Get proxy address from environment variable
+        address proxyAddress = vm.envAddress("ASSET_PROXY_ADDRESS");
+        console.log("Asset proxy address:", proxyAddress);
+        Asset asset  = Asset(payable(proxyAddress));
 
         // address settlementOperator = asset.settlementOperator();
         // console.log("settlement operator address at:", address(settlementOperator));
@@ -43,9 +43,17 @@ contract AssetSetterScript is Script {
         // console.log("Margin asset address at:", address(marginAsset));
         // asset.setMarginAsset(marginAsset);
 
-        address stargateWithdraw = 0x0000000000000000000000000000000000000000;
-        console.log("Stargate withdraw address at:", address(stargateWithdraw));
-        asset.setStargateWithdraw(stargateWithdraw);
+        string memory currentEnv = vm.envString("CURRENT_ENV");
+        address stargateWithdrawAddress;
+        if (keccak256(bytes(currentEnv)) == keccak256(bytes("devnet"))) {
+            stargateWithdrawAddress = vm.envAddress("DEVNET_STARGATE_WITHDRAW_ADDRESS");
+        } else if (keccak256(bytes(currentEnv)) == keccak256(bytes("testnet"))) {
+            stargateWithdrawAddress = vm.envAddress("TESTNET_STARGATE_WITHDRAW_ADDRESS");
+        } else {
+            stargateWithdrawAddress = vm.envAddress("MAINNET_STARGATE_WITHDRAW_ADDRESS");
+        }
+        console.log("Stargate withdraw address at:", address(stargateWithdrawAddress));
+        asset.setStargateWithdraw(payable(stargateWithdrawAddress));
 
         vm.stopBroadcast();
     }

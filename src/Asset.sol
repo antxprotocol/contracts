@@ -123,17 +123,18 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
-    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds,bytes32 []memory recipients,uint256 []memory expireTimes,uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
+    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds,bytes32 []memory recipients,uint256 []memory expireTimes,uint256 []memory amounts,uint256 []memory fees,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external nonReentrant onlyWithdrawOperator {
         if (clientOrderIds.length != subaccountIds.length) revert LengthNotMatch();
         if (clientOrderIds.length != recipients.length) revert LengthNotMatch();
         if (clientOrderIds.length != expireTimes.length) revert LengthNotMatch();
         if (clientOrderIds.length != amounts.length) revert LengthNotMatch();
+        if (clientOrderIds.length != fees.length) revert LengthNotMatch();
         if (clientOrderIds.length != signatures.length) revert LengthNotMatch();
         if (clientOrderIds.length != dstChainIds.length) revert LengthNotMatch();
 
         for (uint64 i = 0; i < subaccountIds.length; i++) {
             bytes32 user = subaccounts[subaccountIds[i]].chainAddress;
-            _userWithdraw(clientOrderIds[i],user,recipients[i],expireTimes[i],dstChainIds[i],amounts[i],signatures[i],false,signatureType);
+            _userWithdraw(clientOrderIds[i],user,recipients[i],expireTimes[i],dstChainIds[i],amounts[i],fees[i],signatures[i],false,signatureType);
         }
     }
 
@@ -142,11 +143,11 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
         // force withdraw
         bytes32 user = subaccounts[subaccountId].chainAddress;
-        _userWithdraw(0, user, user, expireTime, dstChainId, amount, signatures, true, signatureType);
+        _userWithdraw(0, user, user, expireTime, dstChainId, amount,0, signatures, true, signatureType);
         emit ForceWithdraw(user, user, amount, dstChainId);
     }
 
-    function _userWithdraw(uint256 clientOrderId,bytes32 user,bytes32 recipient,uint256 expireTime,uint64 dstChainId, uint256 amount,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
+    function _userWithdraw(uint256 clientOrderId,bytes32 user,bytes32 recipient,uint256 expireTime,uint64 dstChainId, uint256 amount,uint256 fee,bytes memory signatures,bool isForce,SignatureType signatureType) internal validAmount(amount) {
         if (!isForce) {
             // check if the clientOrderId is already used
             if (usedClientOrderIds[clientOrderId]) revert ClientOrderIdAlreadyUsed();
@@ -156,7 +157,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             if (expireTime < block.timestamp) revert ExpiredTransaction();
 
             // check user signature
-            bytes32 operationHash = _hashUserWithdraw(clientOrderId, user, recipient, amount, expireTime, dstChainId);
+            bytes32 operationHash = _hashUserWithdraw(clientOrderId, user, recipient, amount,fee, expireTime, dstChainId);
             operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
             if (signatureType == SignatureType.ECDSA) {
                 if (user != bytes32(uint256(uint160(ECDSA.recover(operationHash, signatures))))) revert InvalidUserSignature();
@@ -188,7 +189,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             USDC.forceApprove(address(stargateWithdraw), amount);
 
             // Prepare send parameters
-            (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = stargateWithdraw.prepareRideBus(dstChainId, amount, recipient);
+            (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) = stargateWithdraw.prepareTakeTaxi(dstChainId, amount, recipient);
          
             // Check if contract has sufficient ETH balance for cross-chain fees
             if (address(this).balance < valueToSend) {
@@ -556,6 +557,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         bytes32 user,
         bytes32 recipient,
         uint256 amount,
+        uint256 fee,
         uint256 expireTime,
         uint64 dstChainId
     ) internal view returns (bytes32) {
@@ -565,6 +567,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             user,
             recipient,
             amount,
+            fee,
             expireTime,
             dstChainId,
             block.chainid,

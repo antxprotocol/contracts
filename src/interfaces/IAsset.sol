@@ -59,7 +59,7 @@ interface IAsset {
     }
     
     // State-changing functions
-    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds,bytes32 []memory recipients,uint256 []memory expireTimes,uint256 []memory amounts,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external;
+    function batchWithdraw(uint256 []memory clientOrderIds,uint64 []memory subaccountIds,bytes32 []memory recipients,uint256 []memory expireTimes,uint256 []memory amounts,uint256 []memory fees,bytes[] memory signatures,uint64[] memory dstChainIds,SignatureType signatureType) external;
     function forceWithdraw(uint64 subaccountId,uint256 amount,uint256 expireTime,SignatureType signatureType,bytes memory signatures,uint64 dstChainId) external;
     function setSigners(address[] memory _signers) external;
     function setSettlementAddress(address _settlementAddress) external;
