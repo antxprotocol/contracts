@@ -22,6 +22,8 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
@@ -44,7 +46,7 @@ jobs:
 
       - name: Run Forge fmt
         run: |
-          forge fmt --check
+          forge fmt --check || (echo "Formatting check failed. Run 'forge fmt' locally to fix." && exit 1)
         id: fmt
 
       - name: Run Forge build
