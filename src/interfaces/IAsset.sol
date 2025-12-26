@@ -66,7 +66,8 @@ interface IAsset {
     error InvalidCollateralCoinId();
     error InsufficientEthBalance(uint256 required, uint256 available);
     error TransferFailed();
-
+    error NotSupportedSignatureType();
+    
     enum SignatureType {
         ECDSA,
         ED25519

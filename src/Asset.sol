@@ -10,7 +10,6 @@ import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/prox
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IEd25519Oracle} from "./interfaces/IEd25519Oracle.sol";
 import "./interfaces/IAsset.sol";
 import "./margin/MarginAsset.sol";
 import "./stargate/StargateWithdraw.sol";
@@ -37,7 +36,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     mapping(uint256 => mapping(int32 => bool)) public batchSeqIds;
     uint256 public lastBatchTime;
     uint256 public lastAntxChainHeight;
-    IEd25519Oracle public ed25519Oracle;
     uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days;
     mapping(uint256 => bool) public usedClientOrderIds; // clientOrderId => used
     uint64 public defaultCollateralCoinId;
@@ -211,7 +209,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
                     revert InvalidUserSignature();
                 }
             } else {
-                if (!ed25519Oracle.isVerified(user, operationHash, signatures)) revert InvalidUserSignature();
+                revert NotSupportedSignatureType();
             }
         }
 
@@ -591,11 +589,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     function setWithdrawOperator(address _withdrawOperator) external onlyOwner validAddress(_withdrawOperator) {
         withdrawOperator = _withdrawOperator;
         emit WithdrawOperatorUpdated(_withdrawOperator);
-    }
-
-    function setEd25519Oracle(address _ed25519Oracle) external onlyOwner validAddress(_ed25519Oracle) {
-        ed25519Oracle = IEd25519Oracle(_ed25519Oracle);
-        emit Ed25519OracleUpdated(_ed25519Oracle);
     }
 
     function setSigners(address[] memory _signers) external onlyOwner {
