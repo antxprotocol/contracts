@@ -4995,4 +4995,389 @@ contract AssetTest is Test {
         console.log("Correct hash (all fields properly encoded):");
         console.logBytes32(correctHash);
     }
+
+    // ============ receive() Tests ============
+
+    function test_receive_eth() public {
+        uint256 ethAmount = 1 ether;
+        uint256 balanceBefore = address(asset).balance;
+
+        // Send ETH directly to contract
+        (bool success,) = address(asset).call{value: ethAmount}("");
+        assertTrue(success);
+
+        assertEq(address(asset).balance, balanceBefore + ethAmount);
+    }
+
+    function test_receive_eth_multiple() public {
+        uint256 ethAmount1 = 0.5 ether;
+        uint256 ethAmount2 = 0.3 ether;
+
+        uint256 balanceBefore = address(asset).balance;
+
+        // Send ETH multiple times
+        (bool success1,) = address(asset).call{value: ethAmount1}("");
+        assertTrue(success1);
+
+        (bool success2,) = address(asset).call{value: ethAmount2}("");
+        assertTrue(success2);
+
+        assertEq(address(asset).balance, balanceBefore + ethAmount1 + ethAmount2);
+    }
+
+    function test_receive_eth_forCrossChainFees() public {
+        // Fund contract with ETH for cross-chain withdrawal fees
+        uint256 ethAmount = 2 ether;
+        vm.deal(address(asset), ethAmount);
+
+        assertEq(address(asset).balance, ethAmount);
+
+        // This ETH can be used for cross-chain withdrawal fees
+        // The contract should have sufficient balance for fees
+        assertGe(address(asset).balance, 0.001 ether);
+    }
+
+    // ============ emergencyWithdrawETH Tests ============
+
+    function test_emergencyWithdrawETH_success() public {
+        // Fund the contract with ETH
+        vm.deal(address(asset), 1 ether);
+
+        address recipient = user1;
+        uint256 withdrawAmount = 0.5 ether;
+
+        // Prepare multi-sig withdraw
+        uint256 expireTime = block.timestamp + 1 hours;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "EMERGENCY_WITHDRAW_ETH",
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+
+        uint256 recipientBalanceBefore = recipient.balance;
+        uint256 contractBalanceBefore = address(asset).balance;
+
+        vm.expectEmit(address(asset));
+        emit IAsset.EmergencyWithdrawETH(recipient, withdrawAmount);
+
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+
+        assertEq(recipient.balance, recipientBalanceBefore + withdrawAmount);
+        assertEq(address(asset).balance, contractBalanceBefore - withdrawAmount);
+    }
+
+    function test_emergencyWithdrawETH_threeSigners() public {
+        // Fund the contract with ETH
+        vm.deal(address(asset), 1 ether);
+
+        address recipient = user1;
+        uint256 withdrawAmount = 0.5 ether;
+
+        // Prepare multi-sig withdraw with 3 signers
+        uint256 expireTime = block.timestamp + 1 hours;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "EMERGENCY_WITHDRAW_ETH",
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
+        bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
+
+        address[] memory allSigners = new address[](3);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+        allSigners[2] = signer3;
+
+        bytes[] memory signatures = new bytes[](3);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+        signatures[2] = signature3;
+
+        uint256 recipientBalanceBefore = recipient.balance;
+
+        vm.expectEmit(address(asset));
+        emit IAsset.EmergencyWithdrawETH(recipient, withdrawAmount);
+
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+
+        assertEq(recipient.balance, recipientBalanceBefore + withdrawAmount);
+    }
+
+    function test_emergencyWithdrawETH_invalidSigner() public {
+        // Fund the contract with ETH
+        vm.deal(address(asset), 1 ether);
+
+        address recipient = user1;
+        uint256 withdrawAmount = 0.5 ether;
+        uint256 expireTime = block.timestamp + 1 hours;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "EMERGENCY_WITHDRAW_ETH",
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = address(0x999); // Invalid signer
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+    }
+
+    function test_emergencyWithdrawETH_notAllowedSigner() public {
+        // Fund the contract with ETH
+        vm.deal(address(asset), 1 ether);
+
+        address recipient = user1;
+        uint256 withdrawAmount = 0.5 ether;
+        uint256 expireTime = block.timestamp + 1 hours;
+
+        // Use a private key that's not in the signers list
+        uint256 invalidPrivateKey = 0x999;
+        address invalidSigner = vm.addr(invalidPrivateKey);
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "EMERGENCY_WITHDRAW_ETH",
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, invalidPrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = invalidSigner;
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedSigner.selector));
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+    }
+
+    function test_emergencyWithdrawETH_expiredTransaction() public {
+        // Fund the contract with ETH
+        vm.deal(address(asset), 1 ether);
+
+        address recipient = user1;
+        uint256 withdrawAmount = 0.5 ether;
+        uint256 expireTime = block.timestamp - 1; // Already expired
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "EMERGENCY_WITHDRAW_ETH",
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+
+        vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+    }
+
+    function test_emergencyWithdrawETH_transferFailed() public {
+        // Create a contract that rejects ETH transfers
+        RejectETH rejector = new RejectETH();
+        vm.deal(address(asset), 1 ether);
+
+        uint256 withdrawAmount = 0.5 ether;
+        uint256 expireTime = block.timestamp + 1 hours;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "EMERGENCY_WITHDRAW_ETH",
+                address(rejector),
+                withdrawAmount,
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+
+        vm.expectRevert(IAsset.TransferFailed.selector);
+        asset.emergencyWithdrawETH(address(rejector), withdrawAmount, expireTime, allSigners, signatures);
+    }
+
+    function test_emergencyWithdrawETH_sameSigner() public {
+        // Fund the contract with ETH
+        vm.deal(address(asset), 1 ether);
+
+        address recipient = user1;
+        uint256 withdrawAmount = 0.5 ether;
+        uint256 expireTime = block.timestamp + 1 hours;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "EMERGENCY_WITHDRAW_ETH",
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+        bytes memory signature2 = signMessage(operationHash, signer1PrivateKey); // Same signer
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer1; // Same signer
+
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = signature1;
+        signatures[1] = signature2;
+
+        vm.expectRevert(IAsset.SameSigner.selector);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+    }
+
+    function test_emergencyWithdrawETH_invalidAllSignersLength() public {
+        // Fund the contract with ETH
+        vm.deal(address(asset), 1 ether);
+
+        address recipient = user1;
+        uint256 withdrawAmount = 0.5 ether;
+        uint256 expireTime = block.timestamp + 1 hours;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "EMERGENCY_WITHDRAW_ETH",
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+
+        address[] memory allSigners = new address[](1); // Only 1 signer (need at least 2)
+        allSigners[0] = signer1;
+
+        bytes[] memory signatures = new bytes[](1);
+        signatures[0] = signature1;
+
+        vm.expectRevert(IAsset.InvalidAllSignersLength.selector);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+    }
+
+    function test_emergencyWithdrawETH_invalidSignaturesLength() public {
+        // Fund the contract with ETH
+        vm.deal(address(asset), 1 ether);
+
+        address recipient = user1;
+        uint256 withdrawAmount = 0.5 ether;
+        uint256 expireTime = block.timestamp + 1 hours;
+
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                "EMERGENCY_WITHDRAW_ETH",
+                recipient,
+                withdrawAmount,
+                expireTime,
+                address(asset),
+                block.chainid
+            )
+        );
+        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
+
+        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
+
+        address[] memory allSigners = new address[](2);
+        allSigners[0] = signer1;
+        allSigners[1] = signer2;
+
+        bytes[] memory signatures = new bytes[](1); // Mismatch: 2 signers but 1 signature
+        signatures[0] = signature1;
+
+        vm.expectRevert(IAsset.InvalidSignaturesLength.selector);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+    }
+}
+
+// Helper contract that rejects ETH transfers
+contract RejectETH {
+    receive() external payable {
+        revert("RejectETH: I reject all ETH");
+    }
 }

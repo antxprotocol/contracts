@@ -558,5 +558,168 @@ contract StargateWithdrawTest is Test {
         assertTrue(guid2 != bytes32(0));
         assertTrue(guid1 != guid2);
     }
+
+    // ============ prepareTakeTaxi Tests ============
+
+    function test_prepareTakeTaxi_success() public {
+        uint256 amount = 1000 ether;
+        bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
+
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
+            stargateWithdraw.prepareTakeTaxi(uint64(CHAIN_ID_1), amount, dstAddress);
+
+        assertEq(sendParam.dstEid, ENDPOINT_ID_1);
+        assertEq(sendParam.amountLD, amount);
+        assertEq(sendParam.to, dstAddress);
+        assertEq(sendParam.oftCmd.length, 0); // prepareTakeTaxi uses empty oftCmd
+        assertEq(messagingFee.nativeFee, 0.001 ether);
+        assertEq(valueToSend, 0.001 ether);
+    }
+
+    function test_prepareTakeTaxi_invalidEndpointId() public {
+        // Set chain support but no endpoint
+        stargateWithdraw.setChainSupport(CHAIN_ID_3, true);
+
+        bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
+
+        vm.expectRevert(StargateWithdraw.InvalidEndpointId.selector);
+        stargateWithdraw.prepareTakeTaxi(uint64(CHAIN_ID_3), 1000 ether, dstAddress);
+    }
+
+    function test_prepareTakeTaxi_vs_prepareRideBus_difference() public {
+        uint256 amount = 1000 ether;
+        bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
+
+        (uint256 valueToSend1, SendParam memory sendParam1, MessagingFee memory messagingFee1) =
+            stargateWithdraw.prepareTakeTaxi(uint64(CHAIN_ID_1), amount, dstAddress);
+
+        (uint256 valueToSend2, SendParam memory sendParam2, MessagingFee memory messagingFee2) =
+            stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), amount, dstAddress);
+
+        // Main difference: oftCmd
+        assertEq(sendParam1.oftCmd.length, 0);
+        assertEq(sendParam2.oftCmd.length, 1);
+
+        // Other values should be the same
+        assertEq(valueToSend1, valueToSend2);
+        assertEq(sendParam1.dstEid, sendParam2.dstEid);
+        assertEq(sendParam1.amountLD, sendParam2.amountLD);
+        assertEq(sendParam1.to, sendParam2.to);
+    }
+
+    function test_crossChainWithdraw_usingPrepareTakeTaxi() public {
+        uint256 amount = 1000 ether;
+        bytes32 userBytes = bytes32(uint256(uint160(user)));
+        bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
+
+        // Prepare send parameters using prepareTakeTaxi
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
+            stargateWithdraw.prepareTakeTaxi(uint64(CHAIN_ID_1), amount, dstAddress);
+
+        // Fund user with ETH (needed for stargate.sendToken)
+        vm.deal(user, valueToSend);
+
+        vm.prank(user);
+        bytes32 guid = stargateWithdraw.crossChainWithdraw{
+            value: valueToSend
+        }(12345, userBytes, amount, CHAIN_ID_1, dstAddress, user, sendParam, messagingFee);
+
+        assertTrue(guid != bytes32(0));
+        assertEq(USDC.balanceOf(user), 10000 ether - amount);
+        assertEq(USDC.balanceOf(address(mockStargate)), amount);
+    }
+
+    // ============ emergencyWithdrawETH Tests ============
+
+    function test_emergencyWithdrawETH_success() public {
+        // Send some ETH to contract
+        vm.deal(address(stargateWithdraw), 1 ether);
+
+        address recipient = makeAddr("recipient");
+        uint256 amount = 0.5 ether;
+
+        uint256 recipientBalanceBefore = recipient.balance;
+        uint256 contractBalanceBefore = address(stargateWithdraw).balance;
+
+        stargateWithdraw.emergencyWithdrawETH(recipient, amount);
+
+        assertEq(recipient.balance, recipientBalanceBefore + amount);
+        assertEq(address(stargateWithdraw).balance, contractBalanceBefore - amount);
+    }
+
+    function test_emergencyWithdrawETH_onlyOwner() public {
+        vm.deal(address(stargateWithdraw), 1 ether);
+
+        vm.prank(user);
+        vm.expectRevert();
+        stargateWithdraw.emergencyWithdrawETH(user, 0.1 ether);
+    }
+
+    function test_emergencyWithdrawETH_transferFailed() public {
+        // Create a contract that rejects ETH transfers
+        RejectETH rejector = new RejectETH();
+        vm.deal(address(stargateWithdraw), 1 ether);
+
+        vm.expectRevert(StargateWithdraw.TransferFailed.selector);
+        stargateWithdraw.emergencyWithdrawETH(address(rejector), 0.5 ether);
+    }
+
+    // ============ receive() Tests ============
+
+    function test_receive_eth() public {
+        uint256 ethAmount = 1 ether;
+        uint256 balanceBefore = address(stargateWithdraw).balance;
+
+        // Send ETH directly to contract
+        (bool success,) = address(stargateWithdraw).call{value: ethAmount}("");
+        assertTrue(success);
+
+        assertEq(address(stargateWithdraw).balance, balanceBefore + ethAmount);
+    }
+
+    function test_receive_eth_multiple() public {
+        uint256 ethAmount1 = 0.5 ether;
+        uint256 ethAmount2 = 0.3 ether;
+
+        uint256 balanceBefore = address(stargateWithdraw).balance;
+
+        // Send ETH multiple times
+        (bool success1,) = address(stargateWithdraw).call{value: ethAmount1}("");
+        assertTrue(success1);
+
+        (bool success2,) = address(stargateWithdraw).call{value: ethAmount2}("");
+        assertTrue(success2);
+
+        assertEq(address(stargateWithdraw).balance, balanceBefore + ethAmount1 + ethAmount2);
+    }
+
+
+    function test_crossChainWithdraw_withPreFundedETH() public {
+        uint256 amount = 1000 ether;
+        bytes32 userBytes = bytes32(uint256(uint160(user)));
+        bytes32 dstAddress = bytes32(uint256(uint160(makeAddr("recipient"))));
+
+        // Pre-fund contract with ETH
+        vm.deal(address(stargateWithdraw), 0.001 ether);
+
+        // Prepare send parameters
+        (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
+            stargateWithdraw.prepareRideBus(uint64(CHAIN_ID_1), amount, dstAddress);
+
+        // Contract has enough ETH, so it should succeed even without user sending ETH
+        vm.prank(user);
+        bytes32 guid = stargateWithdraw.crossChainWithdraw{
+            value: 0 // No ETH from user, but contract has it
+        }(12345, userBytes, amount, CHAIN_ID_1, dstAddress, user, sendParam, messagingFee);
+
+        assertTrue(guid != bytes32(0));
+    }
+}
+
+// Helper contract that rejects ETH transfers
+contract RejectETH {
+    receive() external payable {
+        revert("RejectETH: I reject all ETH");
+    }
 }
 
