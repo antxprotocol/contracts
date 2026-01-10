@@ -131,7 +131,12 @@ contract MarginAssetTest is Test {
             });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         MarginAsset.PerpetualAsset memory perpetualAsset = MarginAsset.PerpetualAsset({
@@ -191,7 +196,12 @@ contract MarginAssetTest is Test {
             });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         // 初始抵押品：1000 USDT (精度6)
@@ -246,7 +256,12 @@ contract MarginAssetTest is Test {
             });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         // 创建仓位：买入 0.1 BTC
@@ -388,7 +403,12 @@ contract MarginAssetTest is Test {
             });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         // 创建逐仓仓位：买入 0.1 BTC
@@ -450,7 +470,12 @@ contract MarginAssetTest is Test {
             });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         // 创建仓位，cacheFundingIndex 为 0，fundingIndex 为 -1000000
@@ -500,7 +525,12 @@ contract MarginAssetTest is Test {
             });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         // 创建仓位，cacheFundingIndex 为负数
@@ -681,7 +711,12 @@ contract MarginAssetTest is Test {
         });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](1);
@@ -787,7 +822,12 @@ contract MarginAssetTest is Test {
         tradeSettings[0] = MarginAsset.TradeSetting({exchangeId: 200001, leverage: 20, marginMode: 1});
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](1);
@@ -945,7 +985,12 @@ contract MarginAssetTest is Test {
             });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         // cacheFundingIndex < fundingIndex，会产生负数funding
@@ -1010,7 +1055,12 @@ contract MarginAssetTest is Test {
             });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         // cacheFundingIndex == fundingIndex，fundingAmount = 0
@@ -1060,7 +1110,12 @@ contract MarginAssetTest is Test {
             });
 
         MarginAsset.Subaccount memory subaccount = MarginAsset.Subaccount({
-            id: 123, chainAddress: bytes32(0), clientAccountId: "test", tradeSettings: tradeSettings
+            id: 123,
+            chainAddress: bytes32(0),
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "test",
+            tradeSettings: tradeSettings
         });
 
         // cacheFundingIndex < fundingIndex，会产生负数funding

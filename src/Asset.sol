@@ -128,6 +128,23 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
+    function multiSigWalletDeposit(
+        address chainAddress,  
+        address  multiSigWallet,
+        uint256  amount  
+     ) external nonReentrant validAddress(chainAddress) validAddress(multiSigWallet) validAmount(amount) {
+        uint64 subaccountId = addressToSubaccountId[bytes32(uint256(uint160(chainAddress)))];
+        if (subaccountId != 0) {
+            // check multiSigWallet is the same as the subaccount's multiSigWallet
+            if (subaccounts[subaccountId].multiSigWallet != multiSigWallet) revert MultiSigWalletMismatch();
+        }
+
+        // transfer the amount from the caller to the contract
+        USDC.safeTransferFrom(msg.sender, address(this), amount);
+        // emit event
+        emit MultiSigWalletDeposit(chainAddress, multiSigWallet, amount);
+    }
+
     function batchWithdraw(
         uint256[] memory clientOrderIds,
         uint64[] memory subaccountIds,
@@ -165,19 +182,26 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     }
 
     function forceWithdraw(
-        uint64 subaccountId,
         uint256 amount,
-        uint256 expireTime,
-        SignatureType signatureType,
-        bytes memory signatures,
         uint64 dstChainId
     ) external nonReentrant validAmount(amount) {
         // check time lock
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
+
+        bytes32 user = bytes32(uint256(uint160(msg.sender)));
+        uint64 subaccountId = addressToSubaccountId[user];
+        if (subaccountId == 0) revert UserNotFound();
+
+        // check if the subaccount is a multi-signature wallet
+        MarginAsset.Subaccount memory subaccount = subaccounts[subaccountId];
+        bytes32 recipient = subaccount.chainAddress;
+        if (subaccount.isMultiSigWallet) {
+           recipient = bytes32(uint256(uint160(subaccount.multiSigWallet)));
+        }
+    
         // force withdraw
-        bytes32 user = subaccounts[subaccountId].chainAddress;
-        _userWithdraw(0, user, user, expireTime, dstChainId, amount, 0, signatures, true, signatureType);
-        emit ForceWithdraw(user, user, amount, dstChainId);
+        _userWithdraw(0, user, recipient, 0, dstChainId, amount, 0, "", true, SignatureType.ECDSA);
+        emit ForceWithdraw(user, recipient, amount, dstChainId);
     }
 
     function _userWithdraw(
@@ -216,6 +240,22 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         // check user available amount
         uint256 userAvailableAmount = availableAmount(user);
         if (userAvailableAmount < amount) revert InsufficientUserBalance(userAvailableAmount, amount);
+
+
+        uint64 subaccountId = addressToSubaccountId[user];
+        if (subaccountId == 0) revert UserNotFound();
+
+        MarginAsset.Subaccount memory subaccount = subaccounts[subaccountId];
+        if (subaccount.isMultiSigWallet) {
+            // multi-signature wallet can only withdraw to the same chain
+            if (dstChainId != block.chainid) {
+                revert NotAllowedCrossChainWithdraw();
+            }
+            // check if the recipient is the multi-signature wallet
+            if (recipient != bytes32(uint256(uint160(subaccount.multiSigWallet)))) {
+                revert MultiSigWalletMismatch();
+            }
+        }
 
         // check if the dstChainId is native chain
         if (dstChainId == block.chainid) {
@@ -322,6 +362,8 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         MarginAsset.Subaccount memory subaccountForCalc = MarginAsset.Subaccount({
             id: subaccountId,
             chainAddress: user,
+            isMultiSigWallet: subaccount.isMultiSigWallet,
+            multiSigWallet: subaccount.multiSigWallet,
             clientAccountId: subaccount.clientAccountId,
             tradeSettings: subaccount.tradeSettings
         });

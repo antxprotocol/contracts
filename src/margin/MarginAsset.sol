@@ -21,6 +21,8 @@ library MarginAsset {
     struct Subaccount {
         uint64 id; // Subaccount ID, must be greater than 0
         bytes32 chainAddress; // Subaccount chain address
+        bool isMultiSigWallet; // Whether the subaccount is a multi-signature wallet
+        address multiSigWallet; // Multi-signature wallet address
         string clientAccountId; // Client-defined ID for idempotency check, maximum length 64
         TradeSetting[] tradeSettings; // Trading settings
     }

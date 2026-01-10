@@ -241,7 +241,12 @@ contract AssetTest is Test {
             MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
 
             subaccountUpdates[i] = MarginAsset.Subaccount({
-                id: subAccountId, chainAddress: users[i], clientAccountId: "", tradeSettings: tradeSettings
+                id: subAccountId,
+                chainAddress: users[i],
+                isMultiSigWallet: false,
+                multiSigWallet: address(0),
+                clientAccountId: "",
+                tradeSettings: tradeSettings
             });
 
             perpetualAssetUpdates[i] = MarginAsset.PerpetualAsset({
@@ -423,7 +428,12 @@ contract AssetTest is Test {
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: subAccountId, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings
+            id: subAccountId,
+            chainAddress: user,
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "",
+            tradeSettings: tradeSettings
         });
 
         // Create PerpetualAsset with default collateralCoinId = 1
@@ -1136,7 +1146,7 @@ contract AssetTest is Test {
         // So we check the final state instead of expecting specific event order
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(500, getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
@@ -1175,7 +1185,7 @@ contract AssetTest is Test {
         // Use ED25519 enum to cover that path (isForce skips signature logic)
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 200, expireTime, IAsset.SignatureType.ED25519, new bytes(0), getDstChainId());
+        asset.forceWithdraw(200, getDstChainId());
         vm.stopPrank();
 
         uint256 afterBal = USDC.balanceOf(user1);
@@ -1204,7 +1214,7 @@ contract AssetTest is Test {
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.TimeLockNotPassed.selector));
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(500, getDstChainId());
         vm.stopPrank();
     }
 
@@ -1224,9 +1234,9 @@ contract AssetTest is Test {
 
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
+        // Note: forceWithdraw with amount 0 will revert due to validAmount modifier
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
-        uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 0, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(0, getDstChainId());
         vm.stopPrank();
     }
 
@@ -1251,7 +1261,7 @@ contract AssetTest is Test {
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 100, 500));
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(500, getDstChainId());
         vm.stopPrank();
     }
 
@@ -1620,7 +1630,7 @@ contract AssetTest is Test {
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(); // Should revert due to SafeERC20 failing on false return
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(500, getDstChainId());
         vm.stopPrank();
 
         // Reset transfer behavior
@@ -1656,7 +1666,7 @@ contract AssetTest is Test {
         vm.startPrank(user1);
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(500, getDstChainId());
         vm.stopPrank();
 
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
@@ -2325,7 +2335,7 @@ contract AssetTest is Test {
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.InsufficientUserBalance.selector, 0, 100));
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 100, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(100, getDstChainId());
         vm.stopPrank();
     }
 
@@ -2688,9 +2698,7 @@ contract AssetTest is Test {
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
 
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(
-            subaccountId, maxAmount, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId()
-        );
+        asset.forceWithdraw(maxAmount, getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
@@ -2999,7 +3007,7 @@ contract AssetTest is Test {
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
 
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(500, getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
@@ -3037,7 +3045,7 @@ contract AssetTest is Test {
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
         vm.expectRevert(abi.encodeWithSelector(IAsset.TimeLockNotPassed.selector));
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(500, getDstChainId());
         vm.stopPrank();
     }
 
@@ -3082,7 +3090,7 @@ contract AssetTest is Test {
         uint256 mockStargateBalanceBefore = USDC.balanceOf(address(mockStargateWithdraw));
 
         uint256 expireTime = block.timestamp + 1 days;
-        asset.forceWithdraw(subaccountId, 500, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(500, getDstChainId());
         vm.stopPrank();
 
         uint256 user1BalanceAfter = USDC.balanceOf(user1);
@@ -3519,7 +3527,7 @@ contract AssetTest is Test {
         // Get subaccountId after batchUpdate
         uint64 subaccountId = getSubaccountId(user);
         // Should succeed even with expired expireTime
-        asset.forceWithdraw(subaccountId, amount, expireTime, IAsset.SignatureType.ECDSA, new bytes(0), getDstChainId());
+        asset.forceWithdraw(amount, getDstChainId());
         vm.stopPrank();
     }
 
@@ -4012,13 +4020,28 @@ contract AssetTest is Test {
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
 
         subaccountUpdates[0] = MarginAsset.Subaccount({
-            id: 10, chainAddress: user1Bytes, clientAccountId: "", tradeSettings: tradeSettings
+            id: 10,
+            chainAddress: user1Bytes,
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "",
+            tradeSettings: tradeSettings
         });
         subaccountUpdates[1] = MarginAsset.Subaccount({
-            id: 20, chainAddress: user2Bytes, clientAccountId: "", tradeSettings: tradeSettings
+            id: 20,
+            chainAddress: user2Bytes,
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "",
+            tradeSettings: tradeSettings
         });
         subaccountUpdates[2] = MarginAsset.Subaccount({
-            id: 30, chainAddress: user3Bytes, clientAccountId: "", tradeSettings: tradeSettings
+            id: 30,
+            chainAddress: user3Bytes,
+            isMultiSigWallet: false,
+            multiSigWallet: address(0),
+            clientAccountId: "",
+            tradeSettings: tradeSettings
         });
 
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](3);
@@ -4145,7 +4168,14 @@ contract AssetTest is Test {
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
         subaccountUpdates[0] =
-            MarginAsset.Subaccount({id: 100, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+            MarginAsset.Subaccount({
+                id: 100,
+                chainAddress: user,
+                isMultiSigWallet: false,
+                multiSigWallet: address(0),
+                clientAccountId: "",
+                tradeSettings: tradeSettings
+            });
 
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
@@ -4224,7 +4254,14 @@ contract AssetTest is Test {
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
         subaccountUpdates[0] =
-            MarginAsset.Subaccount({id: 200, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+            MarginAsset.Subaccount({
+                id: 200,
+                chainAddress: user,
+                isMultiSigWallet: false,
+                multiSigWallet: address(0),
+                clientAccountId: "",
+                tradeSettings: tradeSettings
+            });
 
         Asset.BatchUpdateData memory batchData = Asset.BatchUpdateData({
             coinUpdates: new MarginAsset.Coin[](0),
@@ -4267,7 +4304,14 @@ contract AssetTest is Test {
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
         subaccountUpdates[0] =
-            MarginAsset.Subaccount({id: 300, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+            MarginAsset.Subaccount({
+                id: 300,
+                chainAddress: user,
+                isMultiSigWallet: false,
+                multiSigWallet: address(0),
+                clientAccountId: "",
+                tradeSettings: tradeSettings
+            });
 
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](1);
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
@@ -4441,7 +4485,14 @@ contract AssetTest is Test {
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
         subaccountUpdates[0] =
-            MarginAsset.Subaccount({id: 500, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+            MarginAsset.Subaccount({
+                id: 500,
+                chainAddress: user,
+                isMultiSigWallet: false,
+                multiSigWallet: address(0),
+                clientAccountId: "",
+                tradeSettings: tradeSettings
+            });
 
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](1);
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
@@ -4655,7 +4706,14 @@ contract AssetTest is Test {
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
         subaccountUpdates[0] =
-            MarginAsset.Subaccount({id: 600, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+            MarginAsset.Subaccount({
+                id: 600,
+                chainAddress: user,
+                isMultiSigWallet: false,
+                multiSigWallet: address(0),
+                clientAccountId: "",
+                tradeSettings: tradeSettings
+            });
 
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](1);
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);
@@ -4806,7 +4864,14 @@ contract AssetTest is Test {
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
         MarginAsset.TradeSetting[] memory tradeSettings = new MarginAsset.TradeSetting[](0);
         subaccountUpdates[0] =
-            MarginAsset.Subaccount({id: 400, chainAddress: user, clientAccountId: "", tradeSettings: tradeSettings});
+            MarginAsset.Subaccount({
+                id: 400,
+                chainAddress: user,
+                isMultiSigWallet: false,
+                multiSigWallet: address(0),
+                clientAccountId: "",
+                tradeSettings: tradeSettings
+            });
 
         MarginAsset.PerpetualAsset[] memory perpetualAssetUpdates = new MarginAsset.PerpetualAsset[](3);
         MarginAsset.Position[] memory positions = new MarginAsset.Position[](0);

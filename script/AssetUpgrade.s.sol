@@ -40,17 +40,24 @@ contract AssetUpgradeScript is Script {
         vm.startBroadcast(privateKey);
         console.log("Private key address:", vm.addr(privateKey));
 
-        // Get proxy address from environment variable
-        address proxyAddress = vm.envAddress("ASSET_PROXY_ADDRESS");
-        console.log("Asset proxy address:", proxyAddress);
+        string memory currentEnv = vm.envString("CURRENT_ENV");
+        address proxyAddress;
+        if (keccak256(bytes(currentEnv)) == keccak256(bytes("devnet"))) {
+            proxyAddress = vm.envAddress("DEVNET_ASSET_PROXY_ADDRESS");
+        } else if (keccak256(bytes(currentEnv)) == keccak256(bytes("testnet"))) {
+            proxyAddress = vm.envAddress("TESTNET_ASSET_PROXY_ADDRESS");
+        } else {
+            proxyAddress = vm.envAddress("MAINNET_ASSET_PROXY_ADDRESS");
+        }
+        console.log("Asset proxy address at:", address(proxyAddress));
 
         // Get current implementation address from storage slot
         address currentImplementation = _getImplementation(proxyAddress);
         console.log("Current implementation address:", currentImplementation);
 
         // Deploy new implementation contract
-        Asset newImplementation = new Asset();
-        console.log("New Asset implementation deployed at:", address(newImplementation));
+        // Asset newImplementation = new Asset();
+        // console.log("New Asset implementation deployed at:", address(newImplementation));
 
         // Get Asset instance through proxy
         Asset asset = Asset(payable(proxyAddress));
@@ -63,6 +70,7 @@ contract AssetUpgradeScript is Script {
         // Upgrade the proxy to new implementation
         // Option 1: Simple upgrade without additional call
         bytes memory upgradeData = "";
+        address newImplementation = 0x23D8eeb85b86f4Df893ef25AE041d1C095d9b10E;
         asset.upgradeToAndCall(address(newImplementation), upgradeData);
         console.log("Upgrade completed successfully!");
 

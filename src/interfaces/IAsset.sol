@@ -39,6 +39,7 @@ interface IAsset {
     event PerpetualAssetUpdated(
         uint64 subaccountId, uint64 collateralCoinId, int64 crossCollateralAmount, MarginAsset.Position[] positions
     );
+    event MultiSigWalletDeposit(address indexed chainAddress, address indexed multiSigWallet, uint256 amount);
 
     // Errors
     error InsufficientUserBalance(uint256 available, uint256 required);
@@ -67,6 +68,8 @@ interface IAsset {
     error InsufficientEthBalance(uint256 required, uint256 available);
     error TransferFailed();
     error NotSupportedSignatureType();
+    error MultiSigWalletMismatch();
+    error NotAllowedCrossChainWithdraw();
     
     enum SignatureType {
         ECDSA,
@@ -86,11 +89,7 @@ interface IAsset {
         SignatureType signatureType
     ) external;
     function forceWithdraw(
-        uint64 subaccountId,
         uint256 amount,
-        uint256 expireTime,
-        SignatureType signatureType,
-        bytes memory signatures,
         uint64 dstChainId
     ) external;
     function setSigners(address[] memory _signers) external;
@@ -114,5 +113,10 @@ interface IAsset {
         uint256 expireTime,
         address[] memory allSigners,
         bytes[] memory signatures
+    ) external;
+    function multiSigWalletDeposit(
+        address chainAddress,
+        address multiSigWallet,
+        uint256 amount
     ) external;
 }
