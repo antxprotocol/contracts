@@ -66,6 +66,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     error OnlyAsset();
     error InvalidAssetContract();
     error InvalidUSDCAddress();
+    error InvalidPoolToken();
 
 
     modifier validChain(uint256 chainId) {
@@ -98,6 +99,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
 
         USDC = IERC20(_usdc);
         stargate = IStargate(_stargate);
+        if (stargate.token() != address(USDC)) revert InvalidPoolToken();
     }
 
     /**
@@ -181,8 +183,10 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
      */
     function setStargatePool(address _stargate) external onlyOwner {
         if (_stargate == address(0)) revert InvalidStargatePool();
+        IStargate newPool = IStargate(_stargate);
+        if (newPool.token() != address(USDC)) revert InvalidPoolToken();
         address oldPool = address(stargate);
-        stargate = IStargate(_stargate);
+        stargate = newPool;
         emit StargatePoolUpdated(oldPool, _stargate);
     }
 
