@@ -254,6 +254,13 @@ library MarginAsset {
     {
         require(riskTiers.length > 0, "risk tiers is empty");
 
+        // must be sorted by positionValueUpperBound from small to large
+        for (uint256 i = 1; i < riskTiers.length; i++) {
+            require(
+                riskTiers[i].positionValueUpperBound >= riskTiers[i - 1].positionValueUpperBound,
+                "risk tiers not sorted"
+            );
+        }
         // Iterate to find matching risk tier
         for (uint256 i = 0; i < riskTiers.length; i++) {
             uint256 upperBound = uint256(riskTiers[i].positionValueUpperBound);
