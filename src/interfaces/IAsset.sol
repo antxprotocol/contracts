@@ -70,6 +70,7 @@ interface IAsset {
     error NotSupportedSignatureType();
     error MultiSigWalletMismatch();
     error NotAllowedCrossChainWithdraw();
+    error NotInitLastBatchTime();
     
     enum SignatureType {
         ECDSA,

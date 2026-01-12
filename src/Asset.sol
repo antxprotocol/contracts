@@ -39,6 +39,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     uint256 public constant FORCE_WITHDRAW_TIME_LOCK = 7 days;
     mapping(uint256 => bool) public usedClientOrderIds; // clientOrderId => used
     uint64 public defaultCollateralCoinId;
+    bool public hasBatchUpdate;
 
     // Stargate cross-chain withdraw adapter
     StargateWithdraw public stargateWithdraw;
@@ -188,6 +189,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         uint256 amount,
         uint64 dstChainId
     ) external nonReentrant validAmount(amount) {
+        if (!hasBatchUpdate) revert NotInitLastBatchTime(); 
         // check time lock
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
 
@@ -610,6 +612,9 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             }
         }
 
+        if (!hasBatchUpdate) {
+            hasBatchUpdate = true;
+        }
         lastBatchId = batchId;
         batchSeqIds[batchId][seqInBatch] = true;
         lastBatchTime = block.timestamp;
