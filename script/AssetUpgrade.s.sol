@@ -56,8 +56,8 @@ contract AssetUpgradeScript is Script {
         console.log("Current implementation address:", currentImplementation);
 
         // Deploy new implementation contract
-        // Asset newImplementation = new Asset();
-        // console.log("New Asset implementation deployed at:", address(newImplementation));
+        Asset newImplementation = new Asset();
+        console.log("New Asset implementation deployed at:", address(newImplementation));
 
         // Get Asset instance through proxy
         Asset asset = Asset(payable(proxyAddress));
@@ -70,7 +70,7 @@ contract AssetUpgradeScript is Script {
         // Upgrade the proxy to new implementation
         // Option 1: Simple upgrade without additional call
         bytes memory upgradeData = "";
-        address newImplementation = 0x23D8eeb85b86f4Df893ef25AE041d1C095d9b10E;
+        // address newImplementation = 0x23D8eeb85b86f4Df893ef25AE041d1C095d9b10E;
         asset.upgradeToAndCall(address(newImplementation), upgradeData);
         console.log("Upgrade completed successfully!");
 
