@@ -65,6 +65,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     error RefundFailed();
     error OnlyAsset();
     error InvalidAssetContract();
+    error InvalidUSDCAddress();
 
 
     modifier validChain(uint256 chainId) {
@@ -92,7 +93,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     }
 
     constructor(address _usdc, address _stargate, address _owner) Ownable(_owner) {
-        if (_usdc == address(0)) revert InvalidChainId();
+        if (_usdc == address(0)) revert InvalidUSDCAddress();
         if (_stargate == address(0)) revert InvalidStargatePool();
 
         USDC = IERC20(_usdc);
