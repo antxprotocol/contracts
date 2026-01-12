@@ -202,6 +202,7 @@ library MarginAsset {
             value = value * (10 ** multiplier);
         }
 
+        require(value <= uint256(type(int256).max), "int256 conversion overflow");
         return openSize < 0 ? -int256(value) : int256(value);
     }
 
