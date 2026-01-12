@@ -156,13 +156,16 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         uint64[] memory dstChainIds,
         SignatureType signatureType
     ) external nonReentrant onlyWithdrawOperator {
-        if (clientOrderIds.length != subaccountIds.length) revert LengthNotMatch();
-        if (clientOrderIds.length != recipients.length) revert LengthNotMatch();
-        if (clientOrderIds.length != expireTimes.length) revert LengthNotMatch();
-        if (clientOrderIds.length != amounts.length) revert LengthNotMatch();
-        if (clientOrderIds.length != fees.length) revert LengthNotMatch();
-        if (clientOrderIds.length != signatures.length) revert LengthNotMatch();
-        if (clientOrderIds.length != dstChainIds.length) revert LengthNotMatch();
+        uint256 len = clientOrderIds.length;
+        if (
+           len != subaccountIds.length ||
+           len != recipients.length ||
+           len != expireTimes.length ||
+           len != amounts.length ||
+           len != fees.length ||
+           len != signatures.length ||
+           len != dstChainIds.length
+       ) revert LengthNotMatch();
 
         for (uint64 i = 0; i < subaccountIds.length; i++) {
             bytes32 user = subaccounts[subaccountIds[i]].chainAddress;
