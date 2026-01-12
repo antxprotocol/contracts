@@ -15,8 +15,8 @@ interface IAsset {
     event BatchUpdated(uint256 batchId, uint256 antxChainHeight, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
     event USDCUpdated(address indexed USDC);
-    event EmergencyWithdraw(address indexed to, uint256 amount);
-    event EmergencyWithdrawETH(address indexed to, uint256 amount);
+    event EmergencyWithdraw(address indexed to, uint256 amount, uint256 nonce);
+    event EmergencyWithdrawETH(address indexed to, uint256 amount, uint256 nonce);
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
     event MarginAssetAddressUpdated(address indexed marginAsset);
@@ -71,6 +71,7 @@ interface IAsset {
     error MultiSigWalletMismatch();
     error NotAllowedCrossChainWithdraw();
     error NotInitLastBatchTime();
+    error InvalidNonce();
     
     enum SignatureType {
         ECDSA,
@@ -105,6 +106,7 @@ interface IAsset {
         address to,
         uint256 amount,
         uint256 expireTime,
+        uint256 nonce,
         address[] memory allSigners,
         bytes[] memory signatures
     ) external;
@@ -112,6 +114,7 @@ interface IAsset {
         address to,
         uint256 amount,
         uint256 expireTime,
+        uint256 nonce,
         address[] memory allSigners,
         bytes[] memory signatures
     ) external;

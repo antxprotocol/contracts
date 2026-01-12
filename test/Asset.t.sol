@@ -1274,6 +1274,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
         uint256 withdrawAmount = 500;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -1282,6 +1283,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -1302,9 +1304,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
 
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
@@ -1312,6 +1314,7 @@ contract AssetTest is Test {
 
     function test_emergencyWithdraw_invalidToken() public {
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
         address[] memory allSigners = new address[](2);
         bytes[] memory signatures = new bytes[](2);
 
@@ -1321,6 +1324,7 @@ contract AssetTest is Test {
             user1,
             500,
             expireTime,
+            nonce,
             allSigners,
             signatures
         );
@@ -1333,7 +1337,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](1);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAllSignersLength.selector));
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
     }
 
     function test_emergencyWithdraw_signatureLengthMismatch() public {
@@ -1344,7 +1348,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](3);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSignaturesLength.selector));
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
     }
 
     function test_emergencyWithdraw_sameSigner() public {
@@ -1355,7 +1359,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](2);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.SameSigner.selector));
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
     }
 
     function test_emergencyWithdraw_expiredTransaction() public {
@@ -1366,7 +1370,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](2);
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
     }
 
     function test_emergencyWithdraw_invalidSigner() public {
@@ -1385,9 +1389,10 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", address(USDC), user1, uint256(500), expireTime, address(asset), block.chainid
+                "EMERGENCY_WITHDRAW", address(USDC), user1, uint256(500), expireTime, nonce, address(asset), block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
@@ -1405,7 +1410,7 @@ contract AssetTest is Test {
         signatures[1] = correctSignature;
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, nonce, allSigners, signatures);
     }
 
     function test_emergencyWithdraw_notAllowedSigner() public {
@@ -1424,9 +1429,10 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
         bytes32 operationHash = keccak256(
             abi.encodePacked(
-                "EMERGENCY_WITHDRAW", address(USDC), user1, uint256(500), expireTime, address(asset), block.chainid
+                "EMERGENCY_WITHDRAW", address(USDC), user1, uint256(500), expireTime, nonce, address(asset), block.chainid
             )
         );
         operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
@@ -1446,7 +1452,7 @@ contract AssetTest is Test {
         signatures[1] = validSignature;
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedSigner.selector));
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, nonce, allSigners, signatures);
     }
 
     // Test admin functions
@@ -1797,6 +1803,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
         uint256 withdrawAmount = 500;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -1805,6 +1812,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -1828,9 +1836,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
 
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
@@ -2062,6 +2070,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
         uint256 withdrawAmount = 1000; // Exact balance
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -2070,6 +2079,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -2089,7 +2099,7 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
@@ -2204,6 +2214,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
         uint256 withdrawAmount = 300;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -2212,6 +2223,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -2230,7 +2242,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature3;
 
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     // Test emergencyWithdraw with more than 3 signers to ensure loop coverage
@@ -2273,6 +2285,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
         uint256 withdrawAmount = 400;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -2281,6 +2294,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(assetWith4Signers),
                 block.chainid
             )
@@ -2305,7 +2319,7 @@ contract AssetTest is Test {
         signatures[3] = signature4;
 
         assetWith4Signers.emergencyWithdraw(
-            address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures
+            address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures
         );
 
         console.log(
@@ -2406,6 +2420,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
         uint256 withdrawAmount = 1; // Minimum amount
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -2414,6 +2429,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -2431,7 +2447,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     function test_recover_address() public {
@@ -2732,6 +2748,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
         uint256 withdrawAmount = amounts[0];
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -2740,6 +2757,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -2760,9 +2778,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
 
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
@@ -2791,6 +2809,7 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
         uint256 withdrawAmount = 500;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -2799,6 +2818,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -2819,9 +2839,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
 
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
@@ -2850,6 +2870,7 @@ contract AssetTest is Test {
         uint256 expireTime = 0;
         address recipient = user1;
         uint256 withdrawAmount = 500;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -2858,6 +2879,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -2877,7 +2899,7 @@ contract AssetTest is Test {
 
         // Should fail with expired transaction
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     function testBatchWithdrawWithMaxClientOrderId() public {
@@ -4121,6 +4143,7 @@ contract AssetTest is Test {
         // Prepare emergency withdraw with 3 signers
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -4129,6 +4152,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -4152,9 +4176,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
         vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
 
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
@@ -4610,6 +4634,7 @@ contract AssetTest is Test {
 
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -4618,6 +4643,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -4637,7 +4663,7 @@ contract AssetTest is Test {
 
         uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
 
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
 
         uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
         assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
@@ -4781,6 +4807,7 @@ contract AssetTest is Test {
 
         uint256 expireTime = block.timestamp + 1 hours;
         address recipient = user1;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -4789,6 +4816,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -4807,7 +4835,7 @@ contract AssetTest is Test {
         signatures[1] = signature2; // Signature from signer2, but allSigners[1] is signer3
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     function test_availableAmountBySubAccountId_negativeAmount() public {
@@ -5113,6 +5141,7 @@ contract AssetTest is Test {
 
         // Prepare multi-sig withdraw
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -5120,6 +5149,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -5141,9 +5171,9 @@ contract AssetTest is Test {
         uint256 contractBalanceBefore = address(asset).balance;
 
         vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdrawETH(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdrawETH(recipient, withdrawAmount, nonce);
 
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
 
         assertEq(recipient.balance, recipientBalanceBefore + withdrawAmount);
         assertEq(address(asset).balance, contractBalanceBefore - withdrawAmount);
@@ -5158,6 +5188,7 @@ contract AssetTest is Test {
 
         // Prepare multi-sig withdraw with 3 signers
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -5165,6 +5196,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -5188,9 +5220,9 @@ contract AssetTest is Test {
         uint256 recipientBalanceBefore = recipient.balance;
 
         vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdrawETH(recipient, withdrawAmount);
+        emit IAsset.EmergencyWithdrawETH(recipient, withdrawAmount, nonce);
 
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
 
         assertEq(recipient.balance, recipientBalanceBefore + withdrawAmount);
     }
@@ -5202,6 +5234,7 @@ contract AssetTest is Test {
         address recipient = user1;
         uint256 withdrawAmount = 0.5 ether;
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -5209,6 +5242,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -5227,7 +5261,7 @@ contract AssetTest is Test {
         signatures[1] = signature2;
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     function test_emergencyWithdrawETH_notAllowedSigner() public {
@@ -5241,6 +5275,7 @@ contract AssetTest is Test {
         // Use a private key that's not in the signers list
         uint256 invalidPrivateKey = 0x999;
         address invalidSigner = vm.addr(invalidPrivateKey);
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -5248,6 +5283,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -5266,7 +5302,7 @@ contract AssetTest is Test {
         signatures[1] = signature2;
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedSigner.selector));
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     function test_emergencyWithdrawETH_expiredTransaction() public {
@@ -5276,6 +5312,7 @@ contract AssetTest is Test {
         address recipient = user1;
         uint256 withdrawAmount = 0.5 ether;
         uint256 expireTime = block.timestamp - 1; // Already expired
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -5283,6 +5320,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -5301,7 +5339,7 @@ contract AssetTest is Test {
         signatures[1] = signature2;
 
         vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     function test_emergencyWithdrawETH_transferFailed() public {
@@ -5311,6 +5349,7 @@ contract AssetTest is Test {
 
         uint256 withdrawAmount = 0.5 ether;
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -5318,6 +5357,7 @@ contract AssetTest is Test {
                 address(rejector),
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -5336,7 +5376,7 @@ contract AssetTest is Test {
         signatures[1] = signature2;
 
         vm.expectRevert(IAsset.TransferFailed.selector);
-        asset.emergencyWithdrawETH(address(rejector), withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdrawETH(address(rejector), withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     function test_emergencyWithdrawETH_sameSigner() public {
@@ -5346,6 +5386,7 @@ contract AssetTest is Test {
         address recipient = user1;
         uint256 withdrawAmount = 0.5 ether;
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -5353,6 +5394,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -5371,7 +5413,7 @@ contract AssetTest is Test {
         signatures[1] = signature2;
 
         vm.expectRevert(IAsset.SameSigner.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     function test_emergencyWithdrawETH_invalidAllSignersLength() public {
@@ -5381,6 +5423,7 @@ contract AssetTest is Test {
         address recipient = user1;
         uint256 withdrawAmount = 0.5 ether;
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -5388,6 +5431,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -5403,7 +5447,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
 
         vm.expectRevert(IAsset.InvalidAllSignersLength.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
     function test_emergencyWithdrawETH_invalidSignaturesLength() public {
@@ -5413,6 +5457,7 @@ contract AssetTest is Test {
         address recipient = user1;
         uint256 withdrawAmount = 0.5 ether;
         uint256 expireTime = block.timestamp + 1 hours;
+        uint256 nonce = 0;
 
         bytes32 operationHash = keccak256(
             abi.encodePacked(
@@ -5420,6 +5465,7 @@ contract AssetTest is Test {
                 recipient,
                 withdrawAmount,
                 expireTime,
+                nonce,
                 address(asset),
                 block.chainid
             )
@@ -5436,7 +5482,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
 
         vm.expectRevert(IAsset.InvalidSignaturesLength.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, allSigners, signatures);
+        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 }
 
