@@ -26,6 +26,9 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     // USDC token address
     IERC20 public immutable USDC;
 
+    // Asset contract address
+    address public assetContract; 
+
     // Mapping from chain ID to LayerZero endpoint ID
     mapping(uint256 => uint32) public chainIdToEndpointId;
 
@@ -50,6 +53,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     event StargatePoolUpdated(address indexed oldPool, address indexed newPool);
     event ChainEndpointUpdated(uint256 indexed chainId, uint32 endpointId);
     event ChainSupportUpdated(uint256 indexed chainId, bool supported);
+    event AssetContractUpdated(address indexed assetContract);
 
     // Errors
     error InvalidChainId();
@@ -59,10 +63,22 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
     error TransferFailed();
     error InvalidEndpointId();
     error RefundFailed();
+    error OnlyAsset();
+    error InvalidAssetContract();
+
 
     modifier validChain(uint256 chainId) {
         _validChain(chainId);
         _;
+    }
+
+    modifier onlyAsset() {
+        _onlyAsset();
+        _;
+    }
+
+    function _onlyAsset() internal view {
+        if (msg.sender != address(assetContract)) revert OnlyAsset();
     }
 
     function _validChain(uint256 chainId) internal view {
@@ -146,6 +162,16 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
             // Return zero GUID to indicate failure
             return bytes32(0);
         }
+    }
+
+    /**
+     * @notice Set asset contract address
+     * @param _assetContract New asset contract address
+     */
+    function setAssetContract(address _assetContract) external onlyOwner  {
+        if (_assetContract == address(0)) revert InvalidAssetContract();
+        assetContract = _assetContract;
+        emit AssetContractUpdated(_assetContract);
     }
 
     /**
