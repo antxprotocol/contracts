@@ -11,7 +11,11 @@ import {
     OFTFeeDetail
 } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
 
-contract AntStrargateAdapter is IStargate {
+ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+ contract AntStrargateAdapter is IStargate {
+    using SafeERC20 for IERC20;
     IStargate public immutable stargate;
 
     constructor(
@@ -49,7 +53,16 @@ contract AntStrargateAdapter is IStargate {
         payable
         returns (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt)
     {
-        return stargate.send{value: msg.value}(_sendParam, _fee, _refundAddress);
+        address stargateToken = stargate.token();
+        if (stargateToken != address(0)) {
+            IERC20(stargateToken).safeTransferFrom(msg.sender, address(this), _sendParam.amountLD);
+            IERC20(stargateToken).forceApprove(address(stargate), _sendParam.amountLD);
+        }
+        (receipt, oftReceipt) = stargate.send{value: msg.value}(_sendParam, _fee, _refundAddress);
+        if (stargateToken != address(0)) {
+            IERC20(stargateToken).forceApprove(address(stargate), 0);
+        }
+        return (receipt, oftReceipt);
     }
 
     function sendToken(SendParam calldata _sendParam, MessagingFee calldata _fee, address _refundAddress)
@@ -57,7 +70,16 @@ contract AntStrargateAdapter is IStargate {
         payable
         returns (MessagingReceipt memory msgReceipt, OFTReceipt memory oftReceipt, Ticket memory ticket)
     {
-        return stargate.sendToken{value: msg.value}(_sendParam, _fee, _refundAddress);
+        address stargateToken = stargate.token();
+        if (stargateToken != address(0)) {
+            IERC20(stargateToken).safeTransferFrom(msg.sender, address(this), _sendParam.amountLD);
+            IERC20(stargateToken).forceApprove(address(stargate), _sendParam.amountLD);
+        }
+        (msgReceipt, oftReceipt, ticket) = stargate.sendToken{value: msg.value}(_sendParam, _fee, _refundAddress);
+        if (stargateToken != address(0)) {
+            IERC20(stargateToken).forceApprove(address(stargate), 0);
+        }
+        return (msgReceipt, oftReceipt, ticket);
     }
 
     function sharedDecimals() external view returns (uint8) {
