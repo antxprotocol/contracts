@@ -121,7 +121,7 @@ contract StargateWithdraw is Ownable, ReentrancyGuard {
         address refundAddress,
         SendParam memory sendParam,
         MessagingFee memory messagingFee
-    ) external payable nonReentrant validChain(dstChainId) returns (bytes32 guid) {
+     ) external payable nonReentrant onlyAsset validChain(dstChainId) returns (bytes32 guid) {
         // Get destination endpoint ID
         uint32 dstEid = chainIdToEndpointId[dstChainId];
         if (dstEid == 0) revert InvalidEndpointId();
