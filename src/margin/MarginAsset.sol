@@ -312,6 +312,9 @@ library MarginAsset {
             uint32 multiplier = targetScale - scaleDiff;
             value = value * (10 ** multiplier);
         }
+        
+        // Check for overflow: if value > int256.max, return 0
+        require(value <= uint256(type(int256).max), "int256 conversion overflow");
 
         bool isNegative = (openSize < 0) != (fundingDiff < 0);
         return isNegative ? -int256(value) : int256(value);
