@@ -22,12 +22,16 @@ contract StargateWithdrawSetterScript is Script {
 
         string memory currentEnv = vm.envString("CURRENT_ENV");
         address stargateWithdrawAddress;
+        address assetContractAddress;
         if (keccak256(bytes(currentEnv)) == keccak256(bytes("devnet"))) {
             stargateWithdrawAddress = vm.envAddress("DEVNET_STARGATE_WITHDRAW_ADDRESS");
+            assetContractAddress = vm.envAddress("DEVNET_ASSET_PROXY_ADDRESS");
         } else if (keccak256(bytes(currentEnv)) == keccak256(bytes("testnet"))) {
             stargateWithdrawAddress = vm.envAddress("TESTNET_STARGATE_WITHDRAW_ADDRESS");
+            assetContractAddress = vm.envAddress("TESTNET_ASSET_PROXY_ADDRESS");
         } else {
             stargateWithdrawAddress = vm.envAddress("MAINNET_STARGATE_WITHDRAW_ADDRESS");
+            assetContractAddress = vm.envAddress("MAINNET_ASSET_PROXY_ADDRESS");
         }
         StargateWithdraw stargateWithdraw = StargateWithdraw(payable(stargateWithdrawAddress));
 
@@ -39,6 +43,9 @@ contract StargateWithdrawSetterScript is Script {
         uint32 arbitrumSepoliaEndpointId = 40231;
         stargateWithdraw.setChainEndpoint(arbitrumSepoliaChainId, arbitrumSepoliaEndpointId);
         stargateWithdraw.setChainSupport(arbitrumSepoliaChainId, true);
+
+        // 设置asset contract
+        stargateWithdraw.setAssetContract(assetContractAddress);
 
         console.log("Configuration completed!");
         vm.stopBroadcast();
