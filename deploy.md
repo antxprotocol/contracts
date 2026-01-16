@@ -48,6 +48,7 @@ forge script ./script/Asset.s.sol:AssetScript --rpc-url https://purple-green-wis
   Asset (via proxy) at: 0x8e4a6562E3578Cb086382F3b3b54D79B07e16077
 ```
 更新AssetProxy地址到env中
+另外需要把Asset Proxy地址及相关地址更新到devops-tools/ansible/tools/{CURRENT_ENV}_genesis.json中
 
 # 五、设置stargateWithdraw
 ```
