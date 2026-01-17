@@ -6,6 +6,10 @@
     - 设置设置部署合约的地址DEPLOYER_ADDRESS,方便查询链上余额
     - 根据CURRENT_ENV设置当前环境的USDC地址 {CURRENT_ENV}_USDC_ADDRESS
     - 找运维确认对应环境所需的rpc-url
+    - 权限控制涉及到3个角色
+      - settlementOperator,拥有提交批次交易的权限
+      - withdrawOperator,拥有发起提现交易的权限
+      - owner,管理员权限，可以设置/更新其他角色
 # 二、部署MarginAssetCalculator
 ```
 forge script ./script/MarginAsset.s.sol:MarginAssetCalculatorScript --rpc-url https://purple-green-wish.ethereum-sepolia.quiknode.pro/cc8a0c3a64ee15decdc7e344d53a083b08bb7160 --broadcast
