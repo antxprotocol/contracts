@@ -39,13 +39,23 @@ contract StargateWithdrawSetterScript is Script {
         console.log("Current owner:", stargateWithdraw.owner());
 
         // https://stargateprotocol.gitbook.io/stargate/v2-developer-docs/technical-reference/testnet-contracts
-        uint256 arbitrumSepoliaChainId = 421614;
-        uint32 arbitrumSepoliaEndpointId = 40231;
-        stargateWithdraw.setChainEndpoint(arbitrumSepoliaChainId, arbitrumSepoliaEndpointId);
-        stargateWithdraw.setChainSupport(arbitrumSepoliaChainId, true);
+        // uint256 arbitrumSepoliaChainId = 421614;
+        // uint32 arbitrumSepoliaEndpointId = 40231;
+
+
+        uint256 arbitrumChainId = 42161;
+        uint32 arbitrumEndpointId = 30110;
+        stargateWithdraw.setChainEndpoint(arbitrumChainId, arbitrumEndpointId);
+        stargateWithdraw.setChainSupport(arbitrumChainId, true);
+
+
+        uint256 baseChainId = 8453;
+        uint32 baseEndpointId = 30184;
+        stargateWithdraw.setChainEndpoint(baseChainId, baseEndpointId);
+        stargateWithdraw.setChainSupport(baseChainId, true);
 
         // 设置asset contract
-        stargateWithdraw.setAssetContract(assetContractAddress);
+        // stargateWithdraw.setAssetContract(assetContractAddress);
 
         console.log("Configuration completed!");
         vm.stopBroadcast();

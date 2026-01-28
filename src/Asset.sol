@@ -3,9 +3,8 @@ pragma solidity ^0.8.28;
 
 import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {
-    ReentrancyGuardUpgradeable
-} from "openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {ReentrancyGuardUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -279,27 +278,43 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             }
         }
 
+        // get USDC decimals
+        uint8 usdcDecimals = IERC20Metadata(address(USDC)).decimals();
+        // convert coin stepSizeScale decimals to usdcDecimals
+        uint256 transferAmount;
+
+        MarginAsset.Coin memory coin = coins[defaultCollateralCoinId];
+        if (usdcDecimals > coin.stepSizeScale) {
+            uint256 scaleDiff = usdcDecimals - coin.stepSizeScale;
+            transferAmount = amount * 10 ** scaleDiff;
+        } else if (usdcDecimals < coin.stepSizeScale) {
+            uint256 scaleDiff = coin.stepSizeScale - usdcDecimals;
+            transferAmount = amount / 10 ** scaleDiff;
+        } else {
+            transferAmount = amount;
+        }
+
         // check if the dstChainId is native chain
         if (dstChainId == block.chainid) {
             // Store balance before transfer
             uint256 preBalance = USDC.balanceOf(address(this));
 
             // Execute transfer
-            IERC20(USDC).safeTransfer(address(uint160(uint256(recipient))), amount);
+            IERC20(USDC).safeTransfer(address(uint160(uint256(recipient))), transferAmount);
 
             // Verify transfer happened correctly
             uint256 postBalance = USDC.balanceOf(address(this));
-            assert(preBalance - postBalance == amount);
+            assert(preBalance - postBalance == transferAmount);
             // emit event
-            emit UserWithdraw(clientOrderId, user, recipient, amount, dstChainId);
+            emit UserWithdraw(clientOrderId, user, recipient, transferAmount, dstChainId);
         } else {
             // cross-chain withdraw
             // Approve StargateWithdraw to spend USDC
-            USDC.forceApprove(address(stargateWithdraw), amount);
+            USDC.forceApprove(address(stargateWithdraw), transferAmount);
 
             // Prepare send parameters
             (uint256 valueToSend, SendParam memory sendParam, MessagingFee memory messagingFee) =
-                stargateWithdraw.prepareTakeTaxi(dstChainId, amount, recipient);
+                stargateWithdraw.prepareTakeTaxi(dstChainId, transferAmount, recipient);
 
             // Check if contract has sufficient ETH balance for cross-chain fees
             if (address(this).balance < valueToSend) {
@@ -309,12 +324,12 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             // Execute cross-chain withdraw
             stargateWithdraw.crossChainWithdraw{
                 value: valueToSend
-            }(clientOrderId, user, amount, dstChainId, recipient, address(this), sendParam, messagingFee);
+            }(clientOrderId, user, transferAmount, dstChainId, recipient, address(this), sendParam, messagingFee);
 
             // Reset approval
             USDC.forceApprove(address(stargateWithdraw), 0);
 
-            emit CrossChainWithdraw(clientOrderId, user, recipient, amount, dstChainId);
+            emit CrossChainWithdraw(clientOrderId, user, recipient, transferAmount, dstChainId);
         }
     }
 
