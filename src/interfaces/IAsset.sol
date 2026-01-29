@@ -72,6 +72,7 @@ interface IAsset {
     error NotAllowedCrossChainWithdraw();
     error NotInitLastBatchTime();
     error InvalidNonce();
+    error FunctionDisabled();
     
     enum SignatureType {
         ECDSA,

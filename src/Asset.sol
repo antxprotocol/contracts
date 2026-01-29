@@ -464,40 +464,8 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         address[] memory allSigners,
         bytes[] memory signatures
     ) external nonReentrant validAddress(to) validAmount(amount) {
-        if (emergencyWithdrawNonce != nonce) revert InvalidNonce();
-        if (token != address(USDC)) revert NotAllowedToken(token);
-        if (allSigners.length < 2) revert InvalidAllSignersLength();
-        if (allSigners.length != signatures.length) revert InvalidSignaturesLength();
-        if (expireTime < block.timestamp) revert ExpiredTransaction();
-
-        // check if the signers are the same
-        for (uint256 i = 0; i < allSigners.length; i++) {
-            for (uint256 j = i + 1; j < allSigners.length; j++) {
-                if (allSigners[i] == allSigners[j]) revert SameSigner();
-            }
-        }
-
-        // verify multi signatures
-        bytes32 operationHash = _hashEmergencyWithdraw(token, to, amount, expireTime, nonce);
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        for (uint8 index = 0; index < allSigners.length; index++) {
-            address signer = ECDSA.recover(operationHash, signatures[index]);
-            if (signer != allSigners[index]) revert InvalidSigner();
-            if (!isAllowedSigner(signer)) revert NotAllowedSigner();
-        }
-
-        // Store balance before transfer
-        uint256 preBalance = IERC20(token).balanceOf(address(this));
-
-        // Execute transfer
-        IERC20(token).safeTransfer(to, amount);
-
-        // Verify transfer happened correctly
-        uint256 postBalance = IERC20(token).balanceOf(address(this));
-        assert(preBalance - postBalance == amount);
-        emit EmergencyWithdraw(to, amount, nonce);
-        emergencyWithdrawNonce++;
+        // Function disabled - emergency withdraw is no longer supported
+        revert FunctionDisabled();
     }
 
     function emergencyWithdrawETH(
@@ -508,41 +476,8 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         address[] memory allSigners,
         bytes[] memory signatures
     ) external nonReentrant validAddress(to) validAmount(amount) {
-        if (emergencyWithdrawNonce != nonce) revert InvalidNonce();
-        if (allSigners.length < 2) revert InvalidAllSignersLength();
-        if (allSigners.length != signatures.length) revert InvalidSignaturesLength();
-        if (expireTime < block.timestamp) revert ExpiredTransaction();
-
-        // check if the signers are the same
-        for (uint256 i = 0; i < allSigners.length; i++) {
-            for (uint256 j = i + 1; j < allSigners.length; j++) {
-                if (allSigners[i] == allSigners[j]) revert SameSigner();
-            }
-        }
-
-        // verify multi signatures
-        bytes32 operationHash = _hashEmergencyWithdrawETH(to, amount, expireTime, nonce);
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        for (uint8 index = 0; index < allSigners.length; index++) {
-            address signer = ECDSA.recover(operationHash, signatures[index]);
-            if (signer != allSigners[index]) revert InvalidSigner();
-            if (!isAllowedSigner(signer)) revert NotAllowedSigner();
-        }
-
-        // Store balance before transfer
-        uint256 preBalance = address(this).balance;
-
-        // Execute transfer
-        (bool success,) = to.call{value: amount}("");
-        if (!success) revert TransferFailed();
-
-        // Verify transfer happened correctly
-        uint256 postBalance = address(this).balance;
-        assert(preBalance - postBalance == amount);
-
-        emit EmergencyWithdrawETH(to, amount, nonce);
-        emergencyWithdrawNonce++;
+        // Function disabled - emergency withdraw ETH is no longer supported
+        revert FunctionDisabled();
     }
 
     /**
@@ -734,24 +669,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         );
     }
 
-    /**
-     * @dev Optimized hash function for EMERGENCY_WITHDRAW operation using inline assembly
-     * Equivalent to: keccak256(abi.encodePacked("EMERGENCY_WITHDRAW", token, to, amount, expireTime, address(this), block.chainid))
-     */
-    function _hashEmergencyWithdraw(address token, address to, uint256 amount, uint256 expireTime, uint256 nonce)
-        internal
-        view
-        returns (bytes32)
-    {
-        return keccak256(
-            abi.encodePacked("EMERGENCY_WITHDRAW", token, to, amount, expireTime, nonce, address(this), block.chainid)
-        );
-    }
-
-    function _hashEmergencyWithdrawETH(address to, uint256 amount, uint256 expireTime, uint256 nonce) internal view returns (bytes32) {
-        return
-            keccak256(abi.encodePacked("EMERGENCY_WITHDRAW_ETH", to, amount, expireTime, nonce, address(this), block.chainid));
-    }
 
     uint256[50] private __gap; // allow for future upgrades
 }
