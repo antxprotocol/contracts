@@ -347,7 +347,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         }
 
         if (!foundPerpetualAsset) return 0;
-        if (perpetualAsset.crossCollateralAmount <= 0) return 0;
         if (perpetualAsset.positions.length == 0) return int256(int64(perpetualAsset.crossCollateralAmount));
 
         // Get collateral coin information
