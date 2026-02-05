@@ -170,36 +170,9 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
         for (uint64 i = 0; i < subaccountIds.length; i++) {
             bytes32 user = subaccounts[subaccountIds[i]].chainAddress;
-             try this.doUserWithdraw(
-               clientOrderIds[i],
-               user,
-               recipients[i],
-               expireTimes[i],
-               dstChainIds[i],
-               amounts[i],
-               fees[i],
-               signatures[i],
-               false,
-               signatureType
-           ) {} catch {}
+            _userWithdraw(clientOrderIds[i], user, recipients[i], expireTimes[i], dstChainIds[i], amounts[i], fees[i], signatures[i], false, signatureType);
         }
     }
-
-    function doUserWithdraw(
-       uint256 clientOrderId,
-       bytes32 user,
-       bytes32 recipient,
-       uint256 expireTime,
-       uint64 dstChainId,
-       uint256 amount,
-       uint256 fee,
-       bytes memory signatures,
-       bool isForce,
-       SignatureType signatureType
-   ) external {
-      require(msg.sender == address(this), "Asset: only self");
-       _userWithdraw(clientOrderId, user, recipient, expireTime, dstChainId, amount, fee, signatures, isForce, signatureType);
-   }
 
     function forceWithdraw(
         uint256 amount,
