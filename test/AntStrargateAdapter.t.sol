@@ -95,7 +95,9 @@ contract AntStrargateAdapterTest is Test {
 
         MessagingFee memory fee = MessagingFee({nativeFee: 0.001 ether, lzTokenFee: 0});
 
-        // This will revert because MockStargate.send reverts
+        USDC.mint(address(this), 1000 ether);
+        USDC.approve(address(adapter), 1000 ether);
+
         vm.expectRevert("MockStargate: send not implemented");
         adapter.send{value: 0.001 ether}(sendParam, fee, address(this));
     }

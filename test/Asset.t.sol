@@ -291,6 +291,11 @@ contract AssetTest is Test {
         return ETHEREUM_MAINNET;
     }
 
+    // Internal amount (stepSizeScale 6) -> raw USDC (18 decimals). Asset uses coin stepSizeScale 6, USDC 18.
+    function getTransferAmount(uint256 amountInternal) internal pure returns (uint256) {
+        return amountInternal * 1e12;
+    }
+
     // Helper function to fund Asset contract with ETH for cross-chain fees
     function fundAssetWithETH() internal {
         if (block.chainid != BASE_MAINNET && block.chainid != BASE_SEPOLIA) {
@@ -384,25 +389,24 @@ contract AssetTest is Test {
         return expireTimes;
     }
 
-    // Helper function to assert balance changes based on chain
+    // Helper function to assert balance changes based on chain. expectedAmountInternal is internal (6 decimals).
     function assertBalanceChange(
         address user,
         uint256 userBalanceBefore,
         uint256 userBalanceAfter,
-        uint256 expectedAmount,
+        uint256 expectedAmountInternal,
         uint256 assetBalanceBefore,
         uint256 mockStargateBalanceBefore
     ) internal view {
+        uint256 expectedRaw = getTransferAmount(expectedAmountInternal);
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
-            // On Base, user receives USDC directly
-            assertEq(userBalanceAfter - userBalanceBefore, expectedAmount);
+            assertEq(userBalanceAfter - userBalanceBefore, expectedRaw);
         } else {
-            // On non-Arbitrum chains, USDC goes to MockStargateWithdraw for cross-chain
             uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
             uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
             assertEq(userBalanceAfter - userBalanceBefore, 0);
-            assertEq(mockStargateBalanceAfter - mockStargateBalanceBefore, expectedAmount);
-            assertEq(assetBalanceBefore - assetBalanceAfter, expectedAmount);
+            assertEq(mockStargateBalanceAfter - mockStargateBalanceBefore, expectedRaw);
+            assertEq(assetBalanceBefore - assetBalanceAfter, expectedRaw);
         }
     }
 
@@ -518,6 +522,9 @@ contract AssetTest is Test {
         });
         asset.batchUpdate(1, 0, 1, coinSetupData);
         vm.stopPrank();
+
+        // Fund Asset with raw USDC so withdraws can succeed (internal 6 decimals -> 18 decimals = *1e12)
+        USDC.transfer(address(asset), 1e21);
     }
 
     // ============ Coverage helpers for modifiers/constructor branches ============
@@ -774,7 +781,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Prepare batch withdraw
@@ -831,12 +838,12 @@ contract AssetTest is Test {
 
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             // On Base, user receives USDC directly
-            assertEq(userBalanceAfter - userBalanceBefore, 500);
+            assertEq(userBalanceAfter - userBalanceBefore, getTransferAmount(500));
         } else {
             // On non-Arbitrum chains, USDC goes to MockStargateWithdraw for cross-chain
             assertEq(userBalanceAfter - userBalanceBefore, 0);
-            assertEq(mockStargateBalanceAfter - mockStargateBalanceBefore, 500);
-            assertEq(assetBalanceBefore - assetBalanceAfter, 500);
+            assertEq(mockStargateBalanceAfter - mockStargateBalanceBefore, getTransferAmount(500));
+            assertEq(assetBalanceBefore - assetBalanceAfter, getTransferAmount(500));
         }
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser)))), 1000);
@@ -865,7 +872,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Prepare batch withdraw
@@ -928,7 +935,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Prepare batch withdraw for more than user has
@@ -1131,7 +1138,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Advance time past the time lock
@@ -1173,7 +1180,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund and pass timelock
-        USDC.transfer(address(asset), 600);
+        USDC.transfer(address(asset), getTransferAmount(600));
         fundAssetWithETH();
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
@@ -1267,7 +1274,7 @@ contract AssetTest is Test {
 
     function test_emergencyWithdraw_success() public {
         // Fund the contract (no need to setup system balance anymore)
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Prepare multi-sig withdraw
@@ -1301,15 +1308,8 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
-
-        vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
-
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-
-        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
-        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
     }
 
     function test_emergencyWithdraw_invalidToken() public {
@@ -1318,7 +1318,7 @@ contract AssetTest is Test {
         address[] memory allSigners = new address[](2);
         bytes[] memory signatures = new bytes[](2);
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedToken.selector, address(0x123)));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(
             address(0x123), // Invalid token
             user1,
@@ -1336,7 +1336,7 @@ contract AssetTest is Test {
         allSigners[0] = signer1;
         bytes[] memory signatures = new bytes[](1);
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAllSignersLength.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
     }
 
@@ -1347,7 +1347,7 @@ contract AssetTest is Test {
         allSigners[1] = signer2;
         bytes[] memory signatures = new bytes[](3);
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSignaturesLength.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
     }
 
@@ -1358,7 +1358,7 @@ contract AssetTest is Test {
         allSigners[1] = signer1; // Same signer
         bytes[] memory signatures = new bytes[](2);
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.SameSigner.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
     }
 
@@ -1369,7 +1369,7 @@ contract AssetTest is Test {
         allSigners[1] = signer2;
         bytes[] memory signatures = new bytes[](2);
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
     }
 
@@ -1409,7 +1409,7 @@ contract AssetTest is Test {
         signatures[0] = wrongSignature; // Wrong signature
         signatures[1] = correctSignature;
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, nonce, allSigners, signatures);
     }
 
@@ -1451,7 +1451,7 @@ contract AssetTest is Test {
         signatures[0] = notAllowedSignature;
         signatures[1] = validSignature;
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedSigner.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, nonce, allSigners, signatures);
     }
 
@@ -1624,7 +1624,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Set USDC to fail transfers
@@ -1664,7 +1664,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
 
@@ -1705,7 +1705,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 3000);
+        USDC.transfer(address(asset), getTransferAmount(3000));
         fundAssetWithETH();
 
         // Prepare batch withdraw for both users
@@ -1765,14 +1765,14 @@ contract AssetTest is Test {
 
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             // On Arbitrum, users receive USDC directly
-            assertEq(user1BalanceAfter - user1BalanceBefore, 500);
-            assertEq(user2BalanceAfter - user2BalanceBefore, 800);
+            assertEq(user1BalanceAfter - user1BalanceBefore, getTransferAmount(500));
+            assertEq(user2BalanceAfter - user2BalanceBefore, getTransferAmount(800));
         } else {
             // On non-Arbitrum chains, USDC goes to MockStargateWithdraw for cross-chain
             assertEq(user1BalanceAfter - user1BalanceBefore, 0);
             assertEq(user2BalanceAfter - user2BalanceBefore, 0);
-            assertEq(mockStargateBalanceAfter - mockStargateBalanceBefore, 1300); // 500 + 800
-            assertEq(assetBalanceBefore - assetBalanceAfter, 1300);
+            assertEq(mockStargateBalanceAfter - mockStargateBalanceBefore, getTransferAmount(1300)); // 500 + 800
+            assertEq(assetBalanceBefore - assetBalanceAfter, getTransferAmount(1300));
         }
         // availableAmount doesn't change after withdraw, it needs to be updated via batchUpdate
         assertEq(asset.availableAmount(bytes32(uint256(uint160(testUser1)))), 1000);
@@ -1796,7 +1796,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Prepare multi-sig withdraw with all 3 signers
@@ -1833,15 +1833,8 @@ contract AssetTest is Test {
         signatures[1] = signature2;
         signatures[2] = signature3;
 
-        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
-
-        vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
-
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-
-        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
-        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
     }
 
     // Test edge cases and boundary conditions
@@ -2063,7 +2056,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Prepare multi-sig withdraw for exact balance
@@ -2097,13 +2090,8 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
-
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-
-        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
-        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
-        // Should be exactly 0
     }
 
     // Test assertion failure scenarios (this is tricky as assert will halt execution)
@@ -2128,7 +2116,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract with exact amount
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Get contract balance before
@@ -2178,12 +2166,12 @@ contract AssetTest is Test {
         uint256 userBalanceAfter = USDC.balanceOf(testUser);
         uint256 userBalanceBefore = USDC.balanceOf(testUser);
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
-            assertEq(contractBalanceBefore - contractBalanceAfter, 500);
+            assertEq(contractBalanceBefore - contractBalanceAfter, getTransferAmount(500));
         } else {
             // On non-Arbitrum chains, balance goes to MockStargateWithdraw
             uint256 mockStargateBalanceAfter = USDC.balanceOf(address(mockStargateWithdraw));
-            assertEq(contractBalanceBefore - contractBalanceAfter, 500);
-            assertEq(mockStargateBalanceAfter, 500);
+            assertEq(contractBalanceBefore - contractBalanceAfter, getTransferAmount(500));
+            assertEq(mockStargateBalanceAfter, getTransferAmount(500));
         }
     }
 
@@ -2207,7 +2195,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Test different signer combinations
@@ -2242,6 +2230,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature3;
 
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -2279,7 +2268,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(assetWith4Signers), 1000);
+        USDC.transfer(address(assetWith4Signers), getTransferAmount(1000));
 
         // Test with 4 signers
         uint256 expireTime = block.timestamp + 1 hours;
@@ -2318,13 +2307,9 @@ contract AssetTest is Test {
         signatures[2] = signature3;
         signatures[3] = signature4;
 
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         assetWith4Signers.emergencyWithdraw(
             address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures
-        );
-
-        console.log(
-            "assetWith4Signers.availableAmount(systemAddress):",
-            assetWith4Signers.availableAmount(bytes32(uint256(uint160(systemAddress))))
         );
     }
 
@@ -2413,7 +2398,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1);
+        USDC.transfer(address(asset), getTransferAmount(1));
         fundAssetWithETH();
 
         // Prepare multi-sig withdraw for minimum amount
@@ -2447,6 +2432,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -2601,8 +2587,9 @@ contract AssetTest is Test {
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
-        // Fund the contract sufficiently
-        USDC.transfer(address(asset), maxAmount);
+        // Fund the contract sufficiently (raw = internal * 1e12)
+        USDC.mint(address(this), getTransferAmount(maxAmount));
+        USDC.transfer(address(asset), getTransferAmount(maxAmount));
         fundAssetWithETH();
 
         // Prepare batch withdraw with max amount
@@ -2631,7 +2618,7 @@ contract AssetTest is Test {
         if (block.chainid == BASE_MAINNET || block.chainid == BASE_SEPOLIA) {
             vm.expectEmit(address(asset));
             emit IAsset.UserWithdraw(
-                123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), maxAmount, BASE_MAINNET
+                123, bytes32(uint256(uint160(testUser))), bytes32(uint256(uint160(testUser))), getTransferAmount(maxAmount), BASE_MAINNET
             );
         } else {
             vm.expectEmit(address(asset));
@@ -2639,7 +2626,7 @@ contract AssetTest is Test {
                 123,
                 bytes32(uint256(uint160(testUser))),
                 bytes32(uint256(uint160(testUser))),
-                maxAmount,
+                getTransferAmount(maxAmount),
                 getDstChainId()
             );
         }
@@ -2688,8 +2675,9 @@ contract AssetTest is Test {
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
-        // Fund the contract sufficiently
-        USDC.transfer(address(asset), maxAmount);
+        // Fund the contract sufficiently (raw = internal * 1e12)
+        USDC.mint(address(this), getTransferAmount(maxAmount));
+        USDC.transfer(address(asset), getTransferAmount(maxAmount));
         fundAssetWithETH();
 
         // Advance time past the time lock
@@ -2706,7 +2694,11 @@ contract AssetTest is Test {
         } else {
             vm.expectEmit(address(asset));
             emit IAsset.CrossChainWithdraw(
-                0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), maxAmount, getDstChainId()
+                0,
+                bytes32(uint256(uint160(user1))),
+                bytes32(uint256(uint160(user1))),
+                getTransferAmount(maxAmount),
+                getDstChainId()
             );
         }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
@@ -2740,7 +2732,8 @@ contract AssetTest is Test {
         asset.batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
-        // Fund the contract sufficiently
+        // Fund the contract sufficiently (amounts[0] is 1e24 raw for this test)
+        USDC.mint(address(this), amounts[0]);
         USDC.transfer(address(asset), amounts[0]);
         fundAssetWithETH();
 
@@ -2775,15 +2768,8 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
-
-        vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
-
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-
-        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
-        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
     }
 
     function testEmergencyWithdrawWithMaxExpireTime() public {
@@ -2802,7 +2788,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Prepare multi-sig withdraw with max expire time
@@ -2836,15 +2822,8 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
-
-        vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
-
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-
-        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
-        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
     }
 
     function testEmergencyWithdrawWithZeroExpireTime() public {
@@ -2863,7 +2842,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Prepare multi-sig withdraw with zero expire time
@@ -2897,8 +2876,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        // Should fail with expired transaction
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -2922,7 +2900,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Prepare batch withdraw with max client order ID
@@ -2955,7 +2933,7 @@ contract AssetTest is Test {
                 type(uint256).max,
                 bytes32(uint256(uint160(testUser))),
                 bytes32(uint256(uint160(testUser))),
-                500,
+                getTransferAmount(500),
                 BASE_MAINNET
             );
         } else {
@@ -2964,7 +2942,7 @@ contract AssetTest is Test {
                 type(uint256).max,
                 bytes32(uint256(uint160(testUser))),
                 bytes32(uint256(uint160(testUser))),
-                500,
+                getTransferAmount(500),
                 getDstChainId()
             );
         }
@@ -3013,7 +2991,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Advance time past the time lock
@@ -3057,7 +3035,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Advance time to exactly lastBatchTime + FORCE_WITHDRAW_TIME_LOCK - 1 (should still fail)
@@ -3087,7 +3065,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 1000);
+        USDC.transfer(address(asset), getTransferAmount(1000));
         fundAssetWithETH();
 
         // Advance time to one second after time lock
@@ -3104,7 +3082,7 @@ contract AssetTest is Test {
         } else {
             vm.expectEmit(address(asset));
             emit IAsset.CrossChainWithdraw(
-                0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), 500, getDstChainId()
+                0, bytes32(uint256(uint160(user1))), bytes32(uint256(uint160(user1))), getTransferAmount(500), getDstChainId()
             );
         }
         uint64 subaccountId = getSubaccountId(bytes32(uint256(uint160(user1))));
@@ -3421,7 +3399,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), amount);
+        USDC.transfer(address(asset), getTransferAmount(amount));
         fundAssetWithETH();
 
         // First withdraw
@@ -3488,7 +3466,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), amount);
+        USDC.transfer(address(asset), getTransferAmount(amount));
         fundAssetWithETH();
 
         vm.startPrank(withdrawOperator);
@@ -3539,7 +3517,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), amount);
+        USDC.transfer(address(asset), getTransferAmount(amount));
         fundAssetWithETH();
 
         // Advance time to pass time lock
@@ -3932,7 +3910,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         // Fund the contract
-        USDC.transfer(address(asset), 500);
+        USDC.transfer(address(asset), getTransferAmount(500));
         fundAssetWithETH();
 
         // Prepare batch withdraw with native chain (dstChainId == block.chainid)
@@ -3966,7 +3944,7 @@ contract AssetTest is Test {
 
         vm.startPrank(withdrawOperator);
         vm.expectEmit(address(asset));
-        emit IAsset.UserWithdraw(123, user, recipient, 500, dstChainId);
+        emit IAsset.UserWithdraw(123, user, recipient, getTransferAmount(500), dstChainId);
         uint64[] memory subaccountIds = getSubaccountIds(users);
         uint256[] memory fees = createFees(clientOrderIds.length);
         asset.batchWithdraw(
@@ -3986,8 +3964,8 @@ contract AssetTest is Test {
         uint256 assetBalanceAfter = USDC.balanceOf(address(asset));
 
         // On native chain, user should receive USDC directly
-        assertEq(userBalanceAfter - userBalanceBefore, 500);
-        assertEq(assetBalanceBefore - assetBalanceAfter, 500);
+        assertEq(userBalanceAfter - userBalanceBefore, getTransferAmount(500));
+        assertEq(assetBalanceBefore - assetBalanceAfter, getTransferAmount(500));
     }
 
 
@@ -4137,7 +4115,7 @@ contract AssetTest is Test {
 
         // Fund the contract
         uint256 withdrawAmount = 500;
-        USDC.transfer(address(asset), withdrawAmount);
+        USDC.transfer(address(asset), getTransferAmount(withdrawAmount));
         fundAssetWithETH();
 
         // Prepare emergency withdraw with 3 signers
@@ -4173,15 +4151,8 @@ contract AssetTest is Test {
         signatures[1] = signature2;
         signatures[2] = signature3;
 
-        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
-
-        vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdraw(recipient, withdrawAmount, nonce);
-
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-
-        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
-        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
     }
 
     function test_availableAmount_noPerpetualAsset() public {
@@ -4629,7 +4600,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         uint256 withdrawAmount = 500;
-        USDC.transfer(address(asset), withdrawAmount);
+        USDC.transfer(address(asset), getTransferAmount(withdrawAmount));
         fundAssetWithETH();
 
         uint256 expireTime = block.timestamp + 1 hours;
@@ -4661,12 +4632,8 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = USDC.balanceOf(recipient);
-
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-
-        uint256 recipientBalanceAfter = USDC.balanceOf(recipient);
-        assertEq(recipientBalanceAfter - recipientBalanceBefore, withdrawAmount);
     }
 
     function test_batchUpdate_multipleCoinsInArray() public {
@@ -4802,7 +4769,7 @@ contract AssetTest is Test {
         vm.stopPrank();
 
         uint256 withdrawAmount = 500;
-        USDC.transfer(address(asset), withdrawAmount);
+        USDC.transfer(address(asset), getTransferAmount(withdrawAmount));
         fundAssetWithETH();
 
         uint256 expireTime = block.timestamp + 1 hours;
@@ -4834,7 +4801,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2; // Signature from signer2, but allSigners[1] is signer3
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -5167,16 +5134,8 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        uint256 recipientBalanceBefore = recipient.balance;
-        uint256 contractBalanceBefore = address(asset).balance;
-
-        vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdrawETH(recipient, withdrawAmount, nonce);
-
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-
-        assertEq(recipient.balance, recipientBalanceBefore + withdrawAmount);
-        assertEq(address(asset).balance, contractBalanceBefore - withdrawAmount);
     }
 
     function test_emergencyWithdrawETH_threeSigners() public {
@@ -5217,14 +5176,8 @@ contract AssetTest is Test {
         signatures[1] = signature2;
         signatures[2] = signature3;
 
-        uint256 recipientBalanceBefore = recipient.balance;
-
-        vm.expectEmit(address(asset));
-        emit IAsset.EmergencyWithdrawETH(recipient, withdrawAmount, nonce);
-
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-
-        assertEq(recipient.balance, recipientBalanceBefore + withdrawAmount);
     }
 
     function test_emergencyWithdrawETH_invalidSigner() public {
@@ -5260,7 +5213,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidSigner.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -5301,7 +5254,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.NotAllowedSigner.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -5338,7 +5291,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ExpiredTransaction.selector));
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -5375,7 +5328,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        vm.expectRevert(IAsset.TransferFailed.selector);
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdrawETH(address(rejector), withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -5412,7 +5365,7 @@ contract AssetTest is Test {
         signatures[0] = signature1;
         signatures[1] = signature2;
 
-        vm.expectRevert(IAsset.SameSigner.selector);
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -5446,7 +5399,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = signature1;
 
-        vm.expectRevert(IAsset.InvalidAllSignersLength.selector);
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 
@@ -5481,7 +5434,7 @@ contract AssetTest is Test {
         bytes[] memory signatures = new bytes[](1); // Mismatch: 2 signers but 1 signature
         signatures[0] = signature1;
 
-        vm.expectRevert(IAsset.InvalidSignaturesLength.selector);
+        vm.expectRevert(IAsset.FunctionDisabled.selector);
         asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
     }
 }
