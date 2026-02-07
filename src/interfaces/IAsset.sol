@@ -40,7 +40,8 @@ interface IAsset {
         uint64 subaccountId, uint64 collateralCoinId, int64 crossCollateralAmount, MarginAsset.Position[] positions
     );
     event MultiSigWalletDeposit(address indexed chainAddress, address indexed multiSigWallet, uint256 amount);
-
+    event Deposit(address indexed chainAddress, uint256 amount);
+    
     // Errors
     error InsufficientUserBalance(uint256 available, uint256 required);
     error ZeroAddressNotAllowed();
@@ -122,6 +123,10 @@ interface IAsset {
     function multiSigWalletDeposit(
         address chainAddress,
         address multiSigWallet,
+        uint256 amount
+    ) external;
+    function deposit(
+        address chainAddress,
         uint256 amount
     ) external;
 }

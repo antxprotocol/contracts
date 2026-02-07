@@ -146,6 +146,16 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         emit MultiSigWalletDeposit(chainAddress, multiSigWallet, amount);
     }
 
+    function deposit(
+        address chainAddress,
+        uint256 amount
+    ) external nonReentrant validAddress(chainAddress) validAmount(amount) {
+        // transfer the amount from the caller to the contract
+        USDC.safeTransferFrom(msg.sender, address(this), amount);
+        // emit event
+        emit Deposit(chainAddress, amount);
+    }
+
     function batchWithdraw(
         uint256[] memory clientOrderIds,
         uint64[] memory subaccountIds,
