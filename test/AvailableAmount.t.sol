@@ -8,6 +8,7 @@ import {MockToken} from "../src/mock/MockToken.sol";
 import {MarginAsset} from "../src/margin/MarginAsset.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MarginAssetCalculator} from "../src/margin/MarginAsset.sol";
+import {MockBLS} from "./MockBLS.sol";
 
 /**
  * @title AvailableAmountTest
@@ -47,9 +48,13 @@ contract AvailableAmountTest is Test {
         asset.setSettlementAddress(settlementOperator);
         asset.setWithdrawOperator(withdrawOperator);
         asset.setMarginAsset(address(marginAssetCalculator));
+        MockBLS mockBls = new MockBLS();
+        asset.setBls(address(mockBls));
+        bytes[] memory pks = new bytes[](1);
+        pks[0] = new bytes(128);
+        asset.setSettlementValidators(pks, 1);
         vm.stopPrank();
 
-        // Setup coin information (coinId=1 is USDC, precision is 6)
         vm.startPrank(settlementOperator);
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](1);
         coinUpdates[0] = MarginAsset.Coin({id: 1, symbol: "USDC", stepSizeScale: 6});
@@ -61,7 +66,7 @@ contract AvailableAmountTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(1, 0, 1, coinSetupData);
+        asset.batchUpdate(1, 0, 1, coinSetupData, new bytes(256), hex"01");
         vm.stopPrank();
 
         // Fund contract with USDC
@@ -122,7 +127,7 @@ contract AvailableAmountTest is Test {
                 subaccountUpdates: new MarginAsset.Subaccount[](0),
                 perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
             });
-            asset.batchUpdate(2, 0, 2, coinData);
+            asset.batchUpdate(2, 0, 2, coinData, new bytes(256), hex"01");
         }
 
         // Setup exchange information
@@ -203,7 +208,7 @@ contract AvailableAmountTest is Test {
         });
 
         uint256 batchId = collateralCoinId != 1 ? 3 : 2;
-        asset.batchUpdate(batchId, 0, batchId, batchData);
+        asset.batchUpdate(batchId, 0, batchId, batchData, new bytes(256), hex"01");
         vm.stopPrank();
 
         // Debug: Get subaccountId first

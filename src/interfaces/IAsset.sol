@@ -14,6 +14,7 @@ interface IAsset {
     event ForceWithdraw(bytes32 indexed user, bytes32 indexed recipient, uint256 amount, uint64 dstChainId);
     event BatchUpdated(uint256 batchId, uint256 antxChainHeight, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
+    event SettlementOperatorBlsPubkeyUpdated(bytes blsPubkey);
     event USDCUpdated(address indexed USDC);
     event EmergencyWithdraw(address indexed to, uint256 amount, uint256 nonce);
     event EmergencyWithdrawETH(address indexed to, uint256 amount, uint256 nonce);
@@ -74,7 +75,13 @@ interface IAsset {
     error NotInitLastBatchTime();
     error InvalidNonce();
     error FunctionDisabled();
-    
+    error InvalidBlsPubkeyLength();
+    error InvalidSettlementValidators();
+    error InvalidSettlementMinSignatures();
+    error NoSettlementSigner();
+    error InsufficientSettlementSignatures();
+    error BlsMultiSigRequired();
+
     enum SignatureType {
         ECDSA,
         ED25519
@@ -98,6 +105,10 @@ interface IAsset {
     ) external;
     function setSigners(address[] memory _signers) external;
     function setSettlementAddress(address _settlementAddress) external;
+    function setSettlementOperatorBlsPubkey(bytes calldata _blsPubkey) external;
+    function setBls(address _bls) external;
+    function setSettlementValidators(bytes[] calldata _pks, uint256 _minSignatures) external;
+    function setSettlementMinSignatures(uint256 newMin) external;
     function setWithdrawOperator(address _withdrawOperator) external;
     function availableAmount(bytes32 user) external view returns (uint256);
     function availableAmount(bytes32 user, uint64 collateralCoinId) external view returns (uint256);

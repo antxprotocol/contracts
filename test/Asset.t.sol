@@ -13,7 +13,7 @@ import {MarginAsset} from "../src/margin/MarginAsset.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {SendParam, MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
-
+import {MockBLS} from "./MockBLS.sol";
 
 // Mock StargateWithdraw for testing
 contract MockStargateWithdraw {
@@ -505,6 +505,11 @@ contract AssetTest is Test {
         asset.setWithdrawOperator(withdrawOperator);
         asset.setMarginAsset(address(marginAssetCalculator));
         asset.setStargateWithdraw(address(mockStargateWithdraw));
+        MockBLS mockBls = new MockBLS();
+        asset.setBls(address(mockBls));
+        bytes[] memory pks = new bytes[](1);
+        pks[0] = new bytes(128);
+        asset.setSettlementValidators(pks, 1);
         vm.stopPrank();
 
         // Set up coin (coinId=1 is USDC) for tests via batchUpdate
@@ -520,11 +525,20 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(1, 0, 1, coinSetupData);
+        asset.batchUpdate(1, 0, 1, coinSetupData, new bytes(256), hex"01");
         vm.stopPrank();
 
         // Fund Asset with raw USDC so withdraws can succeed (internal 6 decimals -> 18 decimals = *1e12)
         USDC.transfer(address(asset), 1e21);
+    }
+
+    function _batchUpdate(
+        uint256 batchId,
+        int32 seq,
+        uint256 height,
+        Asset.BatchUpdateData memory data
+    ) internal {
+        asset.batchUpdate(batchId, seq, height, data, new bytes(256), hex"01");
     }
 
     // ============ Coverage helpers for modifiers/constructor branches ============
@@ -655,7 +669,7 @@ contract AssetTest is Test {
         vm.expectEmit(address(asset));
         emit IAsset.BatchUpdated(2, 101, block.timestamp);
 
-        asset.batchUpdate(2, 0, 101, mergedData);
+        _batchUpdate(2, 0, 101, mergedData);
         vm.stopPrank();
 
         assertEq(asset.availableAmount(user1Bytes), 1000);
@@ -673,11 +687,11 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         // Try to update with invalid batch ID (should be 2, but using 3)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
-        asset.batchUpdate(3, 0, 102, batchData);
+        _batchUpdate(3, 0, 102, batchData);
 
         // Try with 1 (should also fail since lastBatchId is 1, expecting 2)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
-        asset.batchUpdate(1, 0, 102, batchData);
+        _batchUpdate(1, 0, 102, batchData);
 
         vm.stopPrank();
     }
@@ -689,18 +703,18 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         // First update should succeed
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
 
         // Try with same antxChainHeight (should fail)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
-        asset.batchUpdate(3, 0, 101, batchData);
+        _batchUpdate(3, 0, 101, batchData);
 
         // Try with lower antxChainHeight (should fail)
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
-        asset.batchUpdate(3, 0, 50, batchData);
+        _batchUpdate(3, 0, 50, batchData);
 
         // Try with valid higher antxChainHeight (should succeed)
-        asset.batchUpdate(3, 0, 102, batchData);
+        _batchUpdate(3, 0, 102, batchData);
 
         vm.stopPrank();
     }
@@ -712,17 +726,17 @@ contract AssetTest is Test {
 
         // First batch should be ID 2 (since setUp already called batchUpdate(1, ...))
         Asset.BatchUpdateData memory batchData1 = createBatchUpdateData(user1Bytes, 1000);
-        asset.batchUpdate(2, 0, 101, batchData1);
+        _batchUpdate(2, 0, 101, batchData1);
         assertEq(asset.lastBatchId(), 2);
 
         // Second batch should be ID 3
         Asset.BatchUpdateData memory batchData2 = createBatchUpdateData(user1Bytes, 2000);
-        asset.batchUpdate(3, 0, 102, batchData2);
+        _batchUpdate(3, 0, 102, batchData2);
         assertEq(asset.lastBatchId(), 3);
 
         // Third batch should be ID 4
         Asset.BatchUpdateData memory batchData3 = createBatchUpdateData(user1Bytes, 3000);
-        asset.batchUpdate(4, 0, 103, batchData3);
+        _batchUpdate(4, 0, 103, batchData3);
         assertEq(asset.lastBatchId(), 4);
 
         vm.stopPrank();
@@ -731,19 +745,22 @@ contract AssetTest is Test {
     }
 
     function test_batchUpdate_onlySettlementOperator() public {
-        address[] memory users = new address[](1);
-        users[0] = user1;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
+        // When BLS is not set, any call to batchUpdate must revert with BlsMultiSigRequired
+        vm.startPrank(owner);
+        Asset assetNoBls = AssetDeployer.deployAsset(address(USDC), owner);
+        assetNoBls.setSettlementAddress(settlementOperator);
+        assetNoBls.setMarginAsset(address(marginAssetCalculator));
+        vm.stopPrank();
 
-        vm.startPrank(user1);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.OnlySettlementOperator.selector));
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
-
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1000;
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(IAsset.BlsMultiSigRequired.selector));
+        assetNoBls.batchUpdate(1, 0, 1, batchData);
     }
 
     function test_batchUpdate_lengthMismatch() public {
@@ -754,7 +771,7 @@ contract AssetTest is Test {
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user1Bytes, 1000);
 
         vm.startPrank(settlementOperator);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         assertEq(asset.availableAmount(user1Bytes), 1000);
@@ -777,7 +794,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(testUser)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -868,7 +885,7 @@ contract AssetTest is Test {
         }
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -931,7 +948,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(testUser)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -991,7 +1008,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
-        asset.batchUpdate(2, 0, 101, setupData);
+        _batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
 
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -1037,7 +1054,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
-        asset.batchUpdate(2, 0, 101, setupData);
+        _batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
 
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -1084,7 +1101,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
-        asset.batchUpdate(2, 0, 101, setupData);
+        _batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
 
         uint256[] memory clientOrderIds = new uint256[](1);
@@ -1134,7 +1151,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -1176,7 +1193,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund and pass timelock
@@ -1213,7 +1230,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Don't advance time
@@ -1234,7 +1251,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
-        asset.batchUpdate(2, 0, 101, setupData);
+        _batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
 
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
@@ -1259,7 +1276,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
@@ -1385,7 +1402,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         uint256 expireTime = block.timestamp + 1 hours;
@@ -1425,7 +1442,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         uint256 expireTime = block.timestamp + 1 hours;
@@ -1620,7 +1637,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -1660,7 +1677,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -1701,7 +1718,7 @@ contract AssetTest is Test {
         bUsers[1] = bytes32(uint256(uint160(testUser2)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -1792,7 +1809,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -1850,7 +1867,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), uint256(uint64(type(int64).max)));
@@ -1875,7 +1892,7 @@ contract AssetTest is Test {
         }
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         for (uint256 i = 0; i < numUsers; i++) {
@@ -1896,7 +1913,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory setupData = createBatchUpdateDataFromUsers(bUsers, setupAmounts);
-        asset.batchUpdate(2, 0, 101, setupData);
+        _batchUpdate(2, 0, 101, setupData);
         vm.stopPrank();
 
         uint256[] memory clientOrderIds = new uint256[](1); // Shorter than users array
@@ -1995,7 +2012,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(testUser)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Prepare batch withdraw with zero amount
@@ -2052,7 +2069,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -2112,7 +2129,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(testUser)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract with exact amount
@@ -2191,7 +2208,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -2251,9 +2268,13 @@ contract AssetTest is Test {
         assetWith4Signers.setSettlementAddress(settlementOperator);
         assetWith4Signers.setWithdrawOperator(withdrawOperator);
         assetWith4Signers.setMarginAsset(address(marginAssetCalculator));
+        MockBLS mockBls = new MockBLS();
+        assetWith4Signers.setBls(address(mockBls));
+        bytes[] memory pks = new bytes[](1);
+        pks[0] = new bytes(128);
+        assetWith4Signers.setSettlementValidators(pks, 1);
         vm.stopPrank();
 
-        // Setup system balance
         address[] memory users = new address[](1);
         users[0] = systemAddress;
         uint256[] memory amounts = new uint256[](1);
@@ -2264,7 +2285,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        assetWith4Signers.batchUpdate(1, 0, 1, batchData);
+        assetWith4Signers.batchUpdate(1, 0, 1, batchData, new bytes(256), hex"01");
         vm.stopPrank();
 
         // Fund the contract
@@ -2325,7 +2346,7 @@ contract AssetTest is Test {
         bytes32[] memory bUsers = new bytes32[](1);
         bUsers[0] = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         vm.warp(block.timestamp + asset.FORCE_WITHDRAW_TIME_LOCK() + 1);
@@ -2373,7 +2394,7 @@ contract AssetTest is Test {
         bUsers[1] = bytes32(uint256(uint160(user2)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), 0);
@@ -2394,7 +2415,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -2517,7 +2538,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(type(uint256).max, 0, 100, batchData);
+        _batchUpdate(type(uint256).max, 0, 100, batchData);
         vm.stopPrank();
     }
 
@@ -2532,7 +2553,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), uint256(uint64(type(int64).max)));
@@ -2556,7 +2577,7 @@ contract AssetTest is Test {
         }
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Verify all users got their balances
@@ -2584,7 +2605,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(testUser)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract sufficiently (raw = internal * 1e12)
@@ -2672,7 +2693,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract sufficiently (raw = internal * 1e12)
@@ -2729,7 +2750,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract sufficiently (amounts[0] is 1e24 raw for this test)
@@ -2784,7 +2805,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -2838,7 +2859,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -2896,7 +2917,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(testUser)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -2987,7 +3008,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -3030,7 +3051,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         uint256 lastBatchTimeAfterUpdate = asset.lastBatchTime();
         vm.stopPrank();
 
@@ -3061,7 +3082,7 @@ contract AssetTest is Test {
         bUsers[0] = bytes32(uint256(uint160(user1)));
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        asset.batchUpdate(2, 0, 101, batchData);
+        _batchUpdate(2, 0, 101, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -3139,7 +3160,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Set default collateral coin ID to 2
@@ -3163,7 +3184,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Set default collateral coin ID to 2
@@ -3184,7 +3205,7 @@ contract AssetTest is Test {
         // But let's ensure it exists
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
 
         // Set up coinId 2
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](1);
@@ -3197,7 +3218,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(3, 0, 3, coinSetupData);
+        _batchUpdate(3, 0, 3, coinSetupData);
         vm.stopPrank();
 
         // Test with explicit collateralCoinId
@@ -3216,7 +3237,7 @@ contract AssetTest is Test {
         // First, set up user with perpetual asset
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
 
         // Set up coinId 2
         MarginAsset.Coin[] memory coinUpdates = new MarginAsset.Coin[](1);
@@ -3229,7 +3250,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(3, 0, 3, coinSetupData);
+        _batchUpdate(3, 0, 3, coinSetupData);
         vm.stopPrank();
 
         // Get subaccountId after batchUpdate
@@ -3311,7 +3332,7 @@ contract AssetTest is Test {
             exchangeId: 1, openSize: 1000, openValue: 50000, isolatedCollateralAmount: 0, cacheFundingIndex: 0
         });
         batchData.perpetualAssetUpdates[0].positions = positions;
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Now try to get available amount - should revert with CoinNotFound
@@ -3335,7 +3356,7 @@ contract AssetTest is Test {
             exchangeId: 1, openSize: 1000, openValue: 50000, isolatedCollateralAmount: 0, cacheFundingIndex: 0
         });
         batchData.perpetualAssetUpdates[0].positions = positions;
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Get subaccountId after batchUpdate
@@ -3355,11 +3376,11 @@ contract AssetTest is Test {
         amounts[0] = 1000;
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(users, amounts);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
 
         // Try to update with same seqInBatch
         vm.expectRevert();
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
     }
 
@@ -3371,12 +3392,12 @@ contract AssetTest is Test {
         amounts[0] = 1000;
 
         Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(users, amounts);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
 
         // Update with different seqInBatch but same antxChainHeight should fail
         // Different seqInBatch requires different antxChainHeight
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
-        asset.batchUpdate(2, 1, 2, batchData);
+        _batchUpdate(2, 1, 2, batchData);
         vm.stopPrank();
     }
 
@@ -3395,7 +3416,7 @@ contract AssetTest is Test {
         // Set up user with balance
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -3462,7 +3483,7 @@ contract AssetTest is Test {
         // Set up user with balance
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -3513,7 +3534,7 @@ contract AssetTest is Test {
         // Set up user with balance
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -3587,7 +3608,7 @@ contract AssetTest is Test {
 
         vm.expectEmit(address(asset));
         emit IAsset.ExchangeInfoUpdated(1, 3, 2, 0, 0, riskTiers);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         (uint64 exchangeId, string memory symbol, uint32 stepSizeScale, uint32 tickSizeScale) = asset.exchanges(1);
@@ -3612,7 +3633,7 @@ contract AssetTest is Test {
 
         vm.expectEmit(address(asset));
         emit IAsset.FundingIndexUpdated(1, 1000000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         (uint64 exchangeId, int256 fundingIndex, uint64 fundingIndexTime) = asset.fundingIndexes(1);
@@ -3637,7 +3658,7 @@ contract AssetTest is Test {
 
         vm.expectEmit(address(asset));
         emit IAsset.OraclePriceUpdated(1, 50000, uint64(block.timestamp));
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         (uint64 exchangeId, uint256 oraclePrice, uint64 oracleTime) = asset.oraclePrices(1);
@@ -3658,7 +3679,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, batchData1);
+        _batchUpdate(2, 0, 2, batchData1);
 
         // Try to add the same coin again - should not duplicate in coinIds array
         MarginAsset.Coin[] memory coinUpdates2 = new MarginAsset.Coin[](1);
@@ -3671,7 +3692,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 1, 3, batchData2);
+        _batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
 
         // Verify coinIds array still has only one entry
@@ -3696,12 +3717,12 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, coinData);
+        _batchUpdate(2, 0, 2, coinData);
 
         // Set up user with perpetual asset using coinId 2
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         batchData.perpetualAssetUpdates[0].collateralCoinId = 2;
-        asset.batchUpdate(3, 0, 3, batchData);
+        _batchUpdate(3, 0, 3, batchData);
         vm.stopPrank();
 
         // Test auto-find (collateralCoinId = 0) should find coinId 2
@@ -3750,7 +3771,7 @@ contract AssetTest is Test {
         });
         batchData.subaccountUpdates[0].tradeSettings = tradeSettings;
 
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Test availableAmount with positions - should use MarginAssetCalculator
@@ -3765,7 +3786,7 @@ contract AssetTest is Test {
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set crossCollateralAmount to negative value
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = -500;
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // availableAmount should return 0 for negative amounts
@@ -3779,10 +3800,10 @@ contract AssetTest is Test {
         bytes32 user2Bytes = bytes32(uint256(uint160(user2)));
 
         Asset.BatchUpdateData memory batchData1 = createBatchUpdateData(user1Bytes, 1000);
-        asset.batchUpdate(2, 0, 2, batchData1);
+        _batchUpdate(2, 0, 2, batchData1);
 
         Asset.BatchUpdateData memory batchData2 = createBatchUpdateData(user2Bytes, 2000);
-        asset.batchUpdate(2, 1, 3, batchData2);
+        _batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
 
         // Verify both updates were applied
@@ -3808,7 +3829,7 @@ contract AssetTest is Test {
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
 
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Verify all coins were added
@@ -3843,7 +3864,7 @@ contract AssetTest is Test {
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
 
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         (uint64 exchangeId1,,,) = asset.exchanges(1);
@@ -3857,7 +3878,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Test with collateralCoinId = 0 (auto-find)
@@ -3870,7 +3891,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         uint64 subaccountId = getSubaccountId(user);
@@ -3891,7 +3912,7 @@ contract AssetTest is Test {
         });
 
         // Should succeed even with all empty arrays
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         assertEq(asset.lastBatchId(), 2);
@@ -3906,7 +3927,7 @@ contract AssetTest is Test {
         // Setup user balances first
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -3998,7 +4019,7 @@ contract AssetTest is Test {
         batchData.fundingIndexUpdates = fundingIndexUpdates;
         batchData.oraclePriceUpdates = oraclePriceUpdates;
 
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Verify all updates were applied
@@ -4066,7 +4087,7 @@ contract AssetTest is Test {
             perpetualAssetUpdates: perpetualAssetUpdates
         });
 
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Verify all subaccounts were created
@@ -4092,12 +4113,12 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, coinData);
+        _batchUpdate(2, 0, 2, coinData);
 
         // Set up user with perpetual asset using coinId 3 (second coin)
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         batchData.perpetualAssetUpdates[0].collateralCoinId = 3;
-        asset.batchUpdate(3, 0, 3, batchData);
+        _batchUpdate(3, 0, 3, batchData);
         vm.stopPrank();
 
         // Test auto-find (collateralCoinId = 0) should find coinId 3
@@ -4110,7 +4131,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Fund the contract
@@ -4180,7 +4201,7 @@ contract AssetTest is Test {
             subaccountUpdates: subaccountUpdates,
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // availableAmount should return 0 when no perpetual asset exists
@@ -4195,7 +4216,7 @@ contract AssetTest is Test {
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set crossCollateralAmount to 0
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = 0;
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // availableAmount should return 0 for zero crossCollateralAmount
@@ -4233,7 +4254,7 @@ contract AssetTest is Test {
         // So we'll test the case where subaccount exists but has no perpetual asset
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 0);
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = 0;
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         uint256 amount = asset.availableAmount(user);
@@ -4266,7 +4287,7 @@ contract AssetTest is Test {
             subaccountUpdates: subaccountUpdates,
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Test auto-find (collateralCoinId = 0) - should return 0
@@ -4281,7 +4302,7 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Use collateralCoinId 1, but query for collateralCoinId 999 (non-existent)
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Query with non-existent collateralCoinId - should return 0
@@ -4326,7 +4347,7 @@ contract AssetTest is Test {
             subaccountUpdates: subaccountUpdates,
             perpetualAssetUpdates: perpetualAssetUpdates
         });
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Should return 0 because subaccountId mismatch
@@ -4343,7 +4364,7 @@ contract AssetTest is Test {
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set collateralCoinId to 0
         batchData.perpetualAssetUpdates[0].collateralCoinId = 0;
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Should return 0 because collateralCoinId == 0
@@ -4359,7 +4380,7 @@ contract AssetTest is Test {
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set crossCollateralAmount to negative value
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = -1000;
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // availableAmount should return 0 for negative amounts
@@ -4372,11 +4393,11 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData1 = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData1);
+        _batchUpdate(2, 0, 2, batchData1);
 
         // Use same batchId with different seqInBatch
         Asset.BatchUpdateData memory batchData2 = createBatchUpdateData(user, 2000);
-        asset.batchUpdate(2, 1, 3, batchData2);
+        _batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
 
         assertEq(asset.lastBatchId(), 2);
@@ -4392,7 +4413,7 @@ contract AssetTest is Test {
 
         // Try to use batchId 5 when lastBatchId is 1
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
-        asset.batchUpdate(5, 0, 2, batchData);
+        _batchUpdate(5, 0, 2, batchData);
         vm.stopPrank();
     }
 
@@ -4410,7 +4431,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, batchData1);
+        _batchUpdate(2, 0, 2, batchData1);
 
         // Update the same coin again - should not duplicate in coinIds array
         MarginAsset.Coin[] memory coinUpdates2 = new MarginAsset.Coin[](1);
@@ -4423,7 +4444,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 1, 3, batchData2);
+        _batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
 
         // Verify coin was updated
@@ -4443,20 +4464,20 @@ contract AssetTest is Test {
         Asset newAsset = AssetDeployer.deployAsset(address(USDC), owner);
         // Set up settlement operator but don't set marginAsset
         newAsset.setSettlementAddress(settlementOperator);
-        // Set withdraw operator
         newAsset.setWithdrawOperator(withdrawOperator);
+        MockBLS mockBls = new MockBLS();
+        newAsset.setBls(address(mockBls));
+        bytes[] memory pks = new bytes[](1);
+        pks[0] = new bytes(128);
+        newAsset.setSettlementValidators(pks, 1);
         vm.stopPrank();
 
         vm.startPrank(settlementOperator);
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
 
-        // Try batchUpdate - should fail because marginAsset is zero
-        // The check order is: batchId -> antxChainHeight -> marginAsset
-        // newAsset.lastBatchId() is 0 (newly deployed), so batchId should be 1 (lastBatchId + 1)
-        // newAsset.lastAntxChainHeight() is 0, so antxChainHeight should be > 0
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        newAsset.batchUpdate(1, 0, 1, batchData);
+        newAsset.batchUpdate(1, 0, 1, batchData, new bytes(256), hex"01");
         vm.stopPrank();
     }
 
@@ -4464,13 +4485,16 @@ contract AssetTest is Test {
     // ============ Additional Branch Coverage Tests ============
 
     function test_calculateAvailableAmount_emptyCoinIdsArray() public {
-        // Test branch: for (uint256 i = 0; i < coinIds.length; i++) when coinIds is empty
-        // Note: setUp already adds coinId 1, so we need a new Asset instance
         vm.startPrank(owner);
         Asset newAsset = AssetDeployer.deployAsset(address(USDC), owner);
         newAsset.setSettlementAddress(settlementOperator);
         newAsset.setWithdrawOperator(withdrawOperator);
         newAsset.setMarginAsset(address(marginAssetCalculator));
+        MockBLS mockBls = new MockBLS();
+        newAsset.setBls(address(mockBls));
+        bytes[] memory pks = new bytes[](1);
+        pks[0] = new bytes(128);
+        newAsset.setSettlementValidators(pks, 1);
         vm.stopPrank();
 
         bytes32 user = bytes32(uint256(uint160(user1)));
@@ -4506,7 +4530,7 @@ contract AssetTest is Test {
             subaccountUpdates: subaccountUpdates,
             perpetualAssetUpdates: perpetualAssetUpdates
         });
-        newAsset.batchUpdate(1, 0, 1, batchData);
+        newAsset.batchUpdate(1, 0, 1, batchData, new bytes(256), hex"01");
         vm.stopPrank();
 
         // Auto-find (collateralCoinId = 0) should return 0 because coinIds array is empty
@@ -4549,7 +4573,7 @@ contract AssetTest is Test {
         batchData.oraclePriceUpdates = oraclePriceUpdates;
 
         // Ensure tradeSettings is empty (already empty in createBatchUpdateData)
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         // Should work even with empty tradeSettings
@@ -4596,7 +4620,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         uint256 withdrawAmount = 500;
@@ -4653,7 +4677,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, batchData1);
+        _batchUpdate(2, 0, 2, batchData1);
 
         // Now try to add coin 2 again - should not duplicate (existCoin should be true)
         MarginAsset.Coin[] memory coinUpdates2 = new MarginAsset.Coin[](1);
@@ -4667,7 +4691,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 1, 3, batchData2);
+        _batchUpdate(2, 1, 3, batchData2);
         vm.stopPrank();
 
         // Verify coin was updated but not duplicated
@@ -4693,7 +4717,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, coinData);
+        _batchUpdate(2, 0, 2, coinData);
 
         // Create subaccount but perpetual asset uses coinId 999 (not in coinIds)
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
@@ -4725,7 +4749,7 @@ contract AssetTest is Test {
             subaccountUpdates: subaccountUpdates,
             perpetualAssetUpdates: perpetualAssetUpdates
         });
-        asset.batchUpdate(3, 0, 3, batchData);
+        _batchUpdate(3, 0, 3, batchData);
         vm.stopPrank();
 
         // Auto-find should iterate through coinIds but not find a match
@@ -4738,11 +4762,11 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
 
         // Try to update with same antxChainHeight
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidAntxChainHeight.selector));
-        asset.batchUpdate(3, 0, 2, batchData); // antxChainHeight = 2, but lastAntxChainHeight is 2
+        _batchUpdate(3, 0, 2, batchData); // antxChainHeight = 2, but lastAntxChainHeight is 2
         vm.stopPrank();
     }
 
@@ -4765,7 +4789,7 @@ contract AssetTest is Test {
 
         vm.startPrank(settlementOperator);
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         uint256 withdrawAmount = 500;
@@ -4813,7 +4837,7 @@ contract AssetTest is Test {
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
         // Set crossCollateralAmount to negative value
         batchData.perpetualAssetUpdates[0].crossCollateralAmount = -500;
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
         vm.stopPrank();
 
         uint64 subaccountId = getSubaccountId(user);
@@ -4827,11 +4851,11 @@ contract AssetTest is Test {
         vm.startPrank(settlementOperator);
         bytes32 user = bytes32(uint256(uint160(user1)));
         Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        asset.batchUpdate(2, 0, 2, batchData);
+        _batchUpdate(2, 0, 2, batchData);
 
         // Try to use same batchId and seqInBatch
         vm.expectRevert(abi.encodeWithSelector(IAsset.InvalidBatchId.selector));
-        asset.batchUpdate(2, 0, 3, batchData);
+        _batchUpdate(2, 0, 3, batchData);
         vm.stopPrank();
     }
 
@@ -4853,7 +4877,7 @@ contract AssetTest is Test {
             subaccountUpdates: new MarginAsset.Subaccount[](0),
             perpetualAssetUpdates: new MarginAsset.PerpetualAsset[](0)
         });
-        asset.batchUpdate(2, 0, 2, coinData);
+        _batchUpdate(2, 0, 2, coinData);
 
         // Create perpetual assets for multiple coins, but first one should be found
         MarginAsset.Subaccount[] memory subaccountUpdates = new MarginAsset.Subaccount[](1);
@@ -4888,7 +4912,7 @@ contract AssetTest is Test {
             subaccountUpdates: subaccountUpdates,
             perpetualAssetUpdates: perpetualAssetUpdates
         });
-        asset.batchUpdate(3, 0, 3, batchData);
+        _batchUpdate(3, 0, 3, batchData);
         vm.stopPrank();
 
         // Auto-find should find the first match (coinId 2)

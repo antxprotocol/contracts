@@ -12,6 +12,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import "./interfaces/IAsset.sol";
 import "./margin/MarginAsset.sol";
 import "./stargate/StargateWithdraw.sol";
+import "./bls/BLS12381.sol";
 
 contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable, IAsset {
     using SafeERC20 for IERC20;
@@ -25,6 +26,11 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         MarginAsset.OraclePrice[] oraclePriceUpdates;
         MarginAsset.Subaccount[] subaccountUpdates;
         MarginAsset.PerpetualAsset[] perpetualAssetUpdates;
+    }
+
+    struct SettlementValidator {
+        bytes pk; // 128-byte G1 pubkey
+        bool active;
     }
 
     IERC20 public USDC;
@@ -55,6 +61,16 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     mapping(uint64 => mapping(uint64 => MarginAsset.PerpetualAsset)) public perpetualAssets;
     mapping(bytes32 => uint64) public addressToSubaccountId; // user => subaccountId (reverse mapping)
 
+    // BLS config for settlement operator (appended for upgrade safety; uses reserved storage gap)
+    /// @dev BLS12-381 G1 public key (128 bytes) for settlement operator.
+    bytes public settlementOperatorBlsPubkey;
+    /// @dev BLS verifier contract implementing IBLS.
+    IBLS public bls;
+    /// @dev BLS settlement validators and threshold (k-of-n).
+    SettlementValidator[] public settlementValidators;
+    uint256 public settlementActiveValidators;
+    uint256 public settlementMinSignatures;
+
     modifier validAddress(address addr) {
         _validAddress(addr);
         _;
@@ -80,15 +96,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
     function _validTime(uint256 time) internal pure {
         if (time == 0) revert InvalidTime(time);
-    }
-
-    modifier onlySettlementOperator() {
-        _onlySettlementOperator();
-        _;
-    }
-
-    function _onlySettlementOperator() internal view {
-        if (msg.sender != settlementOperator) revert OnlySettlementOperator();
     }
 
     modifier onlyWithdrawOperator() {
@@ -130,9 +137,9 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     function multiSigWalletDeposit(
-        address chainAddress,  
+        address chainAddress,
         address  multiSigWallet,
-        uint256  amount  
+        uint256  amount
      ) external nonReentrant validAddress(chainAddress) validAddress(multiSigWallet) validAmount(amount) {
         uint64 subaccountId = addressToSubaccountId[bytes32(uint256(uint160(chainAddress)))];
         if (subaccountId != 0) {
@@ -188,7 +195,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         uint256 amount,
         uint64 dstChainId
     ) external nonReentrant validAmount(amount) {
-        if (!hasBatchUpdate) revert NotInitLastBatchTime(); 
+        if (!hasBatchUpdate) revert NotInitLastBatchTime();
         // check time lock
         if (block.timestamp < lastBatchTime + FORCE_WITHDRAW_TIME_LOCK) revert TimeLockNotPassed();
 
@@ -202,7 +209,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         if (subaccount.isMultiSigWallet) {
            recipient = bytes32(uint256(uint160(subaccount.multiSigWallet)));
         }
-    
+
         // force withdraw
         _userWithdraw(0, user, recipient, 0, dstChainId, amount, 0, "", true, SignatureType.ECDSA);
         emit ForceWithdraw(user, recipient, amount, dstChainId);
@@ -462,18 +469,41 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         revert FunctionDisabled();
     }
 
-    /**
-     * @notice Batch update user asset info
-     * @param batchId Batch ID, must equal lastBatchId + 1
-     * @param antxChainHeight AntX chain height
-     * @param batchUpdateData Batch update data
-     */
+    /// @notice Legacy 4-parameter batchUpdate entry. When BLS is not configured, executes batch update directly;
+    /// when BLS is configured, prefer the 6-parameter version with BLS args.
+    /// @notice Batch update user asset info. When BLS is configured, caller must provide a valid aggregate signature.
     function batchUpdate(
         uint256 batchId,
         int32 seqInBatch,
         uint256 antxChainHeight,
         BatchUpdateData memory batchUpdateData
-    ) public onlySettlementOperator {
+    ) public {
+        batchUpdate(batchId, seqInBatch, antxChainHeight, batchUpdateData, "", "");
+    }
+
+    function batchUpdate(
+        uint256 batchId,
+        int32 seqInBatch,
+        uint256 antxChainHeight,
+        BatchUpdateData memory batchUpdateData,
+        bytes memory blsSignature,
+        bytes memory bitmask
+    ) public {
+        if (address(bls) != address(0)) {
+            if (settlementMinSignatures == 0 || settlementMinSignatures > settlementActiveValidators) {
+                revert InvalidSettlementMinSignatures();
+            }
+            if (blsSignature.length != 256) revert OnlySettlementOperator();
+
+            bytes32 messageHash = keccak256(abi.encode(batchId, seqInBatch, antxChainHeight, batchUpdateData));
+            bytes[] memory pubkeys = _collectSettlementPubkeys(bitmask);
+            if (pubkeys.length < settlementMinSignatures) revert InsufficientSettlementSignatures();
+            bytes memory aggPk = bls.aggregatePubkeys(pubkeys);
+            bytes memory h = bls.hashToPoint(messageHash);
+            if (!bls.verifyAggregate(blsSignature, h, aggPk)) revert OnlySettlementOperator();
+        } else {
+            revert BlsMultiSigRequired();
+        }
         // Validate batchId: must be lastBatchId + 1, or lastBatchId with unused seqInBatch
         if (batchId == lastBatchId) {
             // If using same batchId, seqInBatch must not be used
@@ -590,6 +620,34 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         emit SettlementAddressUpdated(_settlementAddress);
     }
 
+    function setSettlementOperatorBlsPubkey(bytes calldata _blsPubkey) external onlyOwner {
+        if (_blsPubkey.length != 128) revert InvalidBlsPubkeyLength();
+        settlementOperatorBlsPubkey = _blsPubkey;
+        emit SettlementOperatorBlsPubkeyUpdated(_blsPubkey);
+    }
+
+    function setBls(address _bls) external onlyOwner validAddress(_bls) {
+        bls = IBLS(_bls);
+    }
+
+    function setSettlementValidators(bytes[] calldata _pks, uint256 _minSignatures) external onlyOwner {
+        uint256 len = _pks.length;
+        if (len == 0) revert InvalidSettlementValidators();
+        if (_minSignatures == 0 || _minSignatures > len) revert InvalidSettlementMinSignatures();
+
+        delete settlementValidators;
+        for (uint256 i = 0; i < len; i++) {
+            settlementValidators.push(SettlementValidator({pk: _pks[i], active: true}));
+        }
+        settlementActiveValidators = len;
+        settlementMinSignatures = _minSignatures;
+    }
+
+    function setSettlementMinSignatures(uint256 newMin) external onlyOwner {
+        if (newMin == 0 || newMin > settlementActiveValidators) revert InvalidSettlementMinSignatures();
+        settlementMinSignatures = newMin;
+    }
+
     function setWithdrawOperator(address _withdrawOperator) external onlyOwner validAddress(_withdrawOperator) {
         withdrawOperator = _withdrawOperator;
         emit WithdrawOperatorUpdated(_withdrawOperator);
@@ -651,6 +709,32 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         );
     }
 
+    function _collectSettlementPubkeys(bytes memory bitmask) internal view returns (bytes[] memory) {
+        uint256 total = settlementValidators.length;
+        uint256 count;
+        for (uint256 i = 0; i < total; i++) {
+            if (_isBitSet(bitmask, i) && settlementValidators[i].active) {
+                count++;
+            }
+        }
+        if (count == 0) revert NoSettlementSigner();
+
+        bytes[] memory pubkeys = new bytes[](count);
+        uint256 pos;
+        for (uint256 i = 0; i < total; i++) {
+            if (_isBitSet(bitmask, i) && settlementValidators[i].active) {
+                pubkeys[pos++] = settlementValidators[i].pk;
+            }
+        }
+        return pubkeys;
+    }
+
+    function _isBitSet(bytes memory mask, uint256 index) internal pure returns (bool) {
+        uint256 byteIndex = index >> 3;
+        if (byteIndex >= mask.length) return false;
+        uint8 b = uint8(mask[byteIndex]);
+        return (b & (1 << (index & 7))) != 0;
+    }
 
     uint256[50] private __gap; // allow for future upgrades
 }
