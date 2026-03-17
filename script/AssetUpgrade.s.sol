@@ -46,6 +46,8 @@ contract AssetUpgradeScript is Script {
             proxyAddress = vm.envAddress("DEVNET_ASSET_PROXY_ADDRESS");
         } else if (keccak256(bytes(currentEnv)) == keccak256(bytes("testnet"))) {
             proxyAddress = vm.envAddress("TESTNET_ASSET_PROXY_ADDRESS");
+        } else if (keccak256(bytes(currentEnv)) == keccak256(bytes("sepolia"))) {
+            proxyAddress = vm.envAddress("SEPOLIA_ASSET_PROXY_ADDRESS");
         } else {
             proxyAddress = vm.envAddress("MAINNET_ASSET_PROXY_ADDRESS");
         }

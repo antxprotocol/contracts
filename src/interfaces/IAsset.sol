@@ -4,7 +4,6 @@ import "../margin/MarginAsset.sol";
 
 interface IAsset {
     // Events
-    event SignersUpdated(address[] signers);
     event UserWithdraw(
         uint256 clientOrderId, bytes32 indexed user, bytes32 indexed recipient, uint256 amount, uint64 dstChainId
     );
@@ -14,10 +13,7 @@ interface IAsset {
     event ForceWithdraw(bytes32 indexed user, bytes32 indexed recipient, uint256 amount, uint64 dstChainId);
     event BatchUpdated(uint256 batchId, uint256 antxChainHeight, uint256 time);
     event SettlementAddressUpdated(address indexed settlementAddress);
-    event SettlementOperatorBlsPubkeyUpdated(bytes blsPubkey);
     event USDCUpdated(address indexed USDC);
-    event EmergencyWithdraw(address indexed to, uint256 amount, uint256 nonce);
-    event EmergencyWithdrawETH(address indexed to, uint256 amount, uint256 nonce);
     event WithdrawOperatorUpdated(address indexed withdrawOperator);
     event Ed25519OracleUpdated(address indexed ed25519Oracle);
     event MarginAssetAddressUpdated(address indexed marginAsset);
@@ -51,12 +47,7 @@ interface IAsset {
     error InvalidTime(uint256 time);
     error LengthNotMatch();
     error InvalidUserSignature();
-    error InvalidAllSignersLength();
-    error InvalidSignaturesLength();
-    error SameSigner();
     error ExpiredTransaction();
-    error InvalidSigner();
-    error NotAllowedSigner();
     error OnlySettlementOperator();
     error OnlyWithdrawOperator();
     error InvalidBatchId();
@@ -74,7 +65,6 @@ interface IAsset {
     error NotAllowedCrossChainWithdraw();
     error NotInitLastBatchTime();
     error InvalidNonce();
-    error FunctionDisabled();
     error InvalidBlsPubkeyLength();
     error InvalidSettlementValidators();
     error InvalidSettlementMinSignatures();
@@ -103,9 +93,7 @@ interface IAsset {
         uint256 amount,
         uint64 dstChainId
     ) external;
-    function setSigners(address[] memory _signers) external;
     function setSettlementAddress(address _settlementAddress) external;
-    function setSettlementOperatorBlsPubkey(bytes calldata _blsPubkey) external;
     function setBls(address _bls) external;
     function setSettlementValidators(bytes[] calldata _pks, uint256 _minSignatures) external;
     function setSettlementMinSignatures(uint256 newMin) external;
@@ -114,23 +102,6 @@ interface IAsset {
     function availableAmount(bytes32 user, uint64 collateralCoinId) external view returns (uint256);
     function availableAmountBySubAccountId(uint64 subAccountId) external view returns (uint256);
     function availableAmountBySubAccountId(uint64 subAccountId, uint64 collateralCoinId) external view returns (uint256);
-    function emergencyWithdraw(
-        address token,
-        address to,
-        uint256 amount,
-        uint256 expireTime,
-        uint256 nonce,
-        address[] memory allSigners,
-        bytes[] memory signatures
-    ) external;
-    function emergencyWithdrawETH(
-        address to,
-        uint256 amount,
-        uint256 expireTime,
-        uint256 nonce,
-        address[] memory allSigners,
-        bytes[] memory signatures
-    ) external;
     function multiSigWalletDeposit(
         address chainAddress,
         address multiSigWallet,

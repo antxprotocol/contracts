@@ -34,7 +34,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     }
 
     IERC20 public USDC;
-    address[] public signers;
+    address[] private signers;
     address public settlementOperator;
     address public withdrawOperator;
     uint256 public lastBatchId;
@@ -45,7 +45,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     mapping(uint256 => bool) public usedClientOrderIds; // clientOrderId => used
     uint64 public defaultCollateralCoinId;
     bool public hasBatchUpdate;
-    uint256 public emergencyWithdrawNonce;
+    uint256 private emergencyWithdrawNonce;
 
     // Stargate cross-chain withdraw adapter
     StargateWithdraw public stargateWithdraw;
@@ -63,7 +63,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
     // BLS config for settlement operator (appended for upgrade safety; uses reserved storage gap)
     /// @dev BLS12-381 G1 public key (128 bytes) for settlement operator.
-    bytes public settlementOperatorBlsPubkey;
+    bytes private settlementOperatorBlsPubkey;
     /// @dev BLS verifier contract implementing IBLS.
     IBLS public bls;
     /// @dev BLS settlement validators and threshold (k-of-n).
@@ -444,31 +444,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         return uint256(subaccountAvailableAmount);
     }
 
-    function emergencyWithdraw(
-        address token,
-        address to,
-        uint256 amount,
-        uint256 expireTime,
-        uint256 nonce,
-        address[] memory allSigners,
-        bytes[] memory signatures
-    ) external nonReentrant validAddress(to) validAmount(amount) {
-        // Function disabled - emergency withdraw is no longer supported
-        revert FunctionDisabled();
-    }
-
-    function emergencyWithdrawETH(
-        address to,
-        uint256 amount,
-        uint256 expireTime,
-        uint256 nonce,
-        address[] memory allSigners,
-        bytes[] memory signatures
-    ) external nonReentrant validAddress(to) validAmount(amount) {
-        // Function disabled - emergency withdraw ETH is no longer supported
-        revert FunctionDisabled();
-    }
-
     /// @notice Legacy 4-parameter batchUpdate entry. When BLS is not configured, executes batch update directly;
     /// when BLS is configured, prefer the 6-parameter version with BLS args.
     /// @notice Batch update user asset info. When BLS is configured, caller must provide a valid aggregate signature.
@@ -606,24 +581,9 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         emit BatchUpdated(batchId, antxChainHeight, block.timestamp);
     }
 
-    function isAllowedSigner(address signer) public view returns (bool) {
-        for (uint256 i = 0; i < signers.length; i++) {
-            if (signers[i] == signer) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     function setSettlementAddress(address _settlementAddress) external onlyOwner validAddress(_settlementAddress) {
         settlementOperator = _settlementAddress;
         emit SettlementAddressUpdated(_settlementAddress);
-    }
-
-    function setSettlementOperatorBlsPubkey(bytes calldata _blsPubkey) external onlyOwner {
-        if (_blsPubkey.length != 128) revert InvalidBlsPubkeyLength();
-        settlementOperatorBlsPubkey = _blsPubkey;
-        emit SettlementOperatorBlsPubkeyUpdated(_blsPubkey);
     }
 
     function setBls(address _bls) external onlyOwner validAddress(_bls) {
@@ -651,15 +611,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     function setWithdrawOperator(address _withdrawOperator) external onlyOwner validAddress(_withdrawOperator) {
         withdrawOperator = _withdrawOperator;
         emit WithdrawOperatorUpdated(_withdrawOperator);
-    }
-
-    function setSigners(address[] memory _signers) external onlyOwner {
-        if (_signers.length == 0) revert ZeroAddressNotAllowed();
-        for (uint256 i = 0; i < _signers.length; i++) {
-            if (_signers[i] == address(0)) revert ZeroAddressNotAllowed();
-        }
-        signers = _signers;
-        emit SignersUpdated(_signers);
     }
 
     function setMarginAsset(address _marginAsset) external onlyOwner validAddress(_marginAsset) {

@@ -491,16 +491,9 @@ contract AssetTest is Test {
         // Deploy mock StargateWithdraw
         mockStargateWithdraw = new MockStargateWithdraw(address(USDC));
 
-        // Initialize signers array
-        signers = new address[](3);
-        signers[0] = signer1;
-        signers[1] = signer2;
-        signers[2] = signer3;
-
         // Deploy Asset contract with proper owner
         vm.startPrank(owner);
         asset = AssetDeployer.deployAsset(address(USDC), owner);
-        asset.setSigners(signers);
         asset.setSettlementAddress(settlementOperator);
         asset.setWithdrawOperator(withdrawOperator);
         asset.setMarginAsset(address(marginAssetCalculator));
@@ -563,18 +556,6 @@ contract AssetTest is Test {
     }
 
     // Test constructor functionality
-    function test_constructor_success() public {
-        assertEq(asset.owner(), owner);
-        assertEq(address(asset.USDC()), address(USDC));
-        assertEq(asset.settlementOperator(), settlementOperator);
-        assertEq(asset.withdrawOperator(), withdrawOperator);
-        assertEq(asset.lastBatchId(), 1);
-        assertEq(asset.lastBatchTime(), block.timestamp);
-        assertEq(asset.lastAntxChainHeight(), 1);
-        assertTrue(asset.isAllowedSigner(signer1));
-        assertTrue(asset.isAllowedSigner(signer2));
-        assertTrue(asset.isAllowedSigner(signer3));
-    }
 
     function test_constructor_zeroUSDC() public {
         vm.startPrank(owner);
@@ -620,26 +601,6 @@ contract AssetTest is Test {
         bytes memory initData = abi.encodeWithSelector(Asset.initialize.selector, address(USDC), uint64(0));
         vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAmountNotAllowed.selector));
         new ERC1967Proxy(address(implementation), initData);
-        vm.stopPrank();
-    }
-
-    function test_constructor_emptySigners() public {
-        vm.startPrank(owner);
-        Asset a = AssetDeployer.deployAsset(address(USDC), owner);
-        address[] memory emptySigners = new address[](0);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        a.setSigners(emptySigners);
-        vm.stopPrank();
-    }
-
-    function test_constructor_zeroAddressInSigners() public {
-        vm.startPrank(owner);
-        Asset a = AssetDeployer.deployAsset(address(USDC), owner);
-        address[] memory invalidSigners = new address[](2);
-        invalidSigners[0] = signer1;
-        invalidSigners[1] = address(0);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        a.setSigners(invalidSigners);
         vm.stopPrank();
     }
 
@@ -1289,188 +1250,13 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
-    function test_emergencyWithdraw_success() public {
-        // Fund the contract (no need to setup system balance anymore)
-        USDC.transfer(address(asset), getTransferAmount(1000));
-        fundAssetWithETH();
 
-        // Prepare multi-sig withdraw
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 withdrawAmount = 500;
-        uint256 nonce = 0;
 
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
 
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
 
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
 
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
 
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
-    function test_emergencyWithdraw_invalidToken() public {
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
-        address[] memory allSigners = new address[](2);
-        bytes[] memory signatures = new bytes[](2);
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(
-            address(0x123), // Invalid token
-            user1,
-            500,
-            expireTime,
-            nonce,
-            allSigners,
-            signatures
-        );
-    }
-
-    function test_emergencyWithdraw_insufficientSigners() public {
-        uint256 expireTime = block.timestamp + 1 hours;
-        address[] memory allSigners = new address[](1);
-        allSigners[0] = signer1;
-        bytes[] memory signatures = new bytes[](1);
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
-    }
-
-    function test_emergencyWithdraw_signatureLengthMismatch() public {
-        uint256 expireTime = block.timestamp + 1 hours;
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        bytes[] memory signatures = new bytes[](3);
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
-    }
-
-    function test_emergencyWithdraw_sameSigner() public {
-        uint256 expireTime = block.timestamp + 1 hours;
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer1; // Same signer
-        bytes[] memory signatures = new bytes[](2);
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
-    }
-
-    function test_emergencyWithdraw_expiredTransaction() public {
-        uint256 expireTime = block.timestamp - 1; // Already expired
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        bytes[] memory signatures = new bytes[](2);
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, 0, allSigners, signatures);
-    }
-
-    function test_emergencyWithdraw_invalidSigner() public {
-        // Setup system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        _batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
-
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW", address(USDC), user1, uint256(500), expireTime, nonce, address(asset), block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        // Use wrong private key for signature
-        bytes memory wrongSignature = signMessage(operationHash, 999);
-        bytes memory correctSignature = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = wrongSignature; // Wrong signature
-        signatures[1] = correctSignature;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, nonce, allSigners, signatures);
-    }
-
-    function test_emergencyWithdraw_notAllowedSigner() public {
-        // Setup system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        _batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
-
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW", address(USDC), user1, uint256(500), expireTime, nonce, address(asset), block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        // Use a signer that's not in the allowed list
-        uint256 notAllowedKey = 888;
-        address notAllowedSigner = vm.addr(notAllowedKey);
-        bytes memory notAllowedSignature = signMessage(operationHash, notAllowedKey);
-        bytes memory validSignature = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = notAllowedSigner;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = notAllowedSignature;
-        signatures[1] = validSignature;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), user1, 500, expireTime, nonce, allSigners, signatures);
-    }
 
     // Test admin functions
     function test_setSettlementAddress_success() public {
@@ -1501,51 +1287,9 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
-    function test_setSigners_success() public {
-        address[] memory newSigners = new address[](2);
-        newSigners[0] = address(0x111);
-        newSigners[1] = address(0x222);
 
-        vm.startPrank(owner);
-        vm.expectEmit(address(asset));
-        emit IAsset.SignersUpdated(newSigners);
-        asset.setSigners(newSigners);
-        vm.stopPrank();
 
-        assertTrue(asset.isAllowedSigner(address(0x111)));
-        assertTrue(asset.isAllowedSigner(address(0x222)));
-        assertFalse(asset.isAllowedSigner(signer1)); // Old signer should no longer be valid
-    }
 
-    function test_setSigners_onlyOwner() public {
-        address[] memory newSigners = new address[](1);
-        newSigners[0] = address(0x111);
-
-        vm.startPrank(user1);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
-        asset.setSigners(newSigners);
-        vm.stopPrank();
-    }
-
-    function test_setSigners_emptyArray() public {
-        address[] memory emptySigners = new address[](0);
-
-        vm.startPrank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        asset.setSigners(emptySigners);
-        vm.stopPrank();
-    }
-
-    function test_setSigners_zeroAddressInArray() public {
-        address[] memory invalidSigners = new address[](2);
-        invalidSigners[0] = address(0x111);
-        invalidSigners[1] = address(0); // Zero address
-
-        vm.startPrank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        asset.setSigners(invalidSigners);
-        vm.stopPrank();
-    }
 
     function test_setWithdrawOperator_success() public {
         address newWithdrawOperator = address(0x777);
@@ -1604,25 +1348,7 @@ contract AssetTest is Test {
     }
 
     // Test isAllowedSigner function
-    function test_isAllowedSigner() public {
-        assertTrue(asset.isAllowedSigner(signer1));
-        assertTrue(asset.isAllowedSigner(signer2));
-        assertTrue(asset.isAllowedSigner(signer3));
-        assertFalse(asset.isAllowedSigner(user1));
-        assertFalse(asset.isAllowedSigner(address(0)));
-    }
 
-    function test_isAllowedSigner_notFound_fallthrough() public {
-        // Deploy an Asset with a single signer to force full loop fallthrough
-        address[] memory single = new address[](1);
-        single[0] = signer1;
-        vm.startPrank(owner);
-        Asset a2 = AssetDeployer.deployAsset(address(USDC), owner);
-        a2.setSigners(single);
-        vm.stopPrank();
-        address notSigner = address(0xDEADBEeF);
-        assertFalse(a2.isAllowedSigner(notSigner));
-    }
 
     // Test transfer failure scenarios
     function test_userWithdraw_transferFailure() public {
@@ -1797,62 +1523,6 @@ contract AssetTest is Test {
     }
 
     // Test emergencyWithdraw with multiple signers (more than 2)
-    function test_emergencyWithdraw_multipleSigners() public {
-        // Setup system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        _batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
-
-        // Fund the contract
-        USDC.transfer(address(asset), getTransferAmount(1000));
-        fundAssetWithETH();
-
-        // Prepare multi-sig withdraw with all 3 signers
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 withdrawAmount = 500;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-        bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
-
-        address[] memory allSigners = new address[](3);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        allSigners[2] = signer3;
-
-        bytes[] memory signatures = new bytes[](3);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-        signatures[2] = signature3;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
     // Test edge cases and boundary conditions
     function test_edge_cases() public {
@@ -1952,20 +1622,11 @@ contract AssetTest is Test {
     }
 
     // Test isAllowedSigner with empty signers array
-    function test_isAllowedSigner_emptySigners() public {
-        // Deploy a new contract with empty signers to test this edge case
-        // Actually, this is not possible due to constructor validation
-        // But we can test the edge case where signer is at the end of array
-        assertFalse(asset.isAllowedSigner(address(0x999999)));
-    }
 
     // Test public getter functions for coverage
     function test_publicGetters() public view {
         // These calls ensure getter functions are covered
         asset.USDC();
-        asset.signers(0); // Access first signer
-        asset.signers(1); // Access second signer
-        asset.signers(2); // Access third signer
         asset.settlementOperator();
         asset.withdrawOperator();
         asset.availableAmount(bytes32(uint256(uint160(user1))));
@@ -2057,59 +1718,6 @@ contract AssetTest is Test {
     }
 
     // Test emergencyWithdraw with exact system balance
-    function test_emergencyWithdraw_exactBalance() public {
-        // Setup system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        _batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
-
-        // Fund the contract
-        USDC.transfer(address(asset), getTransferAmount(1000));
-        fundAssetWithETH();
-
-        // Prepare multi-sig withdraw for exact balance
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 withdrawAmount = 1000; // Exact balance
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
     // Test assertion failure scenarios (this is tricky as assert will halt execution)
     // We'll test the balance verification logic indirectly
@@ -2196,143 +1804,8 @@ contract AssetTest is Test {
     // We can't directly test it since it's not used, but we can verify the modifier exists
 
     // Test with multiple signers but checking different signer combinations
-    function test_emergencyWithdraw_differentSignerCombinations() public {
-        // Setup system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        _batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
-
-        // Fund the contract
-        USDC.transfer(address(asset), getTransferAmount(1000));
-        fundAssetWithETH();
-
-        // Test different signer combinations
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 withdrawAmount = 300;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        // Test with signer1 and signer3 (different combination)
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer3;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature3;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
     // Test emergencyWithdraw with more than 3 signers to ensure loop coverage
-    function test_emergencyWithdraw_fourSigners() public {
-        // Create a new asset with 4 signers for this test
-        address[] memory fourSigners = new address[](4);
-        fourSigners[0] = signer1;
-        fourSigners[1] = signer2;
-        fourSigners[2] = signer3;
-        uint256 signer4PrivateKey = 4;
-        address signer4 = vm.addr(signer4PrivateKey);
-        fourSigners[3] = signer4;
-
-        vm.startPrank(owner);
-        Asset assetWith4Signers = AssetDeployer.deployAsset(address(USDC), owner);
-        assetWith4Signers.setSigners(fourSigners);
-        assetWith4Signers.setSettlementAddress(settlementOperator);
-        assetWith4Signers.setWithdrawOperator(withdrawOperator);
-        assetWith4Signers.setMarginAsset(address(marginAssetCalculator));
-        MockBLS mockBls = new MockBLS();
-        assetWith4Signers.setBls(address(mockBls));
-        bytes[] memory pks = new bytes[](1);
-        pks[0] = new bytes(128);
-        assetWith4Signers.setSettlementValidators(pks, 1);
-        vm.stopPrank();
-
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        assetWith4Signers.batchUpdate(1, 0, 1, batchData, new bytes(256), hex"01");
-        vm.stopPrank();
-
-        // Fund the contract
-        USDC.transfer(address(assetWith4Signers), getTransferAmount(1000));
-
-        // Test with 4 signers
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 withdrawAmount = 400;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(assetWith4Signers),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-        bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
-        bytes memory signature4 = signMessage(operationHash, signer4PrivateKey);
-
-        address[] memory allSigners = new address[](4);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        allSigners[2] = signer3;
-        allSigners[3] = signer4;
-
-        bytes[] memory signatures = new bytes[](4);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-        signatures[2] = signature3;
-        signatures[3] = signature4;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        assetWith4Signers.emergencyWithdraw(
-            address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures
-        );
-    }
 
     // Test edge case with zero user balance force withdraw (should fail)
     function test_forceWithdraw_zeroUserBalance() public {
@@ -2357,25 +1830,6 @@ contract AssetTest is Test {
         uint256 expireTime = block.timestamp + 1 days;
         asset.forceWithdraw(100, getDstChainId());
         vm.stopPrank();
-    }
-
-    // Test accessing signers array with all valid indices
-    function test_signersArray_allIndices() public view {
-        // Access all signers to ensure array getter coverage
-        assertEq(asset.signers(0), signer1);
-        assertEq(asset.signers(1), signer2);
-        assertEq(asset.signers(2), signer3);
-    }
-
-    // Test isAllowedSigner with all signers to ensure loop coverage
-    function test_isAllowedSigner_allSigners() public {
-        // Test with each signer position to ensure full loop coverage
-        assertTrue(asset.isAllowedSigner(signer1)); // First in array
-        assertTrue(asset.isAllowedSigner(signer2)); // Middle in array
-        assertTrue(asset.isAllowedSigner(signer3)); // Last in array
-
-        // Test with non-signer
-        assertFalse(asset.isAllowedSigner(address(0xdead)));
     }
 
     // Test updateUserBalances with zero amounts (should succeed)
@@ -2403,59 +1857,6 @@ contract AssetTest is Test {
     }
 
     // Test system withdraw with minimum possible amounts
-    function test_emergencyWithdraw_minimumAmount() public {
-        // Setup system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1; // Minimum possible balance
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        _batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
-
-        // Fund the contract
-        USDC.transfer(address(asset), getTransferAmount(1));
-        fundAssetWithETH();
-
-        // Prepare multi-sig withdraw for minimum amount
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 withdrawAmount = 1; // Minimum amount
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
     function test_recover_address() public {
         // Use a known private key to generate the test user address
@@ -2738,168 +2139,8 @@ contract AssetTest is Test {
         assertEq(asset.availableAmount(bytes32(uint256(uint160(user1)))), maxAmount);
     }
 
-    function testEmergencyWithdrawWithMaxAmount() public {
-        // Setup system balance with max amount
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1_000_000_000_000_000_000_000_000; // 1e24
 
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
 
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        _batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
-
-        // Fund the contract sufficiently (amounts[0] is 1e24 raw for this test)
-        USDC.mint(address(this), amounts[0]);
-        USDC.transfer(address(asset), amounts[0]);
-        fundAssetWithETH();
-
-        // Prepare multi-sig withdraw with max amount
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 withdrawAmount = amounts[0];
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
-
-    function testEmergencyWithdrawWithMaxExpireTime() public {
-        // Setup system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        _batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
-
-        // Fund the contract
-        USDC.transfer(address(asset), getTransferAmount(1000));
-        fundAssetWithETH();
-
-        // Prepare multi-sig withdraw with max expire time
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 withdrawAmount = 500;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
-
-    function testEmergencyWithdrawWithZeroExpireTime() public {
-        // Setup system balance
-        address[] memory users = new address[](1);
-        users[0] = systemAddress;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = 1000;
-
-        vm.startPrank(settlementOperator);
-        bytes32[] memory bUsers = new bytes32[](1);
-        bUsers[0] = bytes32(uint256(uint160(systemAddress)));
-
-        Asset.BatchUpdateData memory batchData = createBatchUpdateDataFromUsers(bUsers, amounts);
-        _batchUpdate(2, 0, 101, batchData);
-        vm.stopPrank();
-
-        // Fund the contract
-        USDC.transfer(address(asset), getTransferAmount(1000));
-        fundAssetWithETH();
-
-        // Prepare multi-sig withdraw with zero expire time
-        uint256 expireTime = 0;
-        address recipient = user1;
-        uint256 withdrawAmount = 500;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
     function testBatchWithdrawWithMaxClientOrderId() public {
         // Use a specific private key and derive the user address from it
@@ -4126,55 +3367,6 @@ contract AssetTest is Test {
         assertEq(amount, 1000);
     }
 
-    function test_emergencyWithdraw_threeSigners() public {
-        bytes32 user = bytes32(uint256(uint160(user1)));
-
-        vm.startPrank(settlementOperator);
-        Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        _batchUpdate(2, 0, 2, batchData);
-        vm.stopPrank();
-
-        // Fund the contract
-        uint256 withdrawAmount = 500;
-        USDC.transfer(address(asset), getTransferAmount(withdrawAmount));
-        fundAssetWithETH();
-
-        // Prepare emergency withdraw with 3 signers
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-        bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
-
-        address[] memory allSigners = new address[](3);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        allSigners[2] = signer3;
-
-        bytes[] memory signatures = new bytes[](3);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-        signatures[2] = signature3;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
     function test_availableAmount_noPerpetualAsset() public {
         bytes32 user = bytes32(uint256(uint160(user1)));
@@ -4600,65 +3792,7 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
-    function test_isAllowedSigner_emptySignersArray() public {
-        // Test branch: for (uint i = 0; i < signers.length; i++) when signers is empty
-        vm.startPrank(owner);
-        Asset newAsset = AssetDeployer.deployAsset(address(USDC), owner);
-        // Don't set signers, so signers array is empty
-        vm.stopPrank();
 
-        // Should return false for any signer when signers array is empty
-        assertFalse(newAsset.isAllowedSigner(signer1));
-        assertFalse(newAsset.isAllowedSigner(address(0x123)));
-    }
-
-    function test_emergencyWithdraw_twoSignersNestedLoop() public {
-        // Test branch: nested loops when allSigners.length == 2
-        // When i=0, j loop runs once (j=1)
-        // When i=1, j loop doesn't run (j starts at 2, but 2 >= 2)
-        bytes32 user = bytes32(uint256(uint160(user1)));
-
-        vm.startPrank(settlementOperator);
-        Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        _batchUpdate(2, 0, 2, batchData);
-        vm.stopPrank();
-
-        uint256 withdrawAmount = 500;
-        USDC.transfer(address(asset), getTransferAmount(withdrawAmount));
-        fundAssetWithETH();
-
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
     function test_batchUpdate_multipleCoinsInArray() public {
         // Test branch: for (uint256 j = 0; j < coinIds.length; j++) when coinIds has multiple entries
@@ -4770,64 +3904,7 @@ contract AssetTest is Test {
         vm.stopPrank();
     }
 
-    function test_setSigners_zeroAddressInLoop() public {
-        // Test branch: for loop in setSigners checking for zero address
-        vm.startPrank(owner);
-        address[] memory signersWithZero = new address[](3);
-        signersWithZero[0] = signer1;
-        signersWithZero[1] = address(0); // Zero address
-        signersWithZero[2] = signer2;
 
-        vm.expectRevert(abi.encodeWithSelector(IAsset.ZeroAddressNotAllowed.selector));
-        asset.setSigners(signersWithZero);
-        vm.stopPrank();
-    }
-
-    function test_emergencyWithdraw_signerMismatch() public {
-        // Test branch: if (signer != allSigners[index])
-        bytes32 user = bytes32(uint256(uint160(user1)));
-
-        vm.startPrank(settlementOperator);
-        Asset.BatchUpdateData memory batchData = createBatchUpdateData(user, 1000);
-        _batchUpdate(2, 0, 2, batchData);
-        vm.stopPrank();
-
-        uint256 withdrawAmount = 500;
-        USDC.transfer(address(asset), getTransferAmount(withdrawAmount));
-        fundAssetWithETH();
-
-        uint256 expireTime = block.timestamp + 1 hours;
-        address recipient = user1;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW",
-                address(USDC),
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer3; // Wrong signer (should be signer2)
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2; // Signature from signer2, but allSigners[1] is signer3
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdraw(address(USDC), recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
     function test_availableAmountBySubAccountId_negativeAmount() public {
         // Test branch: if (subaccountAvailableAmount < 0) return 0;
@@ -5123,344 +4200,14 @@ contract AssetTest is Test {
 
     // ============ emergencyWithdrawETH Tests ============
 
-    function test_emergencyWithdrawETH_success() public {
-        // Fund the contract with ETH
-        vm.deal(address(asset), 1 ether);
 
-        address recipient = user1;
-        uint256 withdrawAmount = 0.5 ether;
 
-        // Prepare multi-sig withdraw
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
 
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW_ETH",
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
 
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
 
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
 
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
 
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 
-    function test_emergencyWithdrawETH_threeSigners() public {
-        // Fund the contract with ETH
-        vm.deal(address(asset), 1 ether);
-
-        address recipient = user1;
-        uint256 withdrawAmount = 0.5 ether;
-
-        // Prepare multi-sig withdraw with 3 signers
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW_ETH",
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-        bytes memory signature3 = signMessage(operationHash, signer3PrivateKey);
-
-        address[] memory allSigners = new address[](3);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-        allSigners[2] = signer3;
-
-        bytes[] memory signatures = new bytes[](3);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-        signatures[2] = signature3;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
-
-    function test_emergencyWithdrawETH_invalidSigner() public {
-        // Fund the contract with ETH
-        vm.deal(address(asset), 1 ether);
-
-        address recipient = user1;
-        uint256 withdrawAmount = 0.5 ether;
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW_ETH",
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = address(0x999); // Invalid signer
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
-
-    function test_emergencyWithdrawETH_notAllowedSigner() public {
-        // Fund the contract with ETH
-        vm.deal(address(asset), 1 ether);
-
-        address recipient = user1;
-        uint256 withdrawAmount = 0.5 ether;
-        uint256 expireTime = block.timestamp + 1 hours;
-
-        // Use a private key that's not in the signers list
-        uint256 invalidPrivateKey = 0x999;
-        address invalidSigner = vm.addr(invalidPrivateKey);
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW_ETH",
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, invalidPrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = invalidSigner;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
-
-    function test_emergencyWithdrawETH_expiredTransaction() public {
-        // Fund the contract with ETH
-        vm.deal(address(asset), 1 ether);
-
-        address recipient = user1;
-        uint256 withdrawAmount = 0.5 ether;
-        uint256 expireTime = block.timestamp - 1; // Already expired
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW_ETH",
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
-
-    function test_emergencyWithdrawETH_transferFailed() public {
-        // Create a contract that rejects ETH transfers
-        RejectETH rejector = new RejectETH();
-        vm.deal(address(asset), 1 ether);
-
-        uint256 withdrawAmount = 0.5 ether;
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW_ETH",
-                address(rejector),
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer2PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdrawETH(address(rejector), withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
-
-    function test_emergencyWithdrawETH_sameSigner() public {
-        // Fund the contract with ETH
-        vm.deal(address(asset), 1 ether);
-
-        address recipient = user1;
-        uint256 withdrawAmount = 0.5 ether;
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW_ETH",
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-        bytes memory signature2 = signMessage(operationHash, signer1PrivateKey); // Same signer
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer1; // Same signer
-
-        bytes[] memory signatures = new bytes[](2);
-        signatures[0] = signature1;
-        signatures[1] = signature2;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
-
-    function test_emergencyWithdrawETH_invalidAllSignersLength() public {
-        // Fund the contract with ETH
-        vm.deal(address(asset), 1 ether);
-
-        address recipient = user1;
-        uint256 withdrawAmount = 0.5 ether;
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW_ETH",
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-
-        address[] memory allSigners = new address[](1); // Only 1 signer (need at least 2)
-        allSigners[0] = signer1;
-
-        bytes[] memory signatures = new bytes[](1);
-        signatures[0] = signature1;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
-
-    function test_emergencyWithdrawETH_invalidSignaturesLength() public {
-        // Fund the contract with ETH
-        vm.deal(address(asset), 1 ether);
-
-        address recipient = user1;
-        uint256 withdrawAmount = 0.5 ether;
-        uint256 expireTime = block.timestamp + 1 hours;
-        uint256 nonce = 0;
-
-        bytes32 operationHash = keccak256(
-            abi.encodePacked(
-                "EMERGENCY_WITHDRAW_ETH",
-                recipient,
-                withdrawAmount,
-                expireTime,
-                nonce,
-                address(asset),
-                block.chainid
-            )
-        );
-        operationHash = MessageHashUtils.toEthSignedMessageHash(operationHash);
-
-        bytes memory signature1 = signMessage(operationHash, signer1PrivateKey);
-
-        address[] memory allSigners = new address[](2);
-        allSigners[0] = signer1;
-        allSigners[1] = signer2;
-
-        bytes[] memory signatures = new bytes[](1); // Mismatch: 2 signers but 1 signature
-        signatures[0] = signature1;
-
-        vm.expectRevert(IAsset.FunctionDisabled.selector);
-        asset.emergencyWithdrawETH(recipient, withdrawAmount, expireTime, nonce, allSigners, signatures);
-    }
 }
 
 // Helper contract that rejects ETH transfers
