@@ -61,9 +61,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     mapping(uint64 => mapping(uint64 => MarginAsset.PerpetualAsset)) public perpetualAssets;
     mapping(bytes32 => uint64) public addressToSubaccountId; // user => subaccountId (reverse mapping)
 
-    // BLS config for settlement operator (appended for upgrade safety; uses reserved storage gap)
-    /// @dev BLS12-381 G1 public key (128 bytes) for settlement operator.
-    bytes private settlementOperatorBlsPubkey;
     /// @dev BLS verifier contract implementing IBLS.
     IBLS public bls;
     /// @dev BLS settlement validators and threshold (k-of-n).
