@@ -34,7 +34,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     }
 
     IERC20 public USDC;
-    address[] public signers;
+    address[] private signers;
     address public settlementOperator;
     address public withdrawOperator;
     uint256 public lastBatchId;
@@ -45,7 +45,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     mapping(uint256 => bool) public usedClientOrderIds; // clientOrderId => used
     uint64 public defaultCollateralCoinId;
     bool public hasBatchUpdate;
-    uint256 public emergencyWithdrawNonce;
+    uint256 private emergencyWithdrawNonce;
 
     // Stargate cross-chain withdraw adapter
     StargateWithdraw public stargateWithdraw;
@@ -61,9 +61,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     mapping(uint64 => mapping(uint64 => MarginAsset.PerpetualAsset)) public perpetualAssets;
     mapping(bytes32 => uint64) public addressToSubaccountId; // user => subaccountId (reverse mapping)
 
-    // BLS config for settlement operator (appended for upgrade safety; uses reserved storage gap)
-    /// @dev BLS12-381 G1 public key (128 bytes) for settlement operator.
-    bytes public settlementOperatorBlsPubkey;
     /// @dev BLS verifier contract implementing IBLS.
     IBLS public bls;
     /// @dev BLS settlement validators and threshold (k-of-n).
@@ -444,59 +441,41 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         return uint256(subaccountAvailableAmount);
     }
 
-    function emergencyWithdraw(
-        address token,
-        address to,
-        uint256 amount,
-        uint256 expireTime,
-        uint256 nonce,
-        address[] memory allSigners,
-        bytes[] memory signatures
-    ) external nonReentrant validAddress(to) validAmount(amount) {
-        // Function disabled - emergency withdraw is no longer supported
-        revert FunctionDisabled();
+    /// @notice Legacy 4-parameter batchUpdate entry. When BLS is not configured, executes batch update directly;
+    /// when BLS is configured, prefer the 6-parameter version with BLS args.
+    /// @notice Batch update user asset info. When BLS is configured, caller must provide a valid aggregate signature.
+    function batchUpdate(
+        uint256 batchId,
+        int32 seqInBatch,
+        uint256 antxChainHeight,
+        BatchUpdateData memory batchUpdateData
+    ) public {
+        batchUpdate(batchId, seqInBatch, antxChainHeight, batchUpdateData, "", "");
     }
 
-    function emergencyWithdrawETH(
-        address to,
-        uint256 amount,
-        uint256 expireTime,
-        uint256 nonce,
-        address[] memory allSigners,
-        bytes[] memory signatures
-    ) external nonReentrant validAddress(to) validAmount(amount) {
-        // Function disabled - emergency withdraw ETH is no longer supported
-        revert FunctionDisabled();
-    }
-
-    /**
-     * @notice Batch update user asset info. Caller must provide a valid BLS aggregate signature from settlement validators.
-     * @param batchId Batch ID, must equal lastBatchId + 1
-     * @param antxChainHeight AntX chain height
-     * @param batchUpdateData Batch update data
-     * @param blsSignature Aggregated BLS12-381 signature (256 bytes G2) over keccak256(abi.encode(batchId, seqInBatch, antxChainHeight, batchUpdateData))
-     * @param bitmask Bitmask indicating which settlement validators participated in signing
-     */
     function batchUpdate(
         uint256 batchId,
         int32 seqInBatch,
         uint256 antxChainHeight,
         BatchUpdateData memory batchUpdateData,
-        bytes calldata blsSignature,
-        bytes calldata bitmask
+        bytes memory blsSignature,
+        bytes memory bitmask
     ) public {
-        if (address(bls) == address(0)) revert OnlySettlementOperator();
-        if (settlementMinSignatures == 0 || settlementMinSignatures > settlementActiveValidators) {
-            revert InvalidSettlementMinSignatures();
-        }
-        if (blsSignature.length != 256) revert OnlySettlementOperator();
+        if (address(bls) != address(0)) {
+            if (settlementMinSignatures == 0 || settlementMinSignatures > settlementActiveValidators) {
+                revert InvalidSettlementMinSignatures();
+            }
+            if (blsSignature.length != 256) revert OnlySettlementOperator();
 
-        bytes32 messageHash = keccak256(abi.encode(batchId, seqInBatch, antxChainHeight, batchUpdateData));
-        bytes[] memory pubkeys = _collectSettlementPubkeys(bitmask);
-        if (pubkeys.length < settlementMinSignatures) revert InsufficientSettlementSignatures();
-        bytes memory aggPk = bls.aggregatePubkeys(pubkeys);
-        bytes memory h = bls.hashToPoint(messageHash);
-        if (!bls.verifyAggregate(blsSignature, h, aggPk)) revert OnlySettlementOperator();
+            bytes32 messageHash = keccak256(abi.encode(batchId, seqInBatch, antxChainHeight, batchUpdateData));
+            bytes[] memory pubkeys = _collectSettlementPubkeys(bitmask);
+            if (pubkeys.length < settlementMinSignatures) revert InsufficientSettlementSignatures();
+            bytes memory aggPk = bls.aggregatePubkeys(pubkeys);
+            bytes memory h = bls.hashToPoint(messageHash);
+            if (!bls.verifyAggregate(blsSignature, h, aggPk)) revert OnlySettlementOperator();
+        } else {
+            revert BlsMultiSigRequired();
+        }
         // Validate batchId: must be lastBatchId + 1, or lastBatchId with unused seqInBatch
         if (batchId == lastBatchId) {
             // If using same batchId, seqInBatch must not be used
@@ -599,24 +578,9 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         emit BatchUpdated(batchId, antxChainHeight, block.timestamp);
     }
 
-    function isAllowedSigner(address signer) public view returns (bool) {
-        for (uint256 i = 0; i < signers.length; i++) {
-            if (signers[i] == signer) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     function setSettlementAddress(address _settlementAddress) external onlyOwner validAddress(_settlementAddress) {
         settlementOperator = _settlementAddress;
         emit SettlementAddressUpdated(_settlementAddress);
-    }
-
-    function setSettlementOperatorBlsPubkey(bytes calldata _blsPubkey) external onlyOwner {
-        if (_blsPubkey.length != 128) revert InvalidBlsPubkeyLength();
-        settlementOperatorBlsPubkey = _blsPubkey;
-        emit SettlementOperatorBlsPubkeyUpdated(_blsPubkey);
     }
 
     function setBls(address _bls) external onlyOwner validAddress(_bls) {
@@ -644,15 +608,6 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     function setWithdrawOperator(address _withdrawOperator) external onlyOwner validAddress(_withdrawOperator) {
         withdrawOperator = _withdrawOperator;
         emit WithdrawOperatorUpdated(_withdrawOperator);
-    }
-
-    function setSigners(address[] memory _signers) external onlyOwner {
-        if (_signers.length == 0) revert ZeroAddressNotAllowed();
-        for (uint256 i = 0; i < _signers.length; i++) {
-            if (_signers[i] == address(0)) revert ZeroAddressNotAllowed();
-        }
-        signers = _signers;
-        emit SignersUpdated(_signers);
     }
 
     function setMarginAsset(address _marginAsset) external onlyOwner validAddress(_marginAsset) {
@@ -702,7 +657,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         );
     }
 
-    function _collectSettlementPubkeys(bytes calldata bitmask) internal view returns (bytes[] memory) {
+    function _collectSettlementPubkeys(bytes memory bitmask) internal view returns (bytes[] memory) {
         uint256 total = settlementValidators.length;
         uint256 count;
         for (uint256 i = 0; i < total; i++) {
@@ -722,7 +677,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
         return pubkeys;
     }
 
-    function _isBitSet(bytes calldata mask, uint256 index) internal pure returns (bool) {
+    function _isBitSet(bytes memory mask, uint256 index) internal pure returns (bool) {
         uint256 byteIndex = index >> 3;
         if (byteIndex >= mask.length) return false;
         uint8 b = uint8(mask[byteIndex]);
