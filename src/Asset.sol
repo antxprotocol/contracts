@@ -67,6 +67,8 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
     SettlementValidator[] public settlementValidators;
     uint256 public settlementActiveValidators;
     uint256 public settlementMinSignatures;
+    /// @dev Domain tag for BLS batchUpdate message hash (cross-chain / cross-contract replay protection).
+    bytes32 private constant BATCH_UPDATE_DOMAIN = keccak256("ANTEX_BATCH_UPDATE_V1");
 
     modifier validAddress(address addr) {
         _validAddress(addr);
@@ -465,14 +467,24 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
             if (settlementMinSignatures == 0 || settlementMinSignatures > settlementActiveValidators) {
                 revert InvalidSettlementMinSignatures();
             }
-            if (blsSignature.length != 256) revert OnlySettlementOperator();
+            if (blsSignature.length != 256) revert InvalidBlsSignatureLength();
 
-            bytes32 messageHash = keccak256(abi.encode(batchId, seqInBatch, antxChainHeight, batchUpdateData));
+            bytes32 messageHash = keccak256(
+                abi.encode(
+                    BATCH_UPDATE_DOMAIN,
+                    block.chainid,
+                    address(this),
+                    batchId,
+                    seqInBatch,
+                    antxChainHeight,
+                    batchUpdateData
+                )
+            );
             bytes[] memory pubkeys = _collectSettlementPubkeys(bitmask);
             if (pubkeys.length < settlementMinSignatures) revert InsufficientSettlementSignatures();
             bytes memory aggPk = bls.aggregatePubkeys(pubkeys);
             bytes memory h = bls.hashToPoint(messageHash);
-            if (!bls.verifyAggregate(blsSignature, h, aggPk)) revert OnlySettlementOperator();
+            if (!bls.verifyAggregate(blsSignature, h, aggPk)) revert InvalidBlsAggregateSignature();
         } else {
             revert BlsMultiSigRequired();
         }
@@ -594,6 +606,7 @@ contract Asset is OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeabl
 
         delete settlementValidators;
         for (uint256 i = 0; i < len; i++) {
+            if (_pks[i].length != 128) revert InvalidBlsPubkeyLength();
             settlementValidators.push(SettlementValidator({pk: _pks[i], active: true}));
         }
         settlementActiveValidators = len;

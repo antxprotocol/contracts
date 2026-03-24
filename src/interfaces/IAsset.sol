@@ -71,6 +71,8 @@ interface IAsset {
     error NoSettlementSigner();
     error InsufficientSettlementSignatures();
     error BlsMultiSigRequired();
+    error InvalidBlsSignatureLength();
+    error InvalidBlsAggregateSignature();
 
     enum SignatureType {
         ECDSA,
